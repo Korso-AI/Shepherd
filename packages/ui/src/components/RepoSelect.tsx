@@ -62,6 +62,19 @@ export function RepoSelect({
     target?.focus();
   }, [open]);
 
+  // Dismiss on outside-click — same popover behavior as the workspace
+  // switcher. mousedown (not click) so it fires before focus moves.
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      if (hostRef.current && !hostRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
   if (repos.length < 2) return null;
 
   const isAll = selected === null || selected === "__all__";

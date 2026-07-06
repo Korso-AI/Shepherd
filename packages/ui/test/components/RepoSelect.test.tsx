@@ -98,6 +98,45 @@ describe("RepoSelect", () => {
     expect(onSelect).toHaveBeenCalledWith(null);
   });
 
+  it("closes the menu on an outside click", async () => {
+    const user = userEvent.setup();
+    render(
+      <div>
+        <button type="button">elsewhere</button>
+        <RepoSelect
+          repos={["korso/a", "korso/b"]}
+          counts={counts}
+          selected={null}
+          onSelect={() => {}}
+        />
+      </div>,
+    );
+    const trig = screen.getByRole("button", { name: /filter by repo/i });
+    await user.click(trig);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "elsewhere" }));
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(trig).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("stays open when clicking inside the menu container", async () => {
+    const user = userEvent.setup();
+    render(
+      <RepoSelect
+        repos={["korso/a", "korso/b"]}
+        counts={counts}
+        selected={null}
+        onSelect={() => {}}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /filter by repo/i }));
+    const listbox = screen.getByRole("listbox");
+    // mousedown inside the host must not dismiss (options handle their own close)
+    await user.pointer({ keys: "[MouseLeft>]", target: listbox });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    await user.pointer("[/MouseLeft]");
+  });
+
   it("closes the menu on Escape", async () => {
     const user = userEvent.setup();
     render(
