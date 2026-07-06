@@ -17,7 +17,8 @@ import { Composer } from "./Composer.js";
 import { EmptyState } from "../config/EmptyState.js";
 import { FeedbackWidget } from "./FeedbackWidget.js";
 import { SetupChecklist } from "../onboarding/SetupChecklist.js";
-import { deriveSetupStage, setupSkipKey } from "../onboarding/logic.js";
+import { useSetupStage } from "../onboarding/useSetupStage.js";
+import { readStored, writeStored } from "../storage.js";
 
 /**
  * localStorage keys + page size, ported verbatim from the state block of
@@ -47,24 +48,6 @@ const STATUS_VIEW: Record<LandscapeStatus, { text: string; kind: string }> = {
   // only surfaces the rejected state.
   unauthorized: { text: "token rejected", kind: "error" },
 };
-
-/** localStorage read that never throws (private/quota modes return null). */
-function readStored(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-/** localStorage write that never throws — persistence is best-effort chrome. */
-function writeStored(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Ignore: a board that can't persist its filter still works this session.
-  }
-}
 
 /**
  * Resolves the repo to actually filter by for this render, reproducing the
@@ -169,11 +152,11 @@ export interface DashboardProps {
    */
   switcher?: ReactNode;
   /**
-   * Whether the account currently belongs to a workspace. Only meaningful in the
-   * hosted shell (paired with {@link config}). When `false`, the Tasks/Chat
-   * panels show an {@link EmptyState} prompt instead of a board, the board does
-   * not poll, and the view lands on Config. Defaults to "yes" (self-host always
-   * has its implicit team workspace).
+   * Whether the account currently belongs to a workspace. Only meaningful in
+   * the hosted shell (paired with {@link config}). When `false`, the view lands
+   * on Tasks showing the first-run setup checklist (create stage), the Chat
+   * panel shows an {@link EmptyState} prompt, and the board does not poll.
+   * Defaults to "yes" (self-host always has its implicit team workspace).
    */
   hasWorkspace?: boolean;
   /**
@@ -235,10 +218,22 @@ export function Dashboard({
   // self-host (hasWorkspace undefined) always has its implicit team workspace.
   const noWorkspace = hasWorkspace === false;
 
-  const { snapshot, status, lastUpdatedMs, refresh } = useLandscapePolling({
+  const { snapshot, snapshotWorkspaceId, status, lastUpdatedMs, refresh } =
+    useLandscapePolling({
+      workspaceId,
+      // A no-workspace board has nothing to poll; keep it off the hub.
+      enabled: !noWorkspace,
+    });
+
+  // The first-run setup checklist policy: stage derivation (stale-snapshot
+  // gated), the per-workspace skip, the engaged latch, and the header
+  // "Setup guide" re-open all live in the hook.
+  const setup = useSetupStage({
+    hosted,
+    hasWorkspace: !noWorkspace,
     workspaceId,
-    // A no-workspace board has nothing to poll; keep it off the hub.
-    enabled: !noWorkspace,
+    snapshot,
+    snapshotWorkspaceId,
   });
 
   const [activeTab, setActiveTab] = useState<Tab>(() => {
@@ -306,22 +301,6 @@ export function Dashboard({
   );
   const [doneShown, setDoneShown] = useState(DONE_PAGE);
 
-  // First-run setup checklist state (hosted only). `forcedOpen` is set by the
-  // header "Setup guide" button and overrides skips; `sessionSkipped` covers the
-  // no-workspace case where there is no workspace id to key the persisted skip.
-  const [forcedOpen, setForcedOpen] = useState(false);
-  const [sessionSkipped, setSessionSkipped] = useState(false);
-
-  // `forcedOpen`/`sessionSkipped` are in-memory: the hosted shell keeps this
-  // Dashboard mounted across workspace switches (only `workspaceId` changes), so
-  // without a reset a skip (or a forced-open guide) in one workspace would leak
-  // into the next. Clear both when the workspace changes; the PER-WORKSPACE
-  // localStorage skip key (setupSkipKey) still persists intentionally.
-  useEffect(() => {
-    setForcedOpen(false);
-    setSessionSkipped(false);
-  }, [workspaceId]);
-
   // First-load guard for resolveSelectedRepo's rule 3 — a persisted repo is only
   // second-guessed once, then in-session selections are respected (a ref because
   // flipping it must not itself trigger a render).
@@ -352,17 +331,17 @@ export function Dashboard({
   // Re-open the setup guide from the persistent header button: force it open and
   // route to the Tasks panel where it renders.
   const openSetupGuide = useCallback(() => {
-    setForcedOpen(true);
+    setup.openSetupGuide();
     onTab("tasks");
-  }, [onTab]);
+  }, [setup.openSetupGuide, onTab]);
 
-  // Dismiss the guide: persist the skip per-workspace when one exists, always
-  // record a session skip and drop any forced-open so the board shows.
-  const onSkip = useCallback(() => {
-    if (workspaceId) writeStored(setupSkipKey(workspaceId), "1");
-    setForcedOpen(false);
-    setSessionSkipped(true);
-  }, [workspaceId]);
+  // The checklist created a workspace: latch the guide engaged across the
+  // switch onto the new workspace (so it doesn't vanish until the first poll),
+  // then let the shell re-list.
+  const onChecklistWorkspaceCreated = useCallback(() => {
+    setup.noteWorkspaceCreated();
+    onWorkspacesChanged?.();
+  }, [setup.noteWorkspaceCreated, onWorkspacesChanged]);
 
   // Resolve the effective repo for this render. When the resolver derives a
   // value different from state (first-load default / vanished repo), commit it so
@@ -430,21 +409,7 @@ export function Dashboard({
     (t) => t.status !== "active" && matchesRepo(t, effectiveRepo),
   ).length;
 
-  // The first-run setup stage (hosted only). `deriveSetupStage` is the single
-  // source of truth: no workspace → "create"; a workspace with no agents yet
-  // (and not skipped) → "connect"; else "hidden". `agentsEverSeen` stays `null`
-  // until the first snapshot so an established board never flashes the checklist.
-  const skipped =
-    (workspaceId ? readStored(setupSkipKey(workspaceId)) !== null : false) ||
-    sessionSkipped;
-  const stage = hosted
-    ? deriveSetupStage({
-        hasWorkspace: !noWorkspace,
-        agentsEverSeen: snapshot ? snapshot.agents.length > 0 : null,
-        skipped,
-        forcedOpen,
-      })
-    : "hidden";
+  const stage = setup.stage;
 
   // The poll-driven header chrome (repo filter, vitals, status, freshness) only
   // makes sense for a live board — hide it on the Config tab, when there is no
@@ -546,10 +511,16 @@ export function Dashboard({
           <SetupChecklist
             stage={stage}
             workspace={workspace ?? null}
-            agents={snapshot?.agents ?? null}
+            // Stale-snapshot gate: never show another workspace's agents in
+            // the check-in indicator during a switch.
+            agents={
+              snapshot && snapshotWorkspaceId === workspaceId
+                ? snapshot.agents
+                : null
+            }
             hubUrl={hubUrl}
-            onWorkspacesChanged={onWorkspacesChanged ?? (() => {})}
-            onSkip={onSkip}
+            onWorkspacesChanged={onChecklistWorkspaceCreated}
+            onSkip={setup.skip}
           />
         ) : (
           <>

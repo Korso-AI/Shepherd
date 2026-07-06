@@ -41,6 +41,15 @@ export interface UseLandscapePollingOptions {
 export interface LandscapePolling {
   /** Last good landscape, or `null` until the first successful poll. */
   snapshot: WorkspaceLandscapeResponseT | null;
+  /**
+   * The `workspaceId` the current {@link snapshot} was fetched for
+   * (`undefined` for the self-host singular route). Because the last-good
+   * snapshot is RETAINED across a `workspaceId` switch (so the board never
+   * blanks), a caller that must not act on another workspace's data — e.g.
+   * the setup checklist's stage derivation — compares this against its
+   * current `workspaceId` before trusting the snapshot.
+   */
+  snapshotWorkspaceId: string | undefined;
   /** Current connection state. */
   status: LandscapeStatus;
   /** `Date.now()` of the last successful poll, or `null` before the first. */
@@ -91,6 +100,12 @@ export function useLandscapePolling(
   const [snapshot, setSnapshot] = useState<WorkspaceLandscapeResponseT | null>(
     null,
   );
+  // Which workspace `snapshot` belongs to — set atomically with it, so a
+  // retained snapshot from the previous workspace is identifiable during the
+  // gap before the new workspace's first poll lands.
+  const [snapshotWorkspaceId, setSnapshotWorkspaceId] = useState<
+    string | undefined
+  >(undefined);
   const [status, setStatus] = useState<LandscapeStatus>("live");
   const [lastUpdatedMs, setLastUpdatedMs] = useState<number | null>(null);
   // A monotonically-bumped counter whose only job is to force a re-render every
@@ -128,6 +143,7 @@ export function useLandscapePolling(
           : await clientRef.current.getLandscape();
         if (myGen !== gen.current) return;
         setSnapshot(next);
+        setSnapshotWorkspaceId(workspaceId);
         setLastUpdatedMs(Date.now());
         setStatus("live");
       } catch (err) {
@@ -181,5 +197,5 @@ export function useLandscapePolling(
   // applies as long as the hook hasn't since switched workspace or unmounted.
   const refresh = useCallback(() => poll(gen.current), [poll]);
 
-  return { snapshot, status, lastUpdatedMs, refresh };
+  return { snapshot, snapshotWorkspaceId, status, lastUpdatedMs, refresh };
 }

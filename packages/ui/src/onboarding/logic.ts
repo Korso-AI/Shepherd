@@ -36,29 +36,45 @@ interface SetupStageInput {
   skipped: boolean;
   /** Whether the operator explicitly re-opened the guide (overrides skips). */
   forcedOpen: boolean;
+  /**
+   * Whether the checklist has already been visible this session (a latch the
+   * caller flips once any non-hidden stage renders). While engaged, a workspace
+   * keeps the guide at `"connect"` even when `agentsEverSeen` is `null` (the
+   * post-create gap before the first poll) or `true` (the first agent just
+   * checked in) — so the guide never vanishes mid-flow and the operator sees
+   * step 2 complete and dismisses on their own terms. Defaults to `false`.
+   */
+  engaged?: boolean;
 }
 
 /**
  * Decide which setup-checklist stage (if any) should render.
  *
- * `forcedOpen` wins over everything: with no workspace it returns `"create"`,
- * otherwise `"connect"` (the component renders the guide with completed steps
- * checked). When not forced open, the base matrix applies:
+ * No workspace always wins: the operator is guided to create one regardless of
+ * every other flag (never block signup). With a workspace, `forcedOpen` wins
+ * over skips (the component renders the guide with completed steps checked),
+ * then the base matrix applies:
  *
- * - no workspace → `"create"`
- * - workspace + `agentsEverSeen === false` + not skipped → `"connect"`
+ * - `engaged` (the guide was already visible this session) + not skipped →
+ *   `"connect"` — holds the guide open across the post-create snapshot gap and
+ *   through the first agent check-in, so it never vanishes mid-flow.
+ * - `agentsEverSeen === false` + not skipped → `"connect"`
  * - everything else (agents seen, skipped, or the first snapshot still pending
  *   with `agentsEverSeen === null`) → `"hidden"`.
  */
 export function deriveSetupStage(input: SetupStageInput): SetupStage {
-  const { hasWorkspace, agentsEverSeen, skipped, forcedOpen } = input;
-
-  if (forcedOpen) {
-    return hasWorkspace ? "connect" : "create";
-  }
+  const { hasWorkspace, agentsEverSeen, skipped, forcedOpen, engaged } = input;
 
   if (!hasWorkspace) {
     return "create";
+  }
+
+  if (forcedOpen) {
+    return "connect";
+  }
+
+  if (engaged && !skipped) {
+    return "connect";
   }
 
   if (agentsEverSeen === false && !skipped) {

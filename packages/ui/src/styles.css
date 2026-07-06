@@ -10,6 +10,16 @@
         font:14px/1.45 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
         -webkit-font-smoothing:antialiased;
       }
+
+      /* Compact custom scrollbar — page-wide, echoing the .chat scrollbar.
+         Firefox uses the two scrollbar-* props; WebKit/Blink the ::-webkit rules. */
+      html { scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+      ::-webkit-scrollbar { width:9px; height:9px; }
+      ::-webkit-scrollbar-track { background:transparent; }
+      ::-webkit-scrollbar-thumb { background:var(--line); border-radius:999px;
+        border:2px solid var(--bg); background-clip:padding-box; }
+      ::-webkit-scrollbar-thumb:hover { background:var(--ink3); background-clip:padding-box; }
+      ::-webkit-scrollbar-corner { background:transparent; }
       .wrap { max-width:1100px; margin:0 auto; padding:40px 44px; }
 
       header { display:flex; align-items:center; gap:12px; padding-bottom:18px; }
@@ -550,19 +560,38 @@
       .shepherd-setup { display:flex; flex-direction:column; gap:16px; }
       .shepherd-setup__step { background:var(--card); border:1px solid var(--line);
         border-radius:12px; padding:18px 20px; }
-      /* Inactive future steps read muted but stay visible; the active step
-         (aria-current) and completed steps (--done) come to full strength. */
-      .shepherd-setup__step { opacity:.62; }
+      /* Inactive FUTURE steps read muted but stay visible; the active step
+         (aria-current), completed steps (--done), and the informational card
+         (--info, step 3 — not a sequential step) come to full strength. */
+      .shepherd-setup__step { opacity:.78; }
       .shepherd-setup__step[aria-current="step"],
-      .shepherd-setup__step--done { opacity:1; }
+      .shepherd-setup__step--done,
+      .shepherd-setup__step--info { opacity:1; }
       .shepherd-setup__step--done { border-color:var(--live); }
+      .shepherd-setup__check { color:var(--live); }
+      /* Visually-hidden text for assistive tech ("(completed)", copy announce). */
+      .shepherd-setup__sr { position:absolute; width:1px; height:1px; padding:0;
+        margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; border:0; }
+      /* Programmatic focus target after the create→connect transition — the
+         card itself signals focus, since its heading is not interactive. */
+      .shepherd-setup .card-head:focus-visible { outline:none; }
       .shepherd-setup .card-head { margin-bottom:14px; }
       .shepherd-setup .card-head h3 { margin:0; font-size:15px; font-weight:600;
         color:var(--ink); }
       .shepherd-setup .card-sub { margin:4px 0 0; font-size:12.5px; color:var(--ink3); }
       .shepherd-setup .card-body { display:flex; flex-direction:column; gap:14px; }
-      .shepherd-setup .card-body > [role="alert"] { margin:0; color:var(--drop); font-size:13px; }
-      .shepherd-setup .card-body > [role="status"] { margin:0; color:var(--ink2); font-size:13px; }
+      /* Descendant (not child) selectors: the create error renders INSIDE the
+         inline <form>, not as a direct child of .card-body. */
+      .shepherd-setup .card-body [role="alert"] { margin:0; color:var(--drop); font-size:13px; }
+      .shepherd-setup .card-body [role="status"] { margin:0; color:var(--ink2); font-size:13px; }
+      /* "Skip for now" is an escape hatch, not a CTA: a quiet text button that
+         cannot compete with Create workspace / Generate token. */
+      .shepherd-setup button.shepherd-setup__skip { align-self:flex-start;
+        padding:5px 0; border:0; background:transparent; color:var(--ink2);
+        font-weight:500; text-decoration:underline; }
+      .shepherd-setup button.shepherd-setup__skip:hover:not(:disabled) {
+        background:transparent; color:var(--ink); }
+      .shepherd-setup .shepherd-setup__done-cta { align-self:flex-start; }
       .shepherd-setup .field { display:flex; flex-direction:column; gap:8px; }
       .shepherd-setup .field__row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
       .shepherd-setup .field__row > input { flex:1; min-width:200px; }

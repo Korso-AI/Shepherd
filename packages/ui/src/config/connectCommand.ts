@@ -26,6 +26,18 @@ export const TOOLS: ReadonlyArray<{ id: Tool; label: string }> = [
  */
 export const TOKEN_PLACEHOLDER = "shp_<paste-after-generating>";
 
+/**
+ * Narrow a raw string (a `<select>` value, a query param…) to a {@link Tool},
+ * falling back to `"claude"` for anything unrecognized. Lives beside the
+ * {@link TOOLS} table it validates against so the one place a DOM string enters
+ * the `Tool` union can't drift from the pickable set (per the repo's
+ * no-raw-casts-at-boundaries rule).
+ */
+export function parseTool(value: string): Tool {
+  const match = TOOLS.find((t) => t.id === value);
+  return match ? match.id : "claude";
+}
+
 // Tools with an `mcp add` CLI. Pi, Cursor, and generic get a JSON config
 // block instead: Pi reads `~/.pi/agent/mcp.json` (or `.pi/mcp.json`), Cursor
 // reads `~/.cursor/mcp.json` (or `.cursor/mcp.json`) — same `mcpServers` shape.
@@ -126,13 +138,47 @@ export function hookSetup(tool: Tool): HookSetup | null {
   return null;
 }
 
+// The CLI commands embed values UNQUOTED (quoting is shell-specific; the
+// command must paste cleanly into bash, zsh, PowerShell, and cmd), so anything
+// interpolated must be inert in all of them. A well-formed http(s) URL with no
+// query/fragment and a minted `shp_` token both fit this charset; anything
+// else (a misconfigured or compromised `hubUrl` prop carrying spaces, `;`,
+// `$(…)`, backticks…) is replaced with a self-describing placeholder rather
+// than pasted into the operator's terminal.
+const SHELL_SAFE = /^[A-Za-z0-9._:/%-]+$/;
+
+/** `hubUrl` if it is a shell-inert http(s) URL, else a fill-in placeholder. */
+function safeHubUrl(hubUrl: string): string {
+  try {
+    const parsed = new URL(hubUrl);
+    if (
+      (parsed.protocol === "https:" || parsed.protocol === "http:") &&
+      SHELL_SAFE.test(hubUrl)
+    ) {
+      return hubUrl;
+    }
+  } catch {
+    // Not a URL at all — fall through to the placeholder.
+  }
+  return "<your-hub-url>";
+}
+
+/** `token` if it looks like a minted `shp_` token (shell-inert), else the placeholder. */
+function safeToken(token: string): string {
+  if (token === TOKEN_PLACEHOLDER) return token;
+  return /^shp_[A-Za-z0-9._-]+$/.test(token) ? token : TOKEN_PLACEHOLDER;
+}
+
 /**
  * The copy-paste install command for a tool, carrying the DIRECT Hub URL and
  * the minted `shp_` token. CLI tools (Claude, Codex) get a single-line
  * `mcp add` command; JSON-config tools (Pi, Cursor, generic) get an
- * `mcpServers` JSON block.
+ * `mcpServers` JSON block. Values that could break out of the command (see
+ * {@link SHELL_SAFE}) are replaced with placeholders, never emitted raw.
  */
-export function installCommand(tool: Tool, hubUrl: string, token: string): string {
+export function installCommand(tool: Tool, rawHubUrl: string, rawTokenValue: string): string {
+  const hubUrl = safeHubUrl(rawHubUrl);
+  const token = safeToken(rawTokenValue);
   if (tool === "generic" || tool === "pi" || tool === "cursor") {
     // PROGRAM names the tool in the presence feed; it defaults to
     // `claude-code`, so JSON-config tools set it explicitly.

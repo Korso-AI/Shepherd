@@ -573,4 +573,118 @@ describe("Dashboard setup checklist", () => {
     await screen.findByRole("region", { name: /setup guide/i });
     expect(screen.getByText("Beta")).toBeInTheDocument();
   });
+
+  it("never derives the checklist stage (or agent names) from the previous workspace's retained snapshot", async () => {
+    // ws_1 has a checked-in agent; ws_2 is brand new (empty landscape). The
+    // polling hook RETAINS ws_1's snapshot across the switch — the checklist
+    // must not read it as ws_2's: no "wolf checked in." from the old
+    // workspace, and the connect stage appears only once ws_2's poll lands.
+    const wolf: WorkspaceAgentT = {
+      name: "wolf",
+      human: "Ada",
+      program: "claude-code",
+      model: null,
+      repo: null,
+      branch: null,
+      lastHeartbeatAt: NOW,
+      presence: "live",
+    };
+    let currentWs = "ws_1";
+    let releaseWs2!: () => void;
+    const ws2Poll = new Promise<void>((r) => {
+      releaseWs2 = r;
+    });
+    client.landscape = vi.fn().mockImplementation(async (id: string) => {
+      if (id === "ws_2") {
+        await ws2Poll;
+        return { ...emptyLandscape() };
+      }
+      return { ...emptyLandscape(), agents: [wolf] };
+    });
+
+    const { rerender } = renderChecklistDashboard({
+      workspaceId: currentWs,
+      workspace: WS,
+    });
+    // ws_1 is established (has an agent): no checklist.
+    await flush();
+    expect(
+      screen.queryByRole("region", { name: /setup guide/i }),
+    ).not.toBeInTheDocument();
+
+    // Switch to the empty ws_2; its poll has NOT resolved yet.
+    currentWs = "ws_2";
+    rerender(
+      <ShepherdClientProvider client={client}>
+        <Dashboard
+          hasWorkspace
+          hubUrl={HUB_URL}
+          onWorkspacesChanged={vi.fn()}
+          workspaceId="ws_2"
+          workspace={WS2}
+        />
+      </ShepherdClientProvider>,
+    );
+
+    // The retained ws_1 snapshot keeps the BOARD up (documented never-blank
+    // behavior) but must not leak into the checklist: no checklist renders and
+    // no "checked in" indicator names ws_1's agent while ws_2's first poll is
+    // in flight.
+    expect(
+      screen.queryByRole("region", { name: /setup guide/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/wolf checked in/)).not.toBeInTheDocument();
+
+    releaseWs2();
+    await flush();
+
+    // ws_2's own (empty) poll landed → the connect-stage checklist, waiting.
+    await screen.findByRole("region", { name: /setup guide/i });
+    expect(screen.getByText(/waiting for your agent to check in/i)).toBeInTheDocument();
+    expect(screen.queryByText(/wolf checked in/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the checklist up through the first agent check-in until 'Go to your board'", async () => {
+    // The success state must be reachable: when the first agent appears in a
+    // poll, the engaged guide holds at connect (showing "checked in") instead
+    // of instantly unmounting; the operator dismisses it themselves.
+    const wolf: WorkspaceAgentT = {
+      name: "wolf",
+      human: "Ada",
+      program: "claude-code",
+      model: null,
+      repo: null,
+      branch: null,
+      lastHeartbeatAt: NOW,
+      presence: "live",
+    };
+    let agents: WorkspaceAgentT[] = [];
+    client.landscape = vi
+      .fn()
+      .mockImplementation(async () => ({ ...emptyLandscape(), agents }));
+
+    renderChecklistDashboard({ workspaceId: "ws_1", workspace: WS });
+    await screen.findByText(/waiting for your agent to check in/i);
+
+    // The first agent checks in on a later poll (driven here via refresh —
+    // the composer's post-send hook shares the same poll path).
+    agents = [wolf];
+    await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    await userEvent.type(screen.getByLabelText("Message the team"), "hi");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+
+    // Checklist still up, now showing the success state.
+    await screen.findByText(/wolf checked in/i);
+    expect(screen.getByRole("region", { name: /setup guide/i })).toBeInTheDocument();
+
+    // Dismiss → the real board.
+    await userEvent.click(screen.getByRole("button", { name: /go to your board/i }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: /setup guide/i }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(document.getElementById("crew")).toBeInTheDocument();
+  });
 });

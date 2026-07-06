@@ -4,6 +4,7 @@ import {
   TOKEN_PLACEHOLDER,
   installCommand,
   hookSetup,
+  parseTool,
 } from "./connectCommand.js";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,39 @@ describe("connectCommand", () => {
       const cmd = installCommand("codex", "https://hub", "shp_x");
       expect(cmd).toContain("codex mcp add");
       expect(cmd).toContain("--env PROGRAM=codex");
+    });
+
+    it("never emits a hub URL with shell metacharacters into the command", () => {
+      // A misconfigured/hostile hubUrl must not paste `$(…)`, `;` etc. into
+      // the operator's terminal — it degrades to a fill-in placeholder.
+      for (const bad of [
+        "https://hub; rm -rf ~",
+        "https://hub/$(curl evil)",
+        "not a url",
+        "javascript:alert(1)",
+      ]) {
+        const cmd = installCommand("claude", bad, "shp_x");
+        expect(cmd).toContain("HUB_URL=<your-hub-url>");
+        expect(cmd).not.toContain(";");
+        expect(cmd).not.toContain("$(");
+      }
+    });
+
+    it("never emits a token that doesn't look like a minted shp_ token", () => {
+      const cmd = installCommand("claude", "https://hub", "shp_x; echo pwned");
+      expect(cmd).toContain(`SHEPHERD_TOKEN=${TOKEN_PLACEHOLDER}`);
+      expect(cmd).not.toContain("pwned");
+    });
+  });
+
+  describe("parseTool", () => {
+    it("accepts every pickable tool id", () => {
+      for (const t of TOOLS) expect(parseTool(t.id)).toBe(t.id);
+    });
+
+    it("falls back to claude for anything unrecognized", () => {
+      expect(parseTool("vim")).toBe("claude");
+      expect(parseTool("")).toBe("claude");
     });
   });
 

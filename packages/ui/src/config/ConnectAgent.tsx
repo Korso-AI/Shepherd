@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { TokenSummaryT } from "@shepherd/shared";
 import { useShepherdClient } from "../context.js";
 import { describeError } from "../client.js";
@@ -9,6 +9,7 @@ import {
   TOKEN_PLACEHOLDER,
   installCommand,
   hookSetup,
+  parseTool,
 } from "./connectCommand.js";
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,8 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
   const [busy, setBusy] = useState(false);
   // True for a couple seconds after a successful copy, to flash the button label.
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True until the first loadTokens() resolves, so the management list shows a
   // loading placeholder rather than the "No tokens yet." empty state.
   const [loading, setLoading] = useState(true);
@@ -127,10 +130,25 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
   const hook = hookSetup(tool);
 
   async function copyCommand() {
-    await navigator.clipboard.writeText(command);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+      setCopyError(false);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard permission denied / insecure context: never lose a one-time
+      // token silently — tell the operator to select the text themselves.
+      setCopyError(true);
+    }
   }
+
+  // Clear the "Copied" flash timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    };
+  }, []);
 
   return (
     <section className="shepherd-connect-agent" aria-labelledby={headingId}>
@@ -153,7 +171,7 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
           <select
             id="connect-tool"
             value={tool}
-            onChange={(e) => setTool(e.target.value as Tool)}
+            onChange={(e) => setTool(parseTool(e.target.value))}
           >
             {TOOLS.map((t) => (
               <option key={t.id} value={t.id}>
@@ -187,6 +205,11 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
 
         {error && <p role="alert">{error}</p>}
         {status && <p role="status">{status}</p>}
+        {copyError && (
+          <p role="alert">
+            Copy failed — select the command below and copy it manually.
+          </p>
+        )}
 
         {rawToken && (
           <p className="token-once" role="status">
@@ -195,7 +218,12 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
         )}
 
         <div className="install-command">
-          <pre data-testid="install-command">{command}</pre>
+          {/* `ph-no-capture` / `data-sensitive`: the command can carry a live
+              bearer token; session-replay tools the HOST runs honor these
+              hints and redact the block. */}
+          <pre data-testid="install-command" className="ph-no-capture" data-sensitive="true">
+            {command}
+          </pre>
           <button
             type="button"
             className="install-command__copy"

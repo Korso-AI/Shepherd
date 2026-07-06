@@ -82,6 +82,40 @@ describe("SetupChecklist", () => {
     expect(screen.getByLabelText(/workspace name/i)).toBeInTheDocument();
   });
 
+  it("stays disabled after a successful create (no double-submit before the stage swaps)", async () => {
+    let resolveCreate!: (v: unknown) => void;
+    client.createWorkspace = vi.fn().mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolveCreate = r;
+        }),
+    );
+    renderPanel();
+
+    await userEvent.type(screen.getByLabelText(/workspace name/i), "Acme");
+    await userEvent.click(screen.getByRole("button", { name: /create/i }));
+    expect(screen.getByRole("button", { name: /creating/i })).toBeDisabled();
+
+    resolveCreate(WS);
+    // Resolved, but the caller's re-list hasn't swapped the stage yet: the
+    // button must stay disabled so a second click can't mint a duplicate.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create workspace/i })).toBeDisabled(),
+    );
+    expect(client.createWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a token-mint error for a retry", async () => {
+    client.mintAccountToken = vi.fn().mockRejectedValue(new Error("Too many tokens"));
+    renderPanel({ stage: "connect", workspace: WS, agents: [] });
+
+    await userEvent.click(screen.getByRole("button", { name: /generate token/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many tokens");
+    // The mint button is re-enabled for a retry.
+    expect(screen.getByRole("button", { name: /generate token/i })).toBeEnabled();
+  });
+
   it("connect stage: shows step 1 done and waits for an agent, then checks off when one appears", () => {
     const { rerender } = renderPanel({ stage: "connect", workspace: WS, agents: [] });
 
@@ -104,7 +138,54 @@ describe("SetupChecklist", () => {
     );
 
     expect(screen.queryByText(/waiting for your agent/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/wolf/)).toBeInTheDocument();
+    expect(screen.getByText(/wolf checked in/)).toBeInTheDocument();
+  });
+
+  it("offers a 'Go to your board' dismissal once the agent has checked in", async () => {
+    const onSkip = vi.fn();
+    renderPanel({
+      stage: "connect",
+      workspace: WS,
+      agents: [makeAgent()],
+      onSkip,
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: /go to your board/i }));
+    expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the raw token from the install command once the agent checks in", async () => {
+    client.mintAccountToken = vi
+      .fn()
+      .mockResolvedValue({ token: "shp_realtoken123", id: "tok_1" });
+    const { rerender } = renderPanel({ stage: "connect", workspace: WS, agents: [] });
+
+    await userEvent.click(screen.getByRole("button", { name: /generate token/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("setup-install-command").textContent).toContain(
+        "shp_realtoken123",
+      ),
+    );
+
+    // The first agent checks in: the live bearer token must leave the DOM.
+    rerender(
+      <ShepherdClientProvider client={client}>
+        <SetupChecklist
+          stage="connect"
+          workspace={WS}
+          agents={[makeAgent()]}
+          hubUrl={HUB_URL}
+          onWorkspacesChanged={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </ShepherdClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("setup-install-command").textContent,
+      ).not.toContain("shp_realtoken123"),
+    );
   });
 
   it("prefers a live agent name over an offline one for the check-in indicator", () => {
@@ -155,17 +236,58 @@ describe("SetupChecklist", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(cmd);
   });
 
+  it("surfaces a visible failure when the clipboard write is rejected", async () => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    renderPanel({ stage: "connect", workspace: WS, agents: [] });
+
+    await userEvent.click(screen.getByRole("button", { name: /copy command/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/copy failed/i);
+  });
+
   it("renders the feature cards in both stages", () => {
     renderPanel({ stage: "create" });
     expect(screen.getByText(/works with any harness/i)).toBeInTheDocument();
   });
 
-  it("calls onSkip once when Skip for now is clicked", async () => {
+  it("calls onSkip once when Skip for now is clicked (connect stage)", async () => {
     const onSkip = vi.fn();
-    renderPanel({ onSkip });
+    renderPanel({ stage: "connect", workspace: WS, agents: [], onSkip });
 
     await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
     expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Skip for now in the create stage (a skip cannot dismiss the create step)", () => {
+    renderPanel({ stage: "create" });
+
+    expect(
+      screen.queryByRole("button", { name: /skip for now/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("moves focus to step 2 when the stage advances from create to connect", async () => {
+    const { rerender } = renderPanel({ stage: "create" });
+
+    rerender(
+      <ShepherdClientProvider client={client}>
+        <SetupChecklist
+          stage="connect"
+          workspace={WS}
+          agents={[]}
+          hubUrl={HUB_URL}
+          onWorkspacesChanged={vi.fn()}
+          onSkip={vi.fn()}
+        />
+      </ShepherdClientProvider>,
+    );
+
+    await waitFor(() => {
+      const active = document.activeElement as HTMLElement | null;
+      expect(active?.textContent).toMatch(/connect your first agent/i);
+    });
   });
 
   it("is a labelled setup section", () => {

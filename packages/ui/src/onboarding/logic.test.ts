@@ -1,9 +1,9 @@
 /**
  * Exhaustive stage-derivation matrix for the setup checklist.
  *
- * The security property lives here: "never block, never mis-hide". These tests
- * pin every 4-tuple outcome so the pure `deriveSetupStage` can be trusted by the
- * component that reads/writes storage.
+ * The behavioral invariant lives here: "never block, never mis-hide". These
+ * tests pin every input-tuple outcome so the pure `deriveSetupStage` can be
+ * trusted by the hook that reads/writes storage.
  */
 
 import { describe, it, expect } from "vitest";
@@ -16,7 +16,8 @@ const input = (
   agentsEverSeen: boolean | null,
   skipped: boolean,
   forcedOpen: boolean,
-): Input => ({ hasWorkspace, agentsEverSeen, skipped, forcedOpen });
+  engaged = false,
+): Input => ({ hasWorkspace, agentsEverSeen, skipped, forcedOpen, engaged });
 
 describe("deriveSetupStage", () => {
   describe("named scenarios", () => {
@@ -43,9 +44,26 @@ describe("deriveSetupStage", () => {
     it("workspace + first snapshot pending (null) → hidden (no flash for established users)", () => {
       expect(deriveSetupStage(input(true, null, false, false))).toBe("hidden");
     });
+
+    it("engaged holds connect across the post-create snapshot gap (agents null)", () => {
+      expect(deriveSetupStage(input(true, null, false, false, true))).toBe("connect");
+    });
+
+    it("engaged holds connect after the first agent checks in (agents seen)", () => {
+      expect(deriveSetupStage(input(true, true, false, false, true))).toBe("connect");
+    });
+
+    it("skip beats engaged: dismissing an engaged guide hides it", () => {
+      expect(deriveSetupStage(input(true, true, true, false, true))).toBe("hidden");
+      expect(deriveSetupStage(input(true, false, true, false, true))).toBe("hidden");
+    });
+
+    it("engaged with no workspace still derives create (never block)", () => {
+      expect(deriveSetupStage(input(false, null, false, false, true))).toBe("create");
+    });
   });
 
-  describe("full 4-tuple matrix", () => {
+  describe("full 4-tuple matrix (engaged=false)", () => {
     // [hasWorkspace, agentsEverSeen, skipped, forcedOpen] → expected
     const cases: Array<[boolean, boolean | null, boolean, boolean, SetupStage]> = [
       // forcedOpen = false ---------------------------------------------------
@@ -88,6 +106,32 @@ describe("deriveSetupStage", () => {
         expect(deriveSetupStage(input(hasWorkspace, agentsEverSeen, skipped, forcedOpen))).toBe(
           expected,
         );
+      });
+    }
+  });
+
+  describe("full matrix with engaged=true", () => {
+    // engaged only changes outcomes for a workspace that is NOT skipped and
+    // NOT already connect: those rows hold at "connect" instead of "hidden".
+    // Skips still win; no-workspace still always derives "create".
+    const cases: Array<[boolean, boolean | null, boolean, boolean, SetupStage]> = [
+      [false, null, false, false, "create"],
+      [false, null, true, false, "create"],
+      [false, true, false, true, "create"],
+      [true, null, false, false, "connect"],
+      [true, null, true, false, "hidden"],
+      [true, false, false, false, "connect"],
+      [true, false, true, false, "hidden"],
+      [true, true, false, false, "connect"],
+      [true, true, true, false, "hidden"],
+      [true, true, true, true, "connect"], // forcedOpen beats skip
+    ];
+
+    for (const [hasWorkspace, agentsEverSeen, skipped, forcedOpen, expected] of cases) {
+      it(`engaged {hasWorkspace:${hasWorkspace}, agentsEverSeen:${agentsEverSeen}, skipped:${skipped}, forcedOpen:${forcedOpen}} → ${expected}`, () => {
+        expect(
+          deriveSetupStage(input(hasWorkspace, agentsEverSeen, skipped, forcedOpen, true)),
+        ).toBe(expected);
       });
     }
   });
