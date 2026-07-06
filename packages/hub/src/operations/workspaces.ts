@@ -108,7 +108,14 @@ export async function createWorkspace(
     return ws;
   });
 
-  return { id: workspace.id, slug: workspace.slug, name: workspace.name, role: "admin" };
+  // The creator is the workspace's first admin AND its owner (created_by).
+  return {
+    id: workspace.id,
+    slug: workspace.slug,
+    name: workspace.name,
+    role: "admin",
+    isOwner: true,
+  };
 }
 
 /** List every workspace the signed-in account belongs to, with its own role. */

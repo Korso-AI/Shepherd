@@ -3,39 +3,36 @@ import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { useShepherdClient } from "../context.js";
 import { describeError, ShepherdClientError } from "../client.js";
 import { ConfirmDeleteWorkspace } from "./ConfirmDeleteWorkspace.js";
-import { AccountActions } from "./AccountActions.js";
 
 // ---------------------------------------------------------------------------
-// GeneralSettings — the Config → General tab: identity of the CURRENT workspace
-// (name + the caller's role) plus the self-service workspace actions: "Leave
-// workspace" (any member) and, for admins, the irreversible "Delete workspace".
+// WorkspaceSettings — the Config → Workspace tab (formerly "General"): the
+// identity of the CURRENT workspace (name + the caller's role, shown as "owner"
+// for the creator) plus the self-service workspace actions: "Leave workspace"
+// (any member) and, for admins, the irreversible "Delete workspace".
 //
-// Leave lived on the <Members> roster before the sidebar redesign; it moves
-// here so Members is purely the roster and General owns workspace-level actions.
+// This tab is now purely WORKSPACE-scoped — the account actions (Sign out ·
+// Delete account) moved out to their own <AccountSettings> tab, so a user is no
+// longer choosing between "leave this workspace" and "delete my whole account"
+// in the same list. Only genuinely destructive actions (Delete workspace) stay
+// red; Leave is a neutral secondary button.
+//
 // The hub enforces the last-admin guard on leave (design §4.4); a rejected leave
-// surfaces as a visible alert rather than a crash — and, because the last admin
-// is stuck (they can't leave, correctly), we point them at Delete instead. Delete
-// is admin-only, guarded by a type-the-name modal (ConfirmDeleteWorkspace). Both
-// onLeft and onDeleted let the shell re-list its workspaces afterward (the account
-// may now be in a different / no workspace).
+// surfaces as a visible alert, and — because the last admin is stuck (they can't
+// leave, correctly) — we point them at Delete instead. Delete is admin-only,
+// guarded by a type-the-name modal (ConfirmDeleteWorkspace). onLeft/onDeleted let
+// the shell re-list its workspaces afterward.
 // ---------------------------------------------------------------------------
 
-export interface GeneralSettingsProps {
+export interface WorkspaceSettingsProps {
   /** The active workspace whose identity is shown. */
   workspace: WorkspaceSummaryT;
   /** Called after a successful leave, so the shell refreshes its workspace list. */
   onLeft?: () => void;
   /** Called after a successful delete, so the shell refreshes its workspace list. */
   onDeleted?: () => void;
-  /**
-   * Hosted session logout hook, rendered as the General tab's account rows
-   * (Sign out + Delete account — see AccountActions). The host owns the
-   * authentication side effect.
-   */
-  onLogout?: () => void;
 }
 
-export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: GeneralSettingsProps) {
+export function WorkspaceSettings({ workspace, onLeft, onDeleted }: WorkspaceSettingsProps) {
   const client = useShepherdClient();
   const headingId = useId();
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +47,9 @@ export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: Gene
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const isAdmin = workspace.role === "admin";
+  // The owner is always an admin; surface it as its own role label rather than a
+  // third role value (see WorkspaceSummary.isOwner).
+  const roleLabel = workspace.isOwner ? "owner" : workspace.role;
 
   async function leave() {
     if (leaving) return;
@@ -89,7 +89,7 @@ export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: Gene
   return (
     <section className="shepherd-general" aria-labelledby={headingId}>
       <div className="card-head">
-        <h3 id={headingId}>General</h3>
+        <h3 id={headingId}>Workspace</h3>
         <p className="card-sub">Your active workspace and its settings.</p>
       </div>
 
@@ -109,7 +109,7 @@ export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: Gene
 
         <div className="field">
           <label>Your role</label>
-          <p className="readonly-value">{workspace.role}</p>
+          <p className="readonly-value">{roleLabel}</p>
         </div>
 
         <div className="field leave">
@@ -117,7 +117,7 @@ export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: Gene
           <p className="helper">
             Remove yourself from this workspace. You&apos;ll need a new invite to rejoin.
           </p>
-          <button type="button" className="danger" onClick={() => void leave()} disabled={leaving}>
+          <button type="button" onClick={() => void leave()} disabled={leaving}>
             Leave workspace
           </button>
         </div>
@@ -141,10 +141,6 @@ export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: Gene
             </button>
           </div>
         )}
-
-        {/* Account-level rows (Sign out · Delete account) — same .field format
-            as the workspace options above; see AccountActions. */}
-        <AccountActions onLogout={onLogout} />
       </div>
 
       {confirmOpen && (

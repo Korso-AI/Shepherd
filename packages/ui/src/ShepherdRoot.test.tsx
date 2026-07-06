@@ -10,7 +10,7 @@ import { makeMockClient } from "./test/mockClient.js";
 // Tasks/Chat board views, not a nested second tab layer. The shell lands after
 // listWorkspaces() resolves, so we inject a workspace and wait for the load.
 describe("ShepherdRoot", () => {
-  const WS = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const };
+  const WS = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const, isOwner: true };
 
   beforeEach(() => {
     // Dashboard persists the active tab to localStorage; clear it so each test
@@ -53,15 +53,17 @@ describe("ShepherdRoot", () => {
       "aria-selected",
       "true",
     );
-    // The Config panel is the sidebar layout, defaulting to the General section.
-    expect(screen.getByRole("heading", { name: "General" })).toBeInTheDocument();
+    // The Config panel is the sidebar layout, defaulting to the Workspace section.
+    expect(screen.getByRole("heading", { name: "Workspace" })).toBeInTheDocument();
   });
 
-  it("renders the hosted sign out action at the bottom of Config", async () => {
+  it("renders the hosted sign out action on the Config → Account section", async () => {
     const onLogout = vi.fn();
     renderRoot({ onLogout });
 
     await userEvent.click(await screen.findByRole("tab", { name: "Config" }));
+    // Sign out moved out of the Workspace tab into its own Account section.
+    await userEvent.click(screen.getByRole("button", { name: "Account" }));
     await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(onLogout).toHaveBeenCalledTimes(1);
@@ -71,6 +73,7 @@ describe("ShepherdRoot", () => {
     renderRoot();
 
     await userEvent.click(await screen.findByRole("tab", { name: "Config" }));
+    await userEvent.click(screen.getByRole("button", { name: "Account" }));
 
     expect(screen.queryByRole("button", { name: /sign out/i })).not.toBeInTheDocument();
   });

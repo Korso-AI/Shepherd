@@ -58,7 +58,7 @@ function header(init: RequestInit, name: string): string | undefined {
 
 // --- fixtures matching the @shepherd/shared schemas ------------------------
 
-const WORKSPACE_SUMMARY = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const };
+const WORKSPACE_SUMMARY = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const, isOwner: true };
 
 const LANDSCAPE = {
   agents: [],
@@ -289,6 +289,7 @@ describe("createShepherdClient", () => {
         email: null,
         avatarUrl: null,
         role: "member" as const,
+        isOwner: false,
       };
       fetchMock.mockResolvedValueOnce(jsonResponse({ members: [member] }));
       const out = await client.listMembers("ws_1");

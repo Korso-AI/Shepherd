@@ -374,7 +374,7 @@ export async function redeemInvite(
   const existing = await findMembership(pool, accountId, workspaceId);
   if (existing !== null) {
     clearRedeemFailures(accountId);
-    return await buildRedeemResponse(workspaceId, existing.role);
+    return await buildRedeemResponse(workspaceId, existing.role, accountId);
   }
 
   // 6. Fresh join: claim a use AND add the membership in ONE transaction. The
@@ -399,13 +399,14 @@ export async function redeemInvite(
   });
 
   clearRedeemFailures(accountId);
-  return await buildRedeemResponse(workspaceId, invite.roleGranted);
+  return await buildRedeemResponse(workspaceId, invite.roleGranted, accountId);
 }
 
 /** Assemble the RedeemInviteResponse for a workspace the caller now belongs to. */
 async function buildRedeemResponse(
   workspaceId: string,
-  role: RoleT
+  role: RoleT,
+  accountId: string
 ): Promise<RedeemInviteResponseT> {
   const { pool } = getContext();
   const ws = await findWorkspaceById(pool, workspaceId);
@@ -414,6 +415,15 @@ async function buildRedeemResponse(
     throw new InviteError("invite invalid or no longer redeemable");
   }
   return {
-    workspace: { id: ws.id, slug: ws.slug, name: ws.name, role },
+    // isOwner is derived, not granted by the invite: a redeemer is the owner only
+    // if they are the workspace's creator (the "already a member" branch can land
+    // the original owner back via an invite link).
+    workspace: {
+      id: ws.id,
+      slug: ws.slug,
+      name: ws.name,
+      role,
+      isOwner: ws.createdBy === accountId,
+    },
   };
 }

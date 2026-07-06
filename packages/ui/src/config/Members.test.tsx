@@ -1,18 +1,32 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import type { MemberSummaryT } from "@shepherd/shared";
 import { ShepherdClientProvider } from "../context.js";
 import { Members } from "./Members.js";
 import { makeMockClient } from "../test/mockClient.js";
 
 // ---------------------------------------------------------------------------
 // Members — the workspace roster. Fetches the list on mount (and whenever
-// refreshKey changes) and removes a member through the client when the caller
-// permits it. Rejections surface as a visible alert. (Self-service "leave" now
-// lives in <GeneralSettings> — see GeneralSettings.test.tsx.)
+// refreshKey changes), removes members through the client, and (owner-only)
+// promotes/demotes members and transfers ownership. Rejections surface as a
+// visible alert. Self-service "leave" lives in <WorkspaceSettings>.
 // ---------------------------------------------------------------------------
 
 const WORKSPACE_ID = "ws_1";
+
+/** A member fixture with sane isOwner default (false unless overridden). */
+function member(m: Partial<MemberSummaryT> & { accountId: string }): MemberSummaryT {
+  return {
+    displayName: null,
+    githubLogin: null,
+    email: null,
+    avatarUrl: null,
+    role: "member",
+    isOwner: false,
+    ...m,
+  };
+}
 
 describe("Members", () => {
   let client: ReturnType<typeof makeMockClient>;
@@ -26,7 +40,13 @@ describe("Members", () => {
   });
 
   function renderMembers(
-    props?: Partial<{ refreshKey: number; canRemove: boolean }>,
+    props?: Partial<{
+      refreshKey: number;
+      canRemove: boolean;
+      isOwner: boolean;
+      onMembersChanged: () => void;
+      onWorkspaceChanged: () => void;
+    }>,
   ) {
     return render(
       <ShepherdClientProvider client={client}>
@@ -37,16 +57,7 @@ describe("Members", () => {
 
   it("lists members fetched from the client", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
-      members: [
-        {
-          accountId: "acc_1",
-          displayName: "Alice",
-          githubLogin: "alice",
-          email: null,
-          avatarUrl: null,
-          role: "admin",
-        },
-      ],
+      members: [member({ accountId: "acc_1", displayName: "Alice", githubLogin: "alice", role: "admin" })],
     });
 
     renderMembers();
@@ -56,25 +67,23 @@ describe("Members", () => {
     expect(screen.getByText("admin")).toBeInTheDocument();
   });
 
+  it("badges the owner as 'owner' rather than 'admin'", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_owner", displayName: "Olive", role: "admin", isOwner: true })],
+    });
+
+    renderMembers();
+
+    expect(await screen.findByText("Olive")).toBeInTheDocument();
+    expect(screen.getByText("owner")).toBeInTheDocument();
+    expect(screen.queryByText("admin")).toBeNull();
+  });
+
   it("falls back to email, then the account id, when name/login are absent", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
       members: [
-        {
-          accountId: "acc_email",
-          displayName: null,
-          githubLogin: null,
-          email: "dana@example.com",
-          avatarUrl: null,
-          role: "admin",
-        },
-        {
-          accountId: "acc_bare",
-          displayName: null,
-          githubLogin: null,
-          email: null,
-          avatarUrl: null,
-          role: "member",
-        },
+        member({ accountId: "acc_email", email: "dana@example.com", role: "admin" }),
+        member({ accountId: "acc_bare" }),
       ],
     });
 
@@ -111,23 +120,14 @@ describe("Members", () => {
 
   it("removes a member through the client when canRemove", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
-      members: [
-        {
-          accountId: "acc_2",
-          displayName: "Bob",
-          githubLogin: "bob",
-          email: null,
-          avatarUrl: null,
-          role: "member",
-        },
-      ],
+      members: [member({ accountId: "acc_2", displayName: "Bob", role: "member" })],
     });
     client.removeMember = vi.fn().mockResolvedValue(undefined);
 
     renderMembers({ canRemove: true });
 
     expect(await screen.findByText("Bob")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /remove/i }));
+    await userEvent.click(screen.getByRole("button", { name: /remove bob/i }));
 
     await waitFor(() =>
       expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE_ID, "acc_2"),
@@ -136,27 +136,148 @@ describe("Members", () => {
     await waitFor(() => expect(screen.queryByText("Bob")).not.toBeInTheDocument());
   });
 
+  it("does not offer Remove on an admin row for a non-owner admin", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_a", displayName: "Ada", role: "admin" })],
+    });
+
+    // caller is an admin (canRemove) but NOT the owner: removing an admin is owner-only.
+    renderMembers({ canRemove: true, isOwner: false });
+
+    expect(await screen.findByText("Ada")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remove ada/i })).toBeNull();
+  });
+
+  it("lets the owner remove another admin", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_a", displayName: "Ada", role: "admin" })],
+    });
+    client.removeMember = vi.fn().mockResolvedValue(undefined);
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Ada")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /remove ada/i }));
+    await waitFor(() => expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE_ID, "acc_a"));
+  });
+
+  it("never offers controls on the owner's own row", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_owner", displayName: "Olive", role: "admin", isOwner: true })],
+    });
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Olive")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remove olive/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /make member/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /transfer ownership/i })).toBeNull();
+  });
+
+  // --- Role controls (owner-only) ------------------------------------------
+
+  it("hides role controls when the caller is not the owner", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_m", displayName: "Mel", role: "member" })],
+    });
+
+    renderMembers({ canRemove: true, isOwner: false });
+
+    expect(await screen.findByText("Mel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /make admin/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /transfer ownership/i })).toBeNull();
+  });
+
+  it("promotes a member to admin through the client (owner)", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_m", displayName: "Mel", role: "member" })],
+    });
+    client.setMemberRole = vi.fn().mockResolvedValue({ ok: true, role: "admin" });
+    const onMembersChanged = vi.fn();
+
+    renderMembers({ canRemove: true, isOwner: true, onMembersChanged });
+
+    expect(await screen.findByText("Mel")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /make admin/i }));
+
+    await waitFor(() =>
+      expect(client.setMemberRole).toHaveBeenCalledWith(WORKSPACE_ID, "acc_m", "admin"),
+    );
+    await waitFor(() => expect(onMembersChanged).toHaveBeenCalled());
+    // Optimistically reflected: the label flips and the control offers demotion.
+    expect(await screen.findByRole("button", { name: /make member/i })).toBeInTheDocument();
+  });
+
+  it("demotes an admin to member through the client (owner)", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_a", displayName: "Ada", role: "admin" })],
+    });
+    client.setMemberRole = vi.fn().mockResolvedValue({ ok: true, role: "member" });
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Ada")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /make member/i }));
+
+    await waitFor(() =>
+      expect(client.setMemberRole).toHaveBeenCalledWith(WORKSPACE_ID, "acc_a", "member"),
+    );
+  });
+
+  // --- Transfer ownership --------------------------------------------------
+
+  it("transfers ownership through the client after confirmation (owner)", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_a", displayName: "Ada", role: "admin" })],
+    });
+    client.transferOwnership = vi.fn().mockResolvedValue({ ok: true });
+    const onWorkspaceChanged = vi.fn();
+
+    renderMembers({ canRemove: true, isOwner: true, onWorkspaceChanged });
+
+    expect(await screen.findByText("Ada")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /transfer ownership/i }));
+
+    // A confirm dialog gates the transfer.
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /transfer ownership/i }));
+
+    await waitFor(() =>
+      expect(client.transferOwnership).toHaveBeenCalledWith(WORKSPACE_ID, "acc_a"),
+    );
+    await waitFor(() => expect(onWorkspaceChanged).toHaveBeenCalled());
+  });
+
+  it("does not transfer when the confirm dialog is cancelled", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_a", displayName: "Ada", role: "admin" })],
+    });
+    client.transferOwnership = vi.fn().mockResolvedValue({ ok: true });
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Ada")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /transfer ownership/i }));
+
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+    expect(client.transferOwnership).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("surfaces an error when removeMember is rejected (e.g. last-admin guard)", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
-      members: [
-        {
-          accountId: "acc_3",
-          displayName: "Carol",
-          githubLogin: "carol",
-          email: null,
-          avatarUrl: null,
-          role: "admin",
-        },
-      ],
+      members: [member({ accountId: "acc_3", displayName: "Carol", role: "admin" })],
     });
     client.removeMember = vi
       .fn()
       .mockRejectedValue(new Error("cannot remove the last admin"));
 
-    renderMembers({ canRemove: true });
+    renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Carol")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /remove/i }));
+    await userEvent.click(screen.getByRole("button", { name: /remove carol/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/last admin/i);
     // The optimistic removal is rolled back, so Carol remains on the roster.
@@ -183,16 +304,7 @@ describe("Members", () => {
 
   it("disables the row's remove button while a remove is in flight", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
-      members: [
-        {
-          accountId: "acc_9",
-          displayName: "Dave",
-          githubLogin: "dave",
-          email: null,
-          avatarUrl: null,
-          role: "member",
-        },
-      ],
+      members: [member({ accountId: "acc_9", displayName: "Dave", role: "member" })],
     });
     let resolve!: () => void;
     client.removeMember = vi.fn().mockReturnValue(
@@ -213,20 +325,11 @@ describe("Members", () => {
   });
 
   it("recovers the roster from the server when a remove is rejected", async () => {
-    const members = [
-      {
-        accountId: "acc_e",
-        displayName: "Erin",
-        githubLogin: "erin",
-        email: null,
-        avatarUrl: null,
-        role: "admin",
-      },
-    ];
+    const members = [member({ accountId: "acc_e", displayName: "Erin", role: "admin" })];
     client.listMembers = vi.fn().mockResolvedValue({ members });
     client.removeMember = vi.fn().mockRejectedValue(new Error("cannot remove the last admin"));
 
-    renderMembers({ canRemove: true });
+    renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Erin")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /remove erin/i }));

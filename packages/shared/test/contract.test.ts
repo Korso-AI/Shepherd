@@ -31,6 +31,11 @@ import {
   CreateInviteRequest,
   MintTokenResponse,
   WorkspaceSummary,
+  MemberSummary,
+  SetMemberRoleRequest,
+  SetMemberRoleResponse,
+  TransferOwnershipRequest,
+  TransferOwnershipResponse,
   TokenSummary,
   InviteResponse,
   FeedbackRequest,
@@ -951,12 +956,56 @@ describe("MintTokenResponse", () => {
 
 describe("WorkspaceSummary", () => {
   it("parses a workspace summary with a valid role", () => {
-    const r = WorkspaceSummary.parse({ id: "w1", slug: "acme", name: "Acme", role: "member" });
+    const r = WorkspaceSummary.parse({ id: "w1", slug: "acme", name: "Acme", role: "member", isOwner: false });
     expect(r.role).toBe("member");
+    expect(r.isOwner).toBe(false);
   });
 
   it("rejects a role outside the enum", () => {
-    expect(WorkspaceSummary.safeParse({ id: "w1", slug: "acme", name: "Acme", role: "guest" }).success).toBe(false);
+    expect(WorkspaceSummary.safeParse({ id: "w1", slug: "acme", name: "Acme", role: "guest", isOwner: false }).success).toBe(false);
+  });
+
+  it("requires isOwner", () => {
+    expect(WorkspaceSummary.safeParse({ id: "w1", slug: "acme", name: "Acme", role: "admin" }).success).toBe(false);
+  });
+});
+
+describe("MemberSummary", () => {
+  it("parses a member with an isOwner flag", () => {
+    const r = MemberSummary.parse({
+      accountId: "acc_1", displayName: "Ada", githubLogin: null, email: null,
+      avatarUrl: null, role: "admin", isOwner: true,
+    });
+    expect(r.isOwner).toBe(true);
+  });
+
+  it("requires isOwner", () => {
+    expect(MemberSummary.safeParse({
+      accountId: "acc_1", displayName: null, githubLogin: null, email: null,
+      avatarUrl: null, role: "member",
+    }).success).toBe(false);
+  });
+});
+
+describe("SetMemberRole / TransferOwnership", () => {
+  it("SetMemberRoleRequest accepts a valid role and rejects others", () => {
+    expect(SetMemberRoleRequest.parse({ role: "admin" }).role).toBe("admin");
+    expect(SetMemberRoleRequest.safeParse({ role: "owner" }).success).toBe(false);
+  });
+
+  it("SetMemberRoleResponse carries ok + the new role", () => {
+    const r = SetMemberRoleResponse.parse({ ok: true, role: "member" });
+    expect(r.ok).toBe(true);
+    expect(r.role).toBe("member");
+  });
+
+  it("TransferOwnershipRequest requires a non-empty accountId", () => {
+    expect(TransferOwnershipRequest.parse({ accountId: "acc_2" }).accountId).toBe("acc_2");
+    expect(TransferOwnershipRequest.safeParse({ accountId: "" }).success).toBe(false);
+  });
+
+  it("TransferOwnershipResponse is an ok marker", () => {
+    expect(TransferOwnershipResponse.parse({ ok: true }).ok).toBe(true);
   });
 });
 

@@ -58,6 +58,10 @@ export {
   RedeemInviteResponse,
   MemberSummary,
   ListMembersResponse,
+  SetMemberRoleRequest,
+  SetMemberRoleResponse,
+  TransferOwnershipRequest,
+  TransferOwnershipResponse,
   FeedbackType,
   FeedbackRequest,
   FeedbackResponse,
@@ -120,6 +124,10 @@ import type {
   RedeemInviteResponse,
   MemberSummary,
   ListMembersResponse,
+  SetMemberRoleRequest,
+  SetMemberRoleResponse,
+  TransferOwnershipRequest,
+  TransferOwnershipResponse,
   FeedbackType,
   FeedbackRequest,
   FeedbackResponse,
@@ -190,6 +198,10 @@ export type ListEmailInvitesResponseT = z.infer<typeof ListEmailInvitesResponse>
 export type RedeemInviteResponseT = z.infer<typeof RedeemInviteResponse>;
 export type MemberSummaryT = z.infer<typeof MemberSummary>;
 export type ListMembersResponseT = z.infer<typeof ListMembersResponse>;
+export type SetMemberRoleRequestT = z.infer<typeof SetMemberRoleRequest>;
+export type SetMemberRoleResponseT = z.infer<typeof SetMemberRoleResponse>;
+export type TransferOwnershipRequestT = z.infer<typeof TransferOwnershipRequest>;
+export type TransferOwnershipResponseT = z.infer<typeof TransferOwnershipResponse>;
 export type FeedbackTypeT = z.infer<typeof FeedbackType>;
 export type FeedbackRequestT = z.infer<typeof FeedbackRequest>;
 export type FeedbackResponseT = z.infer<typeof FeedbackResponse>;

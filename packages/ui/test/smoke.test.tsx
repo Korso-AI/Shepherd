@@ -38,7 +38,8 @@ describe("public entry exports", () => {
     // The composable config screens.
     expect(typeof rootEntry.ConfigPanel).toBe("function");
     expect(typeof rootEntry.WorkspaceSwitcher).toBe("function");
-    expect(typeof rootEntry.GeneralSettings).toBe("function");
+    expect(typeof rootEntry.WorkspaceSettings).toBe("function");
+    expect(typeof rootEntry.AccountSettings).toBe("function");
     expect(typeof rootEntry.Members).toBe("function");
     expect(typeof rootEntry.Invites).toBe("function");
     expect(typeof rootEntry.ConnectAgent).toBe("function");

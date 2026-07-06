@@ -54,12 +54,16 @@ import {
   listWorkspaceMembers,
   removeMember,
   leaveWorkspace,
+  setMemberRole,
+  transferOwnership,
 } from "./operations/members.js";
 import {
   CreateWorkspaceRequest,
   MintTokenRequest,
   CreateInviteRequest,
   InviteByEmailRequest,
+  SetMemberRoleRequest,
+  TransferOwnershipRequest,
 } from "@shepherd/shared";
 import {
   UnknownSessionError,
@@ -179,6 +183,14 @@ export function buildServer(): FastifyInstance {
     // the contract allows (pathGlobs 64×512 + intent 2048 + body 8192 ≈ 43 KiB).
     // Don't rely on Fastify's 1 MiB default for a bearer-auth coordination API.
     bodyLimit: 64 * 1024,
+    // Derive request.ip from x-forwarded-for. The documented deployments
+    // (Cloud Run, or self-host behind a reverse proxy) always interpose a
+    // proxy, so without this every caller would share the proxy's address and
+    // the per-IP pre-auth failure throttle (tenant.ts) would lump them into
+    // one bucket. On a directly-exposed hub a client can spoof XFF, which
+    // degrades only that throttle back to its per-address baseline — auth
+    // itself never keys off the address.
+    trustProxy: true,
     logger: {
       level: "info",
       redact: ['req.headers.authorization', 'req.headers["x-internal-token"]'],
@@ -523,9 +535,12 @@ export function buildServer(): FastifyInstance {
   // caller's membership of `:id` (a non-member is rejected 404 in the onRequest
   // hook) and set its role. So:
   //  - list   gates on membership only (no requireAdmin — members see the roster).
-  //  - remove requires admin, 404s an unknown target, and refuses to remove the
-  //    LAST admin (409, ConflictError); on success it also revokes that member's
-  //    tokens in this workspace so removed agents stop authenticating.
+  //  - remove requires admin, 404s an unknown target, refuses to remove the LAST
+  //    admin (409) or the OWNER (409), and requires the OWNER to remove a fellow
+  //    admin; on success it also revokes that member's tokens in this workspace
+  //    so removed agents stop authenticating.
+  //  - role   (PATCH …/members/:accountId/role) is OWNER-ONLY: promote/demote.
+  //  - transfer-ownership is OWNER-ONLY: hand the owner flag to another member.
   //  - leave  removes the caller's own membership (+ tokens), but the last admin
   //    cannot leave (409) — a workspace must always retain an admin.
   // -------------------------------------------------------------------------
@@ -537,6 +552,28 @@ export function buildServer(): FastifyInstance {
   app.delete("/workspaces/:id/members/:accountId", async (request, _reply) => {
     const { accountId } = request.params as { accountId: string };
     return removeMember(accountId, request.tenant);
+  });
+
+  // Change a member's role — OWNER-ONLY (enforced in setMemberRole). Promotes a
+  // member to admin or demotes an admin to member; the owner's own role is fixed.
+  app.patch("/workspaces/:id/members/:accountId/role", async (request, _reply) => {
+    const { accountId } = request.params as { accountId: string };
+    const parsed = SetMemberRoleRequest.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+    return setMemberRole(accountId, parsed.data.role, request.tenant);
+  });
+
+  // Transfer ownership to another member — OWNER-ONLY (enforced in
+  // transferOwnership). The target becomes owner (+ admin); the former owner
+  // stays an admin.
+  app.post("/workspaces/:id/transfer-ownership", async (request, _reply) => {
+    const parsed = TransferOwnershipRequest.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+    return transferOwnership(parsed.data.accountId, request.tenant);
   });
 
   app.post("/workspaces/:id/leave", async (request, _reply) => {

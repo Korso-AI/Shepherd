@@ -16,7 +16,8 @@ One source tree, two Vite builds (`npm run build` runs both):
   export. It is **token-blind**: auth lives in the BFF in front of it. The
   stylesheet is opt-in (`@korso/shepherd-ui/styles.css`), not auto-imported.
 - **`dist/selfhost`** (`build:app`) — a self-contained SPA the **hub serves**
-  verbatim via `@fastify/static` (the hub resolves `../../ui/dist/selfhost/`).
+  verbatim via a small hand-rolled asset route in `packages/hub/src/server.ts`
+  (the hub resolves `../../ui/dist/selfhost/` and preloads the hashed assets).
   It bundles its own CSS and mounts the token-gated root.
 
 Both `dist/` outputs are gitignored; `npm run build` (root) and the hub Docker
@@ -45,6 +46,14 @@ npm -w @korso/shepherd-ui run dev    # Vite dev server for the self-host SPA
 Other scripts: `build` (both outputs), `build:lib`, `build:app`, `type-check`
 (`tsc --noEmit`), `test` (Vitest, jsdom).
 
-## Phase note
+## Scope note
 
-Korso-side consumption of the `dist/lib` library is **finalized in Phase 5**.
+The `dist/lib` component library is consumed by the hosted Korso product; that
+integration lives outside this repository. The self-host SPA (`dist/selfhost`)
+is fully served by the hub in this repo.
+
+## License
+
+AGPL-3.0-only — see the repository [`LICENSE`](../../LICENSE) file and the
+licensing section of the [root README](../../README.md#license) (the AGPL's
+network-service clause applies; commercial licensing is available from Korso).

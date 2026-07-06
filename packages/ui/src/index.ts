@@ -40,7 +40,8 @@ export type { DashboardProps } from "./components/Dashboard.js";
 export {
   ConfigPanel,
   WorkspaceSwitcher,
-  GeneralSettings,
+  WorkspaceSettings,
+  AccountSettings,
   Members,
   Invites,
   ConnectAgent,
@@ -49,7 +50,8 @@ export {
 export type {
   ConfigPanelProps,
   WorkspaceSwitcherProps,
-  GeneralSettingsProps,
+  WorkspaceSettingsProps,
+  AccountSettingsProps,
   MembersProps,
   InvitesProps,
   ConnectAgentProps,

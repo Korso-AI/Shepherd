@@ -9,32 +9,37 @@ from four components:
 - **MCP server** (`@korso/shepherd`, `packages/mcp-server`) — a thin **stdio**
   Model Context Protocol server that each agent runs locally and that forwards
   requests to the hub.
+- **Shared contract** (`@shepherd/shared`, `packages/shared`) — the zod wire
+  contract + identity canonicalization that the other packages build on.
 - **Dashboard** (`@korso/shepherd-ui`, `packages/ui`) — a read/operate UI for the
   workspace, built as an auth-agnostic React app (Vite). It ships as two outputs:
   a component library for Korso and a self-host SPA the hub serves (see the UI
   section below).
 
 Shepherd is designed to run in **two modes**, selected **per request** (not by a
-build flag) by whether the trusted `x-internal-token` header is present:
+build flag) by which credential the request carries:
 
 - **Self-hosted** — a single trusted team runs its own hub and points its agents
   at it directly. Requests carry `TEAM_TOKEN` as a bearer credential; the hub
-  maps them to the fixed `self-hosted` tenant and enforces the
-  `ALLOWED_WORKSPACE` guard.
-- **Korso-hosted** — Shepherd runs as a managed Korso service behind the Korso
-  BFF, which owns end-user auth and tenant identity. The BFF presents the
-  `x-internal-token` shared secret plus a trusted `x-account-id` (a Firebase UID)
-  that **becomes the tenant id**. Multi-tenancy is **implemented today** (the
-  `tenant_id` dimension, the two-mode auth edge), as is the **packaged UI** (the
-  React `@korso/shepherd-ui` dashboard described below); hosted-console embedding of
-  the dashboard library is completed outside this repo.
+  maps them to the single workspace named by `ALLOWED_WORKSPACE`.
+- **Korso-hosted** — Shepherd runs as a managed multi-workspace service. Browser
+  requests arrive via the Korso BFF, which owns end-user auth and presents the
+  `x-internal-token` shared secret (matched against the hub's
+  `BFF_INTERNAL_TOKEN`) plus a trusted `x-account-id`; agents authenticate with
+  minted `shp_…` API tokens. Accounts reach workspaces only through
+  **membership** rows. Multi-tenancy is **implemented today**
+  (workspaces + memberships + hashed API tokens, the per-request auth edge), as
+  is the **packaged UI** (the React `@korso/shepherd-ui` dashboard described
+  below); hosted-console embedding of the dashboard library is completed
+  outside this repo.
 
 ## Connect your agent (any MCP client)
 
 Shepherd is a standard stdio MCP server published to npm, so it works with **any**
 MCP-capable agent — Claude Code, Codex, Pi, and others. The launch command and the
-two required env vars (`HUB_URL`, `TEAM_TOKEN`) are identical everywhere; only the
-config location differs per client. Set `PROGRAM` to your tool so you appear under
+two required env vars (`HUB_URL`, plus `TEAM_TOKEN` for a self-host hub or
+`SHEPHERD_TOKEN` for a hosted one) are identical everywhere; only the config
+location differs per client. Set `PROGRAM` to your tool so you appear under
 the right name in the presence feed.
 
 > 📘 **Full walkthrough:** [`docs/shepherd-mcp-quickstart.md`](docs/shepherd-mcp-quickstart.md)
@@ -82,12 +87,14 @@ The package emits **two outputs** from one source tree (see `packages/ui/README.
 - **`dist/lib`** — a component library (`<Dashboard/>`, `createShepherdClient`,
   the React context) consumed by **Korso** when the dashboard is embedded in the
   hosted product. Auth lives in the BFF; the library is token-blind. (hosted product consumption happens outside this repo.)
-- **`dist/selfhost`** — a self-contained SPA the **hub serves**. The hub mounts
-  it via `@fastify/static` (resolving `../../ui/dist/selfhost/`), exposing
-  `GET /` (the `index.html` shell) and `GET /assets/*` (the hashed Vite-emitted
-  JS/CSS); both are auth-exempt so the shell can prompt for the token, while the
-  data endpoints stay gated. This bundle replaces the former hand-written
-  `index.html` + `app.js` wallboard and ships inside the hub Docker image.
+- **`dist/selfhost`** — a self-contained SPA the **hub serves**. The hub serves
+  it via a small hand-rolled asset route in `packages/hub/src/server.ts`
+  (resolving `../../ui/dist/selfhost/` and preloading the hashed assets),
+  exposing `GET /` (the `index.html` shell) and `GET /assets/*` (the hashed
+  Vite-emitted JS/CSS); both are auth-exempt so the shell can prompt for the
+  token, while the data endpoints stay gated. This bundle replaces the former
+  hand-written `index.html` + `app.js` wallboard and ships inside the hub
+  Docker image.
 
 `npm run build` builds both outputs as part of the full graph (after `tsc -b`
 compiles `@shepherd/shared`, which the lib bundles). The self-host SPA is also
@@ -99,12 +106,18 @@ built before `npm test`, since the hub's static-route tests serve it.
 npm install        # install all workspaces
 npm run build      # tsc -b across the project graph
 npm test           # vitest run
+npm run check      # build + test — the same gate CI runs
 npm run dev:hub    # run the hub in watch mode
 npm run dev:mcp    # run the MCP server
 npm run migrate    # run hub database migrations
 ```
 
-Environment variables are documented in `.env.example`.
+Environment variables are documented in `.env.example`. The `dev:hub` /
+`dev:mcp` / `migrate` scripts auto-load `.env` (via
+`tsx --env-file-if-exists=.env`, which needs **Node >= 22.9** — on older Node,
+export the vars in your shell instead). To run the hub locally you need its
+three required self-host vars: `DATABASE_URL`, `TEAM_TOKEN`, and
+`ALLOWED_WORKSPACE`.
 
 ## Running integration tests
 
@@ -143,30 +156,32 @@ each test truncates all tables for isolation.
 
 Shepherd runs in two deployment modes from **one codebase**. The mode is chosen
 **per request**, never by a build flag or a separate env switch: the auth edge
-(`packages/hub/src/tenancy.ts`, wired into the `onRequest` hook in
-`packages/hub/src/server.ts`) looks at whether a string `x-internal-token` header
-is present and resolves the request to exactly one tenant, failing closed (401)
-on any uncertainty.
+(`resolveTenant` in `packages/hub/src/tenant.ts`, wired into the `onRequest`
+hook in `packages/hub/src/server.ts`) reduces every request to exactly **one**
+credential and resolves it to a workspace scope, failing closed (401) on any
+uncertainty. Resolution order (first match wins):
 
-- **Self-hosted.** A single trusted team runs its own hub. There is **no**
-  `x-internal-token`. Every client — each agent's MCP server, and the self-host
-  dashboard SPA — carries the `TEAM_TOKEN` as an `Authorization: Bearer`
-  credential straight to the hub. The request maps to the fixed tenant id `self-hosted`, and
-  the `ALLOWED_WORKSPACE` join-guard is **ENFORCED** (`join` rejects any other
-  workspace with a 400). Any inbound `x-account-id` is **ignored** — a self-host
-  client may never set the tenant. This path remains the self-host baseline.
-- **Korso-hosted.** Requests flow through the **Korso BFF** rather than hitting
-  the hub directly. The BFF presents a trusted `x-internal-token` (compared
-  constant-time against the hub's `INTERNAL_API_TOKEN`) and a trusted
-  `x-account-id` (a Firebase UID), which — only after the shared secret verifies
-  — **becomes the tenant id** (`mode: "hosted"`). On this path the
-  `ALLOWED_WORKSPACE` join-guard is **SKIPPED**: each tenant is isolated by
-  `tenant_id` at the data layer, so the shared hub accepts whatever workspace the
-  BFF presents. The `Authorization: Bearer` on this path is the Cloud Run **OIDC**
-  token (validated by Cloud Run IAM, not by the app) — `TEAM_TOKEN` is **not**
-  consulted. If `x-internal-token` is present but the hub has no
-  `INTERNAL_API_TOKEN` configured, the request is denied (401) — it never falls
-  back to the self-host path.
+1. **`x-internal-token` — hosted, browser-via-BFF.** The shared secret is
+   compared constant-time against the hub's `BFF_INTERNAL_TOKEN`; only after it
+   verifies is the trusted `x-account-id` honoured, and the account reaches a
+   workspace only through a live **membership** row (a non-member gets a
+   generic 404). If `x-internal-token` is present but wrong — or the hub has no
+   `BFF_INTERNAL_TOKEN` configured — the request is denied (401); it never
+   falls back to the self-host path.
+2. **`Authorization: Bearer shp_…` — hosted, agent/API token.** A minted token
+   (stored only as a SHA-256 hash in `api_tokens`) resolves to its owning
+   account and workspace, gated on the account's **live membership** — a
+   revoked membership means the token no longer resolves.
+3. **`Authorization: Bearer <TEAM_TOKEN>` — self-hosted.** A single trusted
+   team runs its own hub; every client — each agent's MCP server, and the
+   self-host dashboard SPA — carries `TEAM_TOKEN` straight to the hub, and the
+   request resolves to the one workspace named by `ALLOWED_WORKSPACE` (seeded
+   on boot). Any inbound `x-account-id` is **ignored** — a self-host client can
+   never assert an account.
+
+Config requires at least one mode to be **fully configured** before the hub
+boots: `TEAM_TOKEN` + `ALLOWED_WORKSPACE` (self-host), or `BFF_INTERNAL_TOKEN`
+alone (hosted). Both may be configured simultaneously.
 
 ## Auth ownership
 
@@ -178,8 +193,8 @@ state and issues operator actions on top of whatever auth layer sits in front.
 
 The **single exception** is self-hosted mode: with no BFF in front of it, the
 hub itself enforces the `TEAM_TOKEN` gate before any data route runs. That gate
-lives in the per-request tenant resolver (`resolveRequestTenant` in
-`packages/hub/src/tenancy.ts`), called from the `onRequest` hook in
+lives in the per-request tenant resolver (`resolveTenant` in
+`packages/hub/src/tenant.ts`), called from the `onRequest` hook in
 `packages/hub/src/server.ts`. The same resolver owns both modes and shares one
 constant-time comparison (`timingSafeCompare`) across the self-host `TEAM_TOKEN`
 check and the hosted `x-internal-token` check.
@@ -208,39 +223,43 @@ team, rotate it via Secret Manager if a teammate leaves, and do not paste
 
 ## Multi-tenancy
 
-**Tenancy is implemented.** Every coordination table carries a
-`NOT NULL tenant_id`, and `tenant_id` sits **above** workspace in the partition
-hierarchy: `tenant_id → workspace → repo`. The mental model is **one Korso
-customer = one tenant = many workspaces/repos**. `workspace` and `repo` keep
-exactly their previous meanings; `tenant_id` is a new outer boundary above them.
-The data layer (`packages/hub/src/repo.ts`) scopes **every** query by the
-resolved `tenant.tenantId`, so a caller can never read or mutate another tenant's
-rows. The partition-defining constraints and the hot composite indexes are
-re-led with `tenant_id` (see migration `011`), so per-tenant uniqueness holds
-(two tenants can each have an agent `alpha` in workspace `acme`, and the same
-`commit_sha` reported in two tenants does not collide) and per-tenant queries
-stay index-backed.
+**Tenancy is implemented, and the boundary is the workspace.** Migration `011`
+stood up the identity/tenancy tables — `workspaces`, `memberships`,
+`api_tokens`, `invites`, `account_profiles` — and re-keyed every coordination
+table (`agents`, `sessions`, `work_items`, `announcements`, `change_records`)
+onto a `NOT NULL workspace_id` FK into `workspaces`, with the uniqueness
+constraints and hot composite indexes re-led by `workspace_id` (two workspaces
+can each have an agent `alpha`, and the same `commit_sha` reported in two
+workspaces does not collide). The data layer (`packages/hub/src/repo.ts`)
+scopes **every** query by the resolved `workspace_id`, so a caller can never
+read or mutate another workspace's rows. The mental model is **one account →
+many workspaces via memberships; one workspace → many repos**.
 
-**How a request gets its tenant id:**
+**How a request gets its workspace** (`resolveTenant` in
+`packages/hub/src/tenant.ts` — see "Deployment modes" above for the full
+resolution order):
 
-- **Hosted** — the trusted `x-account-id` (a Firebase UID), honoured only after
-  the `x-internal-token` shared secret verifies, becomes the `tenant_id`. The
-  header is re-validated at the trust boundary (`AccountId`: 1..128 chars,
-  `[A-Za-z0-9_-]`) and only ever reaches SQL as a parameterized value.
-- **Self-hosted** — a fixed `tenant_id` of `"self-hosted"`
-  (`DEFAULT_TENANT_ID` in `tenancy.ts`). Self-hosters run one tenant and need no
-  tenant dimension; `ALLOWED_WORKSPACE` continues to pin them to one workspace.
+- **Hosted, browser** — the BFF's `x-internal-token` verifies against
+  `BFF_INTERNAL_TOKEN`, then the trusted `x-account-id`'s **membership** in the
+  route's workspace is checked; non-members get a generic 404. Trusted headers
+  only ever reach SQL as parameterized values.
+- **Hosted, agent** — a minted `shp_…` API token (stored only as a SHA-256
+  hash; migration `015` additionally allows account-scoped tokens bound to no
+  single workspace) resolves to its account and workspace, gated on live
+  membership.
+- **Self-hosted** — `TEAM_TOKEN` resolves to the single workspace named by
+  `ALLOWED_WORKSPACE` (seeded on boot): full access, no per-account identity.
 
-`ALLOWED_WORKSPACE` is therefore **not** the tenancy boundary — `tenant_id` is.
-For self-host it still pins the single tenant to one workspace (guard enforced);
-for hosted it does not constrain the BFF-forwarded agent requests (the join guard
-is skipped) and any placeholder value satisfies config. (The operator wallboard
-endpoints still scope reads/writes by it, but the BFF forwards only the agent
-endpoints.)
+Migration `011` is a **clean cutover**, not a backfill: it TRUNCATEs the
+(ephemeral) coordination tables so the `NOT NULL workspace_id` column needs no
+legacy rows pointed anywhere — agents re-join and claims re-acquire on their
+next heartbeat, so no durable data is lost.
 
-The operator-identity seam is unchanged: `HUB_ADMIN_LABEL` stamps the sender on
-operator announcements today and is a documented placeholder for a future login
-flow that will supply a real per-user identity and override it per request.
+The operator-identity seam: `HUB_ADMIN_LABEL` stamps the sender on
+announcements the operator sends from the self-host dashboard, and the hosted
+`/admin/*` analytics surface additionally requires a BFF-signed operator
+identity proof verified with `OPERATOR_IDENTITY_SECRET` (fail-closed when
+unset).
 
 ## Deploying the hub (GCP)
 
@@ -253,20 +272,20 @@ which env/secrets it sets):
 
 - **Self-host (unchanged).** GCP IAM unauthenticated access is enabled
   (`--allow-unauthenticated`) because the app enforces its own bearer token
-  (`TEAM_TOKEN`). `INTERNAL_API_TOKEN` is **unset**, so the hub runs in the
+  (`TEAM_TOKEN`). `BFF_INTERNAL_TOKEN` is **unset**, so the hub runs in the
   self-host floor with no hosted path. **Nothing new is required of the operator
   for hosted multi-tenancy.**
 - **Korso-hosted.** GCP IAM is the front-line gate: deploy with
   `--no-allow-unauthenticated` and grant the BFF's invoker service account
-  `roles/run.invoker`. Set `INTERNAL_API_TOKEN` (the BFF's shared secret); the
+  `roles/run.invoker`. Set `BFF_INTERNAL_TOKEN` (the BFF's shared secret); the
   app then uses it to select the hosted path per request. `TEAM_TOKEN` and
-  `ALLOWED_WORKSPACE` are still **required by config** but are inert on hosted
-  agent requests — set `TEAM_TOKEN` to an unused strong random value and
-  `ALLOWED_WORKSPACE` to any placeholder.
+  `ALLOWED_WORKSPACE` are **not required** in this posture — `BFF_INTERNAL_TOKEN`
+  alone satisfies config; set them too only if you also want the self-host path
+  on the same hub.
 
-**Migration `011` (the `tenant_id` column + backfill) auto-applies on boot** in
-both postures and backfills every existing row to the `self-hosted` tenant — no
-operator action, no separate migration job.
+**Migrations auto-apply on boot** in both postures — no operator action, no
+separate migration job. (Migration `011` is a clean cutover that truncates the
+ephemeral coordination tables; see "Multi-tenancy" above.)
 
 The Dockerfile and app are portable — Fly.io, Railway, or Render are drop-in
 alternatives if GCP is not preferred.
@@ -314,11 +333,11 @@ echo -n "<token-from-above>" | \
 echo -n "postgres://shepherd:<password>@/shepherd?host=/cloudsql/<conn-name>" | \
   gcloud secrets create your-database-url-secret --data-file=-
 
-# HOSTED ONLY — store the internal API token (the BFF's shared secret). This is
-# the same value the BFF sends as the x-internal-token header (the frontend's
-# SHEPHERD_API_TOKEN). Generate it with `openssl rand -hex 32`. NEVER commit it.
-echo -n "<internal-api-token>" | \
-  gcloud secrets create your-internal-api-token-secret --data-file=-
+# HOSTED ONLY — store the BFF internal token (the BFF's shared secret). This is
+# the same value the BFF sends as the x-internal-token header. Generate it with
+# `openssl rand -hex 32`. NEVER commit it.
+echo -n "<bff-internal-token>" | \
+  gcloud secrets create your-bff-internal-token-secret --data-file=-
 ```
 
 ### Step 3 — Deploy to Cloud Run
@@ -327,7 +346,7 @@ Run from the **repo root** (build context must be the monorepo root). Pick the
 command matching your posture.
 
 **Self-host (unchanged).** `--allow-unauthenticated` is correct — GCP IAM is not
-used for auth; the app enforces the bearer token. `INTERNAL_API_TOKEN` is left
+used for auth; the app enforces the bearer token. `BFF_INTERNAL_TOKEN` is left
 unset, so there is no hosted path. Cloud Run issues an HTTPS endpoint
 automatically.
 
@@ -347,10 +366,9 @@ gcloud run deploy shepherd-hub \
 **Korso-hosted.** IAM is required (`--no-allow-unauthenticated`); the BFF's
 invoker service account must hold `roles/run.invoker` on this service. The hub's
 Cloud Run URL becomes the BFF's `SHEPHERD_API_BASE` and the OIDC token `aud`. Set
-`INTERNAL_API_TOKEN` from Secret Manager (it selects the hosted path per
-request). `TEAM_TOKEN` and `ALLOWED_WORKSPACE` are still required by config but
-inert on hosted agent requests — use an unused strong-random `TEAM_TOKEN` and a
-placeholder `ALLOWED_WORKSPACE`.
+`BFF_INTERNAL_TOKEN` from Secret Manager (it selects the hosted path per
+request). `TEAM_TOKEN` and `ALLOWED_WORKSPACE` are **not needed** in this
+posture — `BFF_INTERNAL_TOKEN` alone satisfies config.
 
 ```bash
 gcloud run deploy shepherd-hub \
@@ -359,8 +377,7 @@ gcloud run deploy shepherd-hub \
   --region=<region> \
   --min-instances=1 \
   --add-cloudsql-instances=<conn-name> \
-  --set-secrets=TEAM_TOKEN=your-team-token-secret:latest,DATABASE_URL=your-database-url-secret:latest,INTERNAL_API_TOKEN=your-internal-api-token-secret:latest \
-  --set-env-vars=ALLOWED_WORKSPACE=placeholder \
+  --set-secrets=DATABASE_URL=your-database-url-secret:latest,BFF_INTERNAL_TOKEN=your-bff-internal-token-secret:latest \
   --no-allow-unauthenticated \
   --port=8080
 
@@ -390,9 +407,10 @@ curl https://<service-url>/health
 
 ### Step 5 — Configure MCP servers on each machine (self-host)
 
-This step applies to the **self-host** posture, where agents talk to the hub
-directly. On a Korso-hosted deploy, agents go through the BFF instead and never
-hold `TEAM_TOKEN` — there is nothing to configure here.
+This step applies to the **self-host** posture, where agents authenticate with
+the shared `TEAM_TOKEN`. On a hosted deploy, agents never hold `TEAM_TOKEN` —
+each user sets `SHEPHERD_TOKEN` to a minted `shp_…` token from the dashboard
+instead (see [`docs/shepherd-mcp-quickstart.md`](docs/shepherd-mcp-quickstart.md)).
 
 Set these in each founder's shell environment (or `.env`):
 
@@ -405,10 +423,11 @@ WORKSPACE=<your-workspace>
 ### Notes
 
 - **Migrations** run automatically on every container boot (idempotent via
-  advisory lock in `migrate.ts`). No separate migration job is needed. This
-  includes migration `011`, which adds `tenant_id` and **backfills every existing
-  row to the `self-hosted` tenant** — so upgrading an existing self-host hub is a
-  zero-action redeploy.
+  advisory lock in `migrate.ts`). No separate migration job is needed. Note
+  that migration `011` (the workspace/tenancy cutover) **truncates the
+  ephemeral coordination tables** rather than backfilling — agents re-join and
+  claims re-acquire on their next heartbeat, so upgrading an existing self-host
+  hub is still a zero-action redeploy with no durable data lost.
 - **`CREATE EXTENSION pgcrypto`** runs without issue as the Cloud SQL default
   user; it is included in migration `001_init.sql`.
 - **Cloud SQL connectivity**: the Unix-socket form
@@ -421,22 +440,16 @@ WORKSPACE=<your-workspace>
   applied with `gcloud run services replace packages/hub/cloudrun-service.yaml`
   after substituting the placeholder values.
 
-### Hosted-console integration notes
+### Integration notes for the hosted Korso console (internal)
 
-The hub is hosted-ready; an upstream hosted console or BFF must honour these contract details:
-
-- **`forwardToUpstream` is GET-only today, but every forwarded Shepherd endpoint
-  is POST** (`/join`, `/work`, `/done`, …). the forwarder must
-  pass the method **and** request body through (or add a write-capable variant).
-  The hub keeps its POST endpoints.
-- **The upstream-registry `pathPrefix` for Shepherd should be `""`.** The hub's
-  routes are at **root** (`/work`, not `/api/work`). The registry's `pathPrefix`
-  is a required per-upstream field with no global default, so the `shepherd`
-  entry must set it to the empty string (otherwise paths get double-prefixed).
-- **The OIDC token `aud` must equal the hub's Cloud Run URL.** With
-  `audience: "base"`, the BFF mints the OIDC token with `aud = SHEPHERD_API_BASE`
-  (the hub's own service URL), and the hosted hub's Cloud Run IAM check validates
-  exactly that — so `SHEPHERD_API_BASE` must be the hub's own URL.
+These notes apply only to the Korso-hosted console/BFF integration;
+self-hosters can ignore them. The upstream forwarder must pass the request
+**method and body** through — every forwarded Shepherd endpoint is POST
+(`/join`, `/work`, `/done`, …). The hub's routes live at the **root** (`/work`,
+not `/api/work`), so the console's per-upstream path prefix for Shepherd must
+be the empty string. And the Cloud Run OIDC token's `aud` must equal the hub's
+own Cloud Run URL (the BFF's `SHEPHERD_API_BASE`), since that is exactly what
+the IAM check validates.
 
 ## License
 

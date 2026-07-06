@@ -1,21 +1,24 @@
 import { useState } from "react";
 import type { WorkspaceSummaryT } from "@shepherd/shared";
-import { GeneralSettings } from "./GeneralSettings.js";
+import { WorkspaceSettings } from "./WorkspaceSettings.js";
 import { Members } from "./Members.js";
 import { Invites } from "./Invites.js";
 import { ConnectAgent } from "./ConnectAgent.js";
+import { AccountSettings } from "./AccountSettings.js";
 
 // ---------------------------------------------------------------------------
-// ConfigPanel — the Config tab's body: a left sidebar of sections (General ·
-// Members · Agent) beside the active section's panel, replacing the old single
-// long scroll. Scoping every section to the CURRENT workspace is what let the
-// switch/create/join actions move out to the app-bar <WorkspaceSwitcher>.
+// ConfigPanel — the Config tab's body: a left sidebar of sections beside the
+// active section's panel. Each section is scoped to the CURRENT workspace except
+// Account, which is account-level:
 //
-//   • General — workspace name, the caller's role, Leave/Delete workspace, and
-//     the account rows (Sign out · Delete account). Account actions live HERE —
-//     as ordinary General fields — not as a footer trailing every section.
-//   • Members — the roster (admin-gated Remove) + admin-only Invites.
-//   • Agent   — mint a token + the copy-paste install command.
+//   • Workspace — workspace name, the caller's role (shown "owner" for the
+//     creator), Leave/Delete workspace. (Was "General" — renamed so it reads as
+//     workspace-scoped, and the account rows moved out to Account below.)
+//   • Members   — the roster (admin-gated Remove, owner-gated role controls +
+//     Transfer ownership) + admin-only Invites.
+//   • Agent     — mint a token + the copy-paste install command.
+//   • Account   — the account rows (Sign out · Delete account), split out of the
+//     Workspace tab so account and workspace actions no longer mix.
 //
 // Sidebar nav uses aria-current for the active item (a settings-style nav, not
 // a formal ARIA tablist). ConfigPanel renders only when a workspace is selected
@@ -23,12 +26,13 @@ import { ConnectAgent } from "./ConnectAgent.js";
 // switcher's "Get started" menu instead.
 // ---------------------------------------------------------------------------
 
-type Section = "general" | "members" | "agent";
+type Section = "workspace" | "members" | "agent" | "account";
 
 const SECTIONS: ReadonlyArray<{ id: Section; label: string }> = [
-  { id: "general", label: "General" },
+  { id: "workspace", label: "Workspace" },
   { id: "members", label: "Members" },
   { id: "agent", label: "Agent" },
+  { id: "account", label: "Account" },
 ];
 
 export interface ConfigPanelProps {
@@ -38,8 +42,14 @@ export interface ConfigPanelProps {
   hubUrl?: string;
   /** Bumped by the shell to force the roster to refetch (invite created/redeemed). */
   membersRefreshKey?: number;
-  /** Called after an invite is created, so the shell can refresh the roster. */
+  /** Called after an invite is created or a role changes, so the shell can refresh the roster. */
   onMembersChanged?: () => void;
+  /**
+   * Called after a change to the caller's OWN standing in the workspace (an
+   * ownership transfer flips them owner→admin), so the shell re-lists its
+   * workspaces and the "Your role" label + owner-only controls update.
+   */
+  onWorkspaceChanged?: () => void;
   /** Called after a successful leave, so the shell re-lists its workspaces. */
   onLeft?: () => void;
   /** Called after a successful delete, so the shell re-lists its workspaces. */
@@ -56,11 +66,12 @@ export function ConfigPanel({
   hubUrl,
   membersRefreshKey,
   onMembersChanged,
+  onWorkspaceChanged,
   onLeft,
   onDeleted,
   onLogout,
 }: ConfigPanelProps) {
-  const [section, setSection] = useState<Section>("general");
+  const [section, setSection] = useState<Section>("workspace");
   const isAdmin = workspace.role === "admin";
 
   return (
@@ -80,13 +91,8 @@ export function ConfigPanel({
       </nav>
 
       <div className="config-panel">
-        {section === "general" && (
-          <GeneralSettings
-            workspace={workspace}
-            onLeft={onLeft}
-            onDeleted={onDeleted}
-            onLogout={onLogout}
-          />
+        {section === "workspace" && (
+          <WorkspaceSettings workspace={workspace} onLeft={onLeft} onDeleted={onDeleted} />
         )}
 
         {section === "members" && (
@@ -95,6 +101,9 @@ export function ConfigPanel({
               workspaceId={workspace.id}
               refreshKey={membersRefreshKey}
               canRemove={isAdmin}
+              isOwner={workspace.isOwner}
+              onMembersChanged={onMembersChanged}
+              onWorkspaceChanged={onWorkspaceChanged}
             />
             {isAdmin && (
               <Invites workspaceId={workspace.id} onMembersChanged={onMembersChanged} />
@@ -103,6 +112,8 @@ export function ConfigPanel({
         )}
 
         {section === "agent" && <ConnectAgent hubUrl={hubUrl} />}
+
+        {section === "account" && <AccountSettings onLogout={onLogout} />}
       </div>
     </div>
   );

@@ -10,6 +10,7 @@ import { buildChangeReport } from "./changeReport.js";
 import { buildInstructions } from "./instructions.js";
 import { inboxFilePath, appendAnnouncements, defaultInboxDir } from "./inbox.js";
 import { autoInstallHooks } from "./hookInstall.js";
+import { PACKAGE_VERSION } from "./version.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   // full procedure, and a never-asked repo gets the ask block. Resolved once —
   // a hot link mid-session is bridged by the link tool's own result text.
   const server = new McpServer(
-    { name: "shepherd", version: "0.1.0" },
+    { name: "shepherd", version: PACKAGE_VERSION },
     { instructions: buildInstructions(context.linkState, context.workspace) }
   );
   // registerTools auto-joins the workspace (fire-and-forget) — the agent never

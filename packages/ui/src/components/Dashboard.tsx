@@ -422,7 +422,7 @@ export function Dashboard({
     !(activeTab === "tasks" && stage !== "hidden");
 
   return (
-    <div id="board">
+    <div id="board" className={activeTab === "chat" ? "board--chat-active" : undefined}>
       <header>
         {/* The brand is the document <h1> so the outline is valid (h1 → the
             panels' h2). Inline resets keep it visually identical to the prior

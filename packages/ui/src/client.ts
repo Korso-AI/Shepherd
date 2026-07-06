@@ -10,6 +10,8 @@ import {
   ListEmailInvitesResponse,
   RedeemInviteResponse,
   ListMembersResponse,
+  SetMemberRoleResponse,
+  TransferOwnershipResponse,
   WorkspaceLandscapeResponse,
   WorkspaceAnnounceResponse,
   FeedbackResponse,
@@ -30,6 +32,9 @@ import type {
   ListEmailInvitesResponseT,
   RedeemInviteResponseT,
   ListMembersResponseT,
+  RoleT,
+  SetMemberRoleResponseT,
+  TransferOwnershipResponseT,
   WorkspaceLandscapeResponseT,
   WorkspaceAnnounceRequestT,
   WorkspaceAnnounceResponseT,
@@ -134,8 +139,19 @@ export interface ShepherdClient {
 
   /** GET the workspace's member roster. */
   listMembers(workspaceId: string): Promise<ListMembersResponseT>;
-  /** DELETE (remove) a member by account id (admin only). */
+  /** DELETE (remove) a member by account id (admin only; owner-only for admins). */
   removeMember(workspaceId: string, accountId: string): Promise<void>;
+  /** PATCH a member's role (promote/demote) — owner only. */
+  setMemberRole(
+    workspaceId: string,
+    accountId: string,
+    role: RoleT,
+  ): Promise<SetMemberRoleResponseT>;
+  /** POST to transfer workspace ownership to another member — owner only. */
+  transferOwnership(
+    workspaceId: string,
+    accountId: string,
+  ): Promise<TransferOwnershipResponseT>;
   /** POST to leave the workspace. */
   leave(workspaceId: string): Promise<void>;
 
@@ -422,6 +438,25 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
         "DELETE",
         `/workspaces/${enc(workspaceId)}/members/${enc(accountId)}`,
       );
+    },
+    setMemberRole(
+      workspaceId: string,
+      accountId: string,
+      role: RoleT,
+    ): Promise<SetMemberRoleResponseT> {
+      return request("PATCH", `/workspaces/${enc(workspaceId)}/members/${enc(accountId)}/role`, {
+        body: { role },
+        schema: SetMemberRoleResponse,
+      });
+    },
+    transferOwnership(
+      workspaceId: string,
+      accountId: string,
+    ): Promise<TransferOwnershipResponseT> {
+      return request("POST", `/workspaces/${enc(workspaceId)}/transfer-ownership`, {
+        body: { accountId },
+        schema: TransferOwnershipResponse,
+      });
     },
     leave(workspaceId: string): Promise<void> {
       return request<void>("POST", `/workspaces/${enc(workspaceId)}/leave`);

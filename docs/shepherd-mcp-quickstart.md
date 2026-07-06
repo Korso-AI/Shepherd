@@ -1,22 +1,30 @@
 # Shepherd MCP — Developer Quickstart
 
-Coordinate your agent with everyone else's by giving it four advisory tools —
-`work`, `done`, `announce`, `sync` — backed by the shared hub. Your agent joins
-the workspace **automatically** on startup and self-coordinates from there: once
-installed, you do **not** have to tell it "use shepherd." Setup is ~2 minutes,
-one time.
+Coordinate your agent with everyone else's by giving it four advisory
+coordination tools — `work`, `done`, `announce`, `sync` — plus the
+`link`/`unlink`/`decline` lifecycle tools, backed by a shared hub. In a linked
+repo your agent joins the workspace **automatically** and self-coordinates from
+there: once installed, you do **not** have to tell it "use shepherd." Setup is
+~2 minutes, one time.
+
+**Shepherd needs a hub.** Either your team already runs one — get the
+`HUB_URL` and token from whoever deployed it (or from the hosted dashboard) —
+or you deploy one first: see
+["Deploying the hub" in the README](../README.md#deploying-the-hub-gcp).
 
 > Full reference: [`packages/mcp-server/README.md`](../packages/mcp-server/README.md)
 
-## Live hub
+## Your hub
 
 | | |
 |---|---|
 | **HUB_URL** | `https://your-shepherd-hub.example.com` |
 | **TEAM_TOKEN** | shared team secret — see "Get the token" below. **Never commit it.** |
 
-That's all you *must* supply. The workspace defaults to `default` (which is what
-this hub allows), and your identity is auto-detected from git — see
+That's all you *must* supply. (On a **hosted** hub you set `SHEPHERD_TOKEN` — a
+minted `shp_…` token from the dashboard — instead of `TEAM_TOKEN`; it carries
+its own workspace, so `WORKSPACE` is ignored.) The workspace defaults to
+`default`, and your identity is auto-detected from git — see
 [§4](#4-optional-overrides) if you want to override any of it.
 
 ## 1. Prerequisites
@@ -48,7 +56,7 @@ The two values you paste in every case:
 | | |
 |---|---|
 | `HUB_URL` | `https://your-shepherd-hub.example.com` |
-| `TEAM_TOKEN` | the token from §2 |
+| `TEAM_TOKEN` | the token from §2 (**hosted hub:** set `SHEPHERD_TOKEN` — your minted `shp_…` token — instead) |
 
 > 💡 Set `PROGRAM` to your tool (`claude-code`, `codex`, `pi`, …) so you show up
 > under the right name in the presence feed. It's optional — it just defaults to
@@ -209,7 +217,7 @@ since it's the only field that is never auto-detected.
 
 | Variable | If you omit it | Set it when… |
 |---|---|---|
-| `WORKSPACE` | defaults to `default` (what this hub allows) | a maintainer points you at a different workspace; **must match the hub's `ALLOWED_WORKSPACE` exactly** or every call degrades to "proceeding uncoordinated" |
+| `WORKSPACE` | defaults to `default`; a repo's committed `.shepherd` marker wins over it, and it's **ignored entirely with `SHEPHERD_TOKEN`** (the token carries the workspace) | (self-host) a maintainer points you at a different workspace; **must match the hub's `ALLOWED_WORKSPACE` exactly** or every call degrades to "proceeding uncoordinated" |
 | `REPO` | detected from `git remote origin` as `owner/repo`, else the repo folder name, else `unknown-repo` | the auto-detected slug is wrong/ugly |
 | `BRANCH` | detected via `git rev-parse --abbrev-ref HEAD`, else `HEAD` | you want a label other than the live branch |
 | `BASE_BRANCH` | detected as `origin/HEAD`, else `origin/main` / `origin/master` | your trunk has a non-standard name (used for the "what changed" heads-up) |
@@ -236,8 +244,10 @@ silent-no-load trap:
 - **Codex / Pi:** open the `/mcp` panel in the TUI; `shepherd` should be listed
   as connected with its tools.
 
-Then **restart your session** and the `work`/`done`/`announce`/`sync` tools
-should appear. (Joining happens automatically — there is no `join` tool to call.)
+Then **restart your session** and the four coordination tools
+(`work`/`done`/`announce`/`sync`) plus the `link`/`unlink`/`decline` lifecycle
+tools should appear. (Joining happens automatically in a linked repo — there is
+no `join` tool to call; see "link a repo" below for the one-time repo opt-in.)
 
 **Optionally, smoke-test the server directly** (no MCP client needed, works for
 any client). In **PowerShell**, set the env vars first, then run:
@@ -256,8 +266,9 @@ No stderr + the process blocking on stdin = healthy (Ctrl+C to exit).
 | Symptom | Fix |
 |---|---|
 | `shepherd` tools never appear in your client | Config is in a path your client doesn't load. **Claude Code:** usually `~/.claude/mcp.json` — run `claude mcp list`, and if it's missing register with `claude mcp add` (§3). **Codex:** the TOML table must be `mcp_servers` with an underscore, in `~/.codex/config.toml`. **Pi:** `~/.pi/agent/mcp.json`. Restart after fixing. |
-| `Configuration error — missing … env vars` | You're missing `HUB_URL` or `TEAM_TOKEN` — those two are the only required vars. |
-| Tools report "session not ready … proceeding uncoordinated" every time | Auto-join failed at startup. Almost always a stale `TEAM_TOKEN`, or a `WORKSPACE` override that doesn't match the hub (leave `WORKSPACE` unset to use `default`). Fix and restart. |
+| `Configuration error — missing … env vars` | You're missing `HUB_URL`, or set neither `SHEPHERD_TOKEN` nor `TEAM_TOKEN` — those are the only required vars. |
+| Tools return a "not linked" advisory | The repo has no committed `.shepherd` marker, so the server is dormant here. Ask the agent to run `link` — it takes effect immediately (see "link a repo" below). |
+| Tools report "session not ready … proceeding uncoordinated" every time | The join failed. Almost always a stale token, or (self-host) a `WORKSPACE`/marker value that doesn't match the hub (leave `WORKSPACE` unset to use `default`). |
 | `npm error 404 … @korso/shepherd` | Package name typo, or the package isn't published yet — confirm with `npm view @korso/shepherd version` |
 | `401 Unauthorized` behaviour | Wrong/old `TEAM_TOKEN` — retrieve the current token from your deployment maintainer or secret store |
 | Your agent shows up under a surprising name/repo | Identity is auto-detected from git. Set `HUMAN`/`REPO`/`MODEL` explicitly (§4) to override. |
@@ -291,8 +302,8 @@ advisory, never a gate.
 
 ## Self-hosting: link a repo to your team's hub
 
-If you run your **own** hub (one team, one workspace) instead of the shared live
-hub above, two things differ: which token you use, and how a repo opts in.
+If you run your **own** hub (one team, one workspace), two things matter: which
+token you use, and how a repo opts in.
 
 1. **Point at your hub with your team token.** Set `HUB_URL` to your hub and
    `TEAM_TOKEN` to its shared team secret (the hub's `TEAM_TOKEN`), exactly as in
@@ -305,16 +316,17 @@ hub above, two things differ: which token you use, and how a repo opts in.
    installed globally and loads for every repo, but a repo stays dormant — no
    join, no presence, no claims — until it carries a committed `.shepherd` marker
    naming the workspace. The easiest way to write it is the **`link` tool**: ask
-   your agent to run `link` with no argument and it tells you the one workspace
-   your hub serves; run `link` again with that slug and it writes
-   `.shepherd` (`{ "workspace": "<slug>" }`) at the repo root. In self-host this
-   is purely local — `link` validates the slug against your configured
-   `WORKSPACE` and writes the file with **no hub round-trip**.
+   your agent to run `link` with no argument and it auto-picks the one workspace
+   your hub serves (your `WORKSPACE`, or `default` when unset), writes
+   `.shepherd` (`{ "workspace": "<slug>" }`) at the repo root, and starts
+   coordinating **immediately — no restart**. In self-host the slug validation
+   is purely local (no hub call to list workspaces): `link` checks it against
+   your configured `WORKSPACE`.
 
-   The marker takes effect on the **next** session, so **restart** to coordinate
-   now. Commit `.shepherd` (it's safe — it names only the workspace, never a
+   Commit `.shepherd` (it's safe — it names only the workspace, never a
    token) so every teammate who clones the repo auto-joins the same workspace
-   with zero setup. To opt back out, run `unlink` (removes the marker).
+   with zero setup. To opt back out, run `unlink` (removes the marker), or
+   `decline` to stop being asked without linking.
 
 > The marker is a one-time, per-repo opt-in, not an expiring token: once
 > committed it just stays. There is no ephemeral "one-time link code" to redeem —

@@ -3,7 +3,7 @@ import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { Dashboard } from "./components/Dashboard.js";
 import { WorkspaceSwitcher } from "./config/WorkspaceSwitcher.js";
 import { ConfigPanel } from "./config/ConfigPanel.js";
-import { AccountActions } from "./config/AccountActions.js";
+import { AccountSettings } from "./config/AccountSettings.js";
 import { useShepherdClient } from "./context.js";
 import { describeError } from "./client.js";
 
@@ -124,6 +124,7 @@ export function ShepherdRoot({ hubUrl, onLogout }: ShepherdRootProps) {
           hubUrl={hubUrl}
           membersRefreshKey={membersRefreshKey}
           onMembersChanged={() => setMembersRefreshKey((k) => k + 1)}
+          onWorkspaceChanged={() => void fetchWorkspaces()}
           onLeft={() => void fetchWorkspaces()}
           onDeleted={() => void fetchWorkspaces()}
           onLogout={onLogout}
@@ -135,16 +136,8 @@ export function ShepherdRoot({ hubUrl, onLogout }: ShepherdRootProps) {
             top to create one or join with an invite code.
           </p>
           {/* Account actions still need a home with no workspace selected —
-              rendered as a proper Config card, matching the General tab. */}
-          <section className="shepherd-general config-account" aria-label="Account">
-            <div className="card-head">
-              <h3>Account</h3>
-              <p className="card-sub">Your Shepherd dashboard session and account.</p>
-            </div>
-            <div className="card-body">
-              <AccountActions onLogout={onLogout} />
-            </div>
-          </section>
+              rendered as the same Account card as the Config → Account tab. */}
+          <AccountSettings onLogout={onLogout} />
         </>
       )}
     </section>

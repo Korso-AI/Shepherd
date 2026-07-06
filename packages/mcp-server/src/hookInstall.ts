@@ -23,10 +23,11 @@
  * protocol-level and universal, no environment sniffing.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PACKAGE_VERSION } from "./version.js";
 
 /** The clients we know how to install into. */
 export type ClientKind = "claude" | "codex" | "pi" | "cursor" | "unknown";
@@ -58,18 +59,74 @@ export interface InstallResult {
     | "disabled"; // SHEPHERD_NO_AUTO_HOOKS opt-out
 }
 
-/** Must match the Connect screen's manual snippet exactly (one source of truth
- * for what "the hook" is; a manual paste and an auto-install must dedupe). */
-export const HOOK_COMMAND = "npx -y --package=@korso/shepherd shepherd-inbox-hook";
+/** Fallback hook command when no locally-cached script is available (dev runs
+ * from src/ with no bundle to cache — see {@link ensureHookScript}). Pinned to
+ * this build's version so an installed hook can't silently start running a
+ * future (possibly compromised) release via floating `npx`. Dedupe against a
+ * manual paste of the Connect screen's (unpinned) snippet is by the
+ * HOOK_MARKER substring, not exact equality, so neither the pin nor the local
+ * script path causes double-installs. */
+export const HOOK_COMMAND = `npx -y --package=@korso/shepherd@${PACKAGE_VERSION} shepherd-inbox-hook`;
 const HOOK_MARKER = "shepherd-inbox-hook";
 
-const CODEX_HOOK_BLOCK = [
-  "",
-  "# Added by Shepherd: delivers teammate announcements to the agent. Remove to disable.",
-  "[[hooks.UserPromptSubmit]]",
-  'command = ["npx", "-y", "--package=@korso/shepherd", "shepherd-inbox-hook"]',
-  "",
-].join("\n");
+/**
+ * Cache the bundled inbox hook as a plain local script and return its path,
+ * or null when there is nothing to cache (dev runs from src/, or any fs
+ * error — fail-open to the npx fallback).
+ *
+ * Why: the installed hook command used to be `npx -y @korso/shepherd …`,
+ * which spawned an npx resolution on EVERY tool call (slow) and floated to
+ * whatever version the registry served (a standing supply-chain surface). A
+ * `node <local script>` command spawns bare node, fetches nothing, and runs
+ * exactly the code this server shipped with. Refreshed on every boot (content
+ * compare, write-then-rename so a hook firing mid-refresh never reads a torn
+ * file), so the hook tracks the MCP-server version the user actually runs.
+ *
+ * `.mjs` because the bundle is ESM and ~/.shepherd has no package.json to
+ * disambiguate a bare `.js` on older Node versions. The bundle imports only
+ * node built-ins, so it runs from any path with no node_modules.
+ */
+export function ensureHookScript(homeDir: string, hookScriptSource?: string): string | null {
+  const source =
+    hookScriptSource ?? join(dirname(fileURLToPath(import.meta.url)), "inboxHook.js");
+  try {
+    if (!existsSync(source)) return null;
+    const dest = join(homeDir, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
+    const next = readFileSync(source);
+    const current = existsSync(dest) ? readFileSync(dest) : null;
+    if (current === null || !current.equals(next)) {
+      mkdirSync(dirname(dest), { recursive: true });
+      const tmp = dest + ".tmp";
+      writeFileSync(tmp, next);
+      renameSync(tmp, dest);
+    }
+    return dest;
+  } catch {
+    return null;
+  }
+}
+
+/** The command a client config should run: the cached local script when
+ * available, else the pinned-npx fallback. */
+export function hookCommandFor(scriptPath: string | null): string {
+  return scriptPath === null ? HOOK_COMMAND : `node "${scriptPath}"`;
+}
+
+function codexHookBlock(scriptPath: string | null): string {
+  // JSON.stringify escapes backslashes/quotes — valid TOML basic strings, so
+  // Windows paths survive.
+  const command =
+    scriptPath === null
+      ? `["npx", "-y", "--package=@korso/shepherd@${PACKAGE_VERSION}", "shepherd-inbox-hook"]`
+      : `["node", ${JSON.stringify(scriptPath)}]`;
+  return [
+    "",
+    "# Added by Shepherd: delivers teammate announcements to the agent. Remove to disable.",
+    "[[hooks.UserPromptSubmit]]",
+    `command = ${command}`,
+    "",
+  ].join("\n");
+}
 
 /**
  * Attempt the once-per-machine+client hook install. Never throws.
@@ -85,12 +142,15 @@ export async function autoInstallHooks({
   homeDir = homedir(),
   disabled = false,
   extensionSource,
+  hookScriptSource,
   log = (msg: string) => console.error(msg),
 }: {
   clientName: string | undefined;
   homeDir?: string;
   disabled?: boolean;
   extensionSource?: string;
+  /** Seam for tests; the bundled inboxHook.js next to this module otherwise. */
+  hookScriptSource?: string;
   log?: (msg: string) => void;
 }): Promise<InstallResult> {
   const client = detectClient(clientName);
@@ -100,6 +160,11 @@ export async function autoInstallHooks({
       return { client, status: "unsupported" };
     }
 
+    // Refresh the cached hook script on EVERY boot — unlike the config edit
+    // below, which happens once per machine+client. Installed hook commands
+    // point at this file, so refreshing it is how the hook picks up updates.
+    const scriptPath = ensureHookScript(homeDir, hookScriptSource);
+
     // One attempt per machine+client, ever. A recorded attempt also encodes
     // "the user may have removed it since" — which we must respect, so the
     // record is checked BEFORE looking at the client config.
@@ -108,11 +173,11 @@ export async function autoInstallHooks({
 
     let status: InstallResult["status"];
     if (client === "claude") {
-      status = installClaude(homeDir, log);
+      status = installClaude(homeDir, scriptPath, log);
     } else if (client === "codex") {
-      status = installCodex(homeDir, log);
+      status = installCodex(homeDir, scriptPath, log);
     } else if (client === "cursor") {
-      status = installCursor(homeDir, log);
+      status = installCursor(homeDir, scriptPath, log);
     } else {
       status = installPi(homeDir, extensionSource, log);
     }
@@ -144,7 +209,11 @@ export async function autoInstallHooks({
 // Claude Code: ~/.claude/settings.json (JSON, structural additive merge)
 // ---------------------------------------------------------------------------
 
-function installClaude(homeDir: string, log: (msg: string) => void): InstallResult["status"] {
+function installClaude(
+  homeDir: string,
+  scriptPath: string | null,
+  log: (msg: string) => void
+): InstallResult["status"] {
   const settingsFile = join(homeDir, ".claude", "settings.json");
 
   let raw = "";
@@ -186,12 +255,13 @@ function installClaude(homeDir: string, log: (msg: string) => void): InstallResu
     }
   }
 
+  const command = hookCommandFor(scriptPath);
   (hooksObj["SessionStart"] as unknown[]).push({
-    hooks: [{ type: "command", command: HOOK_COMMAND }],
+    hooks: [{ type: "command", command }],
   });
   (hooksObj["PreToolUse"] as unknown[]).push({
     matcher: "*",
-    hooks: [{ type: "command", command: HOOK_COMMAND }],
+    hooks: [{ type: "command", command }],
   });
 
   mkdirSync(dirname(settingsFile), { recursive: true });
@@ -205,13 +275,18 @@ function installClaude(homeDir: string, log: (msg: string) => void): InstallResu
 // No TOML parser is shipped, so edits are append/insert-only with hard bails:
 // any shape we can't extend by appending valid TOML is skipped untouched.
 
-function installCodex(homeDir: string, log: (msg: string) => void): InstallResult["status"] {
+function installCodex(
+  homeDir: string,
+  scriptPath: string | null,
+  log: (msg: string) => void
+): InstallResult["status"] {
   const configFile = join(homeDir, ".codex", "config.toml");
   const manualHint = "Add the hook manually (see the dashboard's Connect screen).";
+  const hookBlock = codexHookBlock(scriptPath);
 
   if (!existsSync(configFile)) {
     mkdirSync(dirname(configFile), { recursive: true });
-    writeFileSync(configFile, `[features]\nhooks = true\n${CODEX_HOOK_BLOCK}`, "utf8");
+    writeFileSync(configFile, `[features]\nhooks = true\n${hookBlock}`, "utf8");
     return "installed";
   }
 
@@ -238,13 +313,13 @@ function installCodex(homeDir: string, log: (msg: string) => void): InstallResul
       // that is guaranteed to be inside that table.
       updated = toml.replace(/^(\s*\[features\]\s*)$/m, `$1\nhooks = true`);
     }
-    writeFileSync(configFile, updated + CODEX_HOOK_BLOCK, "utf8");
+    writeFileSync(configFile, updated + hookBlock, "utf8");
     return "installed";
   }
 
   // No [features] table anywhere: append both (a trailing table header ends
   // whatever table the file was in — valid TOML).
-  writeFileSync(configFile, `${toml}\n[features]\nhooks = true\n${CODEX_HOOK_BLOCK}`, "utf8");
+  writeFileSync(configFile, `${toml}\n[features]\nhooks = true\n${hookBlock}`, "utf8");
   return "installed";
 }
 
@@ -257,7 +332,11 @@ function installCodex(homeDir: string, log: (msg: string) => void): InstallResul
 // an event whose output can't reach the model (unverified: afterFileEdit etc.)
 // would silently destroy messages instead of delivering them.
 
-function installCursor(homeDir: string, log: (msg: string) => void): InstallResult["status"] {
+function installCursor(
+  homeDir: string,
+  scriptPath: string | null,
+  log: (msg: string) => void
+): InstallResult["status"] {
   const hooksFile = join(homeDir, ".cursor", "hooks.json");
 
   let raw = "";
@@ -298,7 +377,7 @@ function installCursor(homeDir: string, log: (msg: string) => void): InstallResu
     return "skipped";
   }
 
-  entries.push({ command: HOOK_COMMAND });
+  entries.push({ command: hookCommandFor(scriptPath) });
 
   mkdirSync(dirname(hooksFile), { recursive: true });
   writeFileSync(hooksFile, JSON.stringify(config, null, 2) + "\n", "utf8");

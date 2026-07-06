@@ -102,6 +102,10 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(Object.keys(bySlug).sort()).toEqual(["a", "b"]);
       expect(bySlug["a"]!.role).toBe("admin");
       expect(bySlug["b"]!.role).toBe("member");
+      // isOwner is derived from created_by: acct-1 created "a" (owner) but only
+      // joined "b" (not owner).
+      expect(bySlug["a"]!.isOwner).toBe(true);
+      expect(bySlug["b"]!.isOwner).toBe(false);
       // The WorkspaceSummary shape (id/slug/name/role).
       expect(bySlug["a"]).toMatchObject({ id: a.id, slug: "a", name: "A", role: "admin" });
     });

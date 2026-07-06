@@ -1,20 +1,22 @@
 # @korso/shepherd — Shepherd MCP Server
 
-Shepherd's stdio MCP server. Gives any MCP-capable agent (Claude Code, Codex, etc.) four advisory coordination tools backed by the shared hub: `work`, `done`, `announce`, and `sync`. The agent **joins the workspace automatically** on startup (no `join` tool), and the server ships standing instructions so the agent self-coordinates without the user prompting it.
+Shepherd's stdio MCP server. Gives any MCP-capable agent (Claude Code, Codex, etc.) four advisory coordination tools backed by the shared hub — `work`, `done`, `announce`, and `sync` — plus three link-lifecycle tools (`link`, `unlink`, `decline`) that opt a repo in or out of coordination. In a linked repo the agent **joins the workspace automatically** (there is no `join` tool), and the server ships standing instructions so the agent self-coordinates without the user prompting it.
 
 > **New here?** The [developer quickstart](https://github.com/Korso-AI/shepherd/blob/main/docs/shepherd-mcp-quickstart.md) is the fastest path. TL;DR: `npx -y --package=@korso/shepherd shepherd-mcp` with the env vars below.
 
 ---
 
-## CRITICAL: WORKSPACE must match the hub exactly
+## CRITICAL: repos opt in with a `.shepherd` marker (the `link` tool)
 
-> **`WORKSPACE` defaults to `default`. If you override it, the value must equal the hub's `ALLOWED_WORKSPACE` env var exactly.**
+> **Without a committed `.shepherd` marker at the repo root, the server stays DORMANT in that repo — no join, no heartbeat, no presence.**
 
-The server fires an automatic `join` call to the hub at startup. If the workspace it sends does not match the hub's `ALLOWED_WORKSPACE`, that call returns HTTP 400 and coordination degrades: every tool reports "session not ready … proceeding uncoordinated" instead of a landscape. The safe default is to **leave `WORKSPACE` unset** so it resolves to `default` — only set it when a maintainer points you at a different workspace. If your agent never sees teammates, check `WORKSPACE` (and `TEAM_TOKEN`) first.
+The server is installed once per client and loads for every repo, so each repo makes its own one-time opt-in decision: a committed `.shepherd` marker (JSON: `{ "workspace": "<slug>" }`). In an unlinked repo the coordination tools return a one-line "not linked" advisory and the agent is prompted (by the standing instructions, the client hook nudge, and — on clients that support elicitation — a popup) to run the **`link` tool**, which validates the workspace, writes the marker, and activates coordination **immediately — no restart**. `unlink` opts back out; `decline` records a local "don't ask again" without linking.
+
+The marker names the workspace and wins over the `WORKSPACE` env var. `WORKSPACE` matters only for self-host (`TEAM_TOKEN`) setups: it defaults to `default` and, if overridden, must equal the hub's `ALLOWED_WORKSPACE` exactly (a mismatch degrades every call to "proceeding uncoordinated"). With a hosted `SHEPHERD_TOKEN` the token carries its own workspace identity, so `WORKSPACE` is ignored. Committing `.shepherd` is safe — it names only the workspace, never a token — and lets teammates who clone the repo coordinate with zero setup.
 
 ---
 
-## Install
+## 1. Install
 
 The server is published to npm and runs via `npx` — no clone or build required
 (Node 18+):
@@ -34,24 +36,26 @@ first fetch, and `@korso/shepherd@latest` picks up updates automatically.
 
 ## 2. Environment variables
 
-**Only two are required:**
+**Two things are required — the hub URL and exactly one credential:**
 
 | Variable | Description | Example |
 |---|---|---|
-| `HUB_URL` | Base URL of the deployed hub | `https://shepherd.example.com` |
-| `TEAM_TOKEN` | Shared bearer token accepted by the hub | `tok_abc123` |
+| `HUB_URL` | Base URL of the deployed hub. Must be a **full valid URL**; plain `http` to a non-localhost host draws a stderr warning (use https) | `https://shepherd.example.com` |
+| `SHEPHERD_TOKEN` | **Hosted-hub credential** — a minted `shp_…` token from the dashboard. It carries its own workspace identity (so `WORKSPACE` is ignored) and **wins over `TEAM_TOKEN`** when both are set | `shp_abc123` |
+| `TEAM_TOKEN` | **Self-host credential** — the shared bearer token matching the hub's `TEAM_TOKEN` | `tok_abc123` |
 
-Missing either causes an immediate startup failure with a clear error on stderr
-listing which vars are absent. (No other var triggers this.)
+A missing/invalid `HUB_URL`, or having neither token, causes an immediate
+startup failure with a clear error on stderr listing what's wrong. (No other
+var triggers this.)
 
 **Everything else is optional** — each identity field is resolved at startup as
 **env var → git detection → fallback**, so a plain `npx -y --package=@korso/shepherd shepherd-mcp` with
-just the two required vars produces a valid, fully-identified session. Set an
+just `HUB_URL` and a token produces a valid, fully-identified session. Set an
 override only to replace what's detected:
 
 | Variable | If omitted | Example |
 |---|---|---|
-| `WORKSPACE` | defaults to `default` (**must match hub's `ALLOWED_WORKSPACE` if overridden**) | `shepherd` |
+| `WORKSPACE` | self-host only — defaults to `default` (**must match hub's `ALLOWED_WORKSPACE` if overridden**); ignored with `SHEPHERD_TOKEN`, and a repo's `.shepherd` marker wins over it | `shepherd` |
 | `REPO` | `git remote origin` → `owner/repo`, else repo folder name, else `unknown-repo` | `Korso-AI/shepherd` |
 | `BRANCH` | `git rev-parse --abbrev-ref HEAD`, else `HEAD` | `main` |
 | `BASE_BRANCH` | `origin/HEAD`, else `origin/main` / `origin/master` (used for the change-awareness heads-up) | `origin/main` |
@@ -377,7 +381,7 @@ Shepherd tool call.
 
 ## 4. Verify the server starts (quick smoke test)
 
-Run with the two required vars set to confirm it connects and idles on stdin.
+Run with `HUB_URL` and a token set to confirm it connects and idles on stdin.
 PowerShell (set env vars, then run):
 
 ```powershell
@@ -390,18 +394,30 @@ bash/zsh: `HUB_URL=https://shepherd.example.com TEAM_TOKEN=tok_abc123 npx -y --p
 
 No stderr output and the process blocking on stdin = healthy. Press Ctrl+C to exit.
 
-**Missing env vars:** if you omit `HUB_URL` or `TEAM_TOKEN`, you will see:
+**Missing env vars:** with nothing set you will see:
 
 ```
 [shepherd] Configuration error — missing or invalid env vars:
   HUB_URL: HUB_URL is required
-  TEAM_TOKEN: TEAM_TOKEN is required
 ```
 
-and the process exits 1 immediately. This is by design. The optional identity
-vars never cause this — they fall back to git detection / defaults.
+and with `HUB_URL` set but no token:
 
-**Wrong WORKSPACE:** if you override `WORKSPACE` to a value the hub doesn't allow, the server starts and connects but the startup auto-join is rejected (400), so every tool call (`work`, `sync`, etc.) reports "session not ready … proceeding uncoordinated". Either leave `WORKSPACE` unset (resolves to `default`) or set it to exactly match the hub's `ALLOWED_WORKSPACE`, then restart.
+```
+[shepherd] Configuration error — missing or invalid env vars:
+  SHEPHERD_TOKEN: Either SHEPHERD_TOKEN or TEAM_TOKEN is required
+```
+
+In both cases the process exits 1 immediately. This is by design. The optional
+identity vars never cause this — they fall back to git detection / defaults.
+
+**Unlinked repo:** launched from a repo with no committed `.shepherd` marker,
+the server starts and idles but stays **dormant** (a one-line stderr advisory
+says so): no join, no heartbeat, and the coordination tools return a "not
+linked" advisory until the agent runs the `link` tool — which activates
+coordination immediately, no restart.
+
+**Wrong WORKSPACE (self-host):** if the marker (or a `WORKSPACE` override) names a workspace other than the hub's `ALLOWED_WORKSPACE`, the join is rejected and every tool call (`work`, `sync`, etc.) reports "proceeding uncoordinated". Either leave `WORKSPACE` unset (resolves to `default`) or set it to exactly match the hub's `ALLOWED_WORKSPACE`.
 
 ---
 
@@ -442,8 +458,20 @@ npm publish --workspace=@korso/shepherd   # prepublishOnly runs tsup automatical
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `Configuration error — missing or invalid env vars` | `HUB_URL` or `TEAM_TOKEN` is absent (only these two are required) | Add the missing var(s) to your client's `env` block |
-| Tools report "session not ready … proceeding uncoordinated" | Startup auto-join rejected — usually a stale `TEAM_TOKEN`, or a `WORKSPACE` override the hub doesn't allow | Re-check `TEAM_TOKEN`; leave `WORKSPACE` unset (→ `default`) or match the hub's `ALLOWED_WORKSPACE`; restart |
+| `Configuration error — missing or invalid env vars` | `HUB_URL` is absent/not a valid URL, or neither `SHEPHERD_TOKEN` nor `TEAM_TOKEN` is set | Add the missing var(s) to your client's `env` block |
+| Tools return a "not linked" advisory | The repo has no committed `.shepherd` marker, so the server is dormant here | Ask the agent to run the `link` tool (takes effect immediately) — or `decline` to stop being asked |
+| Tools report "session not ready … proceeding uncoordinated" | Join rejected — usually a stale/revoked token, or (self-host) a workspace the hub doesn't allow | Re-check the token; leave `WORKSPACE` unset (→ `default`) or match the hub's `ALLOWED_WORKSPACE` |
 | Agent shows up under a surprising name/repo/branch | Identity auto-detected from git, or reused from the device-identity cache when launched outside a git work tree | Override with `HUMAN`/`REPO`/`BRANCH`/`MODEL` env vars (§2); a correct git `user.name` on the next in-repo launch refreshes the cache, or delete `~/.shepherd/identity.json` to clear it |
 | `npm error 404 … @korso/shepherd` | Package not published yet, or name typo | `npm view @korso/shepherd version` to confirm it's live |
 | Process exits immediately with no error | Rare; check for node version incompatibility | Requires Node 18+ (ESM support) |
+
+---
+
+## License
+
+AGPL-3.0-only — see the repository
+[`LICENSE`](https://github.com/Korso-AI/shepherd/blob/main/LICENSE) file and the
+licensing section of the
+[root README](https://github.com/Korso-AI/shepherd#license): the AGPL's
+network-service clause applies to modified versions run as a service, and a
+separate commercial license is available from Korso.
