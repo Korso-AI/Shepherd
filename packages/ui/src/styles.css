@@ -5,6 +5,11 @@
       }
       * { box-sizing:border-box; }
       html,body { height:100%; }
+      /* Reserve the scrollbar gutter permanently so switching between Config
+         tabs (or any content that crosses the one-screen fold) never shifts the
+         layout as the scrollbar appears/disappears — the native fix, no manual
+         offset. */
+      html { scrollbar-gutter: stable; }
       body {
         margin:0; background:var(--bg); color:var(--ink);
         font:14px/1.45 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -189,8 +194,18 @@
       .empty { color:var(--ink3); font-style:italic; padding:14px 0; }
 
       /* Chat (re-themed; structure unchanged) */
+      /* The chat tab fills exactly one viewport so the chat's OWN inner scroll is
+         the only scrollbar. The old fixed `height:calc(100vh - 150px)` under-counted
+         the real chrome (root padding + header) and spilled a few px past the fold,
+         growing a second, OUTER page scrollbar. Instead the chat panel flexes to
+         fill a viewport-bounded shell — scoped to the chat tab (class set by
+         Dashboard) so Tasks/Config still scroll the page normally. */
+      .board--chat-active { display:flex; flex-direction:column; height:calc(100vh - 80px); }
+      .board--chat-active > header { flex:none; }
+      .board--chat-active > #panel-chat { flex:1 1 auto; min-height:0;
+        display:flex; flex-direction:column; }
       .chat-wrap { background:var(--card); border:1px solid var(--line); border-radius:12px;
-        display:flex; flex-direction:column; overflow:hidden; height:calc(100vh - 150px); min-height:320px; }
+        display:flex; flex-direction:column; overflow:hidden; flex:1 1 auto; min-height:320px; }
       .chat { flex:1; overflow-y:auto; padding:16px; }
       .chat { scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
       .chat::-webkit-scrollbar { width:10px; }

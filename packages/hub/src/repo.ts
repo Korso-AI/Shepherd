@@ -142,13 +142,22 @@ export async function findWorkspaceBySlug(
   return rows[0] ?? null;
 }
 
-/** A workspace row, by its id; null when no workspace has that id. */
+/**
+ * A workspace row, by its id; null when no workspace has that id. `createdBy` is
+ * the OWNER account id (see WorkspaceSummary.isOwner) — callers building a
+ * summary compare it to the viewing account to derive ownership.
+ */
 export async function findWorkspaceById(
   db: Queryable,
   id: string
-): Promise<{ id: string; slug: string; name: string } | null> {
-  const { rows } = await db.query<{ id: string; slug: string; name: string }>(
-    `SELECT id, slug, name FROM workspaces WHERE id = $1`,
+): Promise<{ id: string; slug: string; name: string; createdBy: string } | null> {
+  const { rows } = await db.query<{
+    id: string;
+    slug: string;
+    name: string;
+    createdBy: string;
+  }>(
+    `SELECT id, slug, name, created_by AS "createdBy" FROM workspaces WHERE id = $1`,
     [id]
   );
   return rows[0] ?? null;
@@ -322,15 +331,23 @@ export async function listWorkspacesForAccount(
     slug: string;
     name: string;
     role: RoleT;
+    is_owner: boolean;
   }>(
-    `SELECT w.id, w.slug, w.name, m.role
+    `SELECT w.id, w.slug, w.name, m.role,
+            (w.created_by = m.account_id) AS is_owner
      FROM   memberships m
      JOIN   workspaces  w ON w.id = m.workspace_id
      WHERE  m.account_id = $1
      ORDER BY w.name`,
     [accountId]
   );
-  return rows.map((r) => ({ id: r.id, slug: r.slug, name: r.name, role: r.role }));
+  return rows.map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    name: r.name,
+    role: r.role,
+    isOwner: r.is_owner,
+  }));
 }
 
 /**
@@ -774,17 +791,21 @@ export async function listMembers(
     email: string | null;
     avatar_url: string | null;
     role: RoleT;
+    is_owner: boolean;
   }>(
     `SELECT m.account_id,
             p.display_name,
             p.github_login,
             p.email,
             p.avatar_url,
-            m.role
+            m.role,
+            (m.account_id = w.created_by) AS is_owner
      FROM   memberships m
+     JOIN   workspaces  w ON w.id = m.workspace_id
      LEFT JOIN account_profiles p ON p.account_id = m.account_id
      WHERE  m.workspace_id = $1
-     ORDER BY p.display_name NULLS LAST, m.account_id`,
+     ORDER BY p.display_name NULLS LAST, m.account_id
+     LIMIT  1000`,
     [workspaceId]
   );
   return rows.map((r) => ({
@@ -794,6 +815,7 @@ export async function listMembers(
     email: r.email,
     avatarUrl: r.avatar_url,
     role: r.role,
+    isOwner: r.is_owner,
   }));
 }
 
@@ -895,6 +917,25 @@ export async function setRole(
      WHERE  workspace_id = $1
        AND  account_id   = $2`,
     [workspaceId, accountId, role]
+  );
+}
+
+/**
+ * Point `workspaceId`'s owner (workspaces.created_by) at `accountId`. Backs
+ * transfer-ownership; the operation layer pairs it with a setRole('admin') on the
+ * new owner (in one transaction) so the owner invariant — owner is always an
+ * admin — is preserved. Scoped by id, so it only affects the named workspace.
+ */
+export async function setWorkspaceOwner(
+  db: Queryable,
+  workspaceId: string,
+  accountId: string
+): Promise<void> {
+  await db.query(
+    `UPDATE workspaces
+     SET    created_by = $2
+     WHERE  id = $1`,
+    [workspaceId, accountId]
   );
 }
 
@@ -2057,23 +2098,31 @@ export async function getWorkspaceLandscape(
     branch: string | null;
     last_heartbeat_at: Date | null;
   }>(
-    `SELECT a.name,
-            a.human,
-            a.program,
-            a.model,
-            s.repo,
-            s.branch,
-            s.last_heartbeat_at
-     FROM   agents a
-     LEFT JOIN LATERAL (
-       SELECT repo, branch, last_heartbeat_at
-       FROM   sessions
-       WHERE  agent_id = a.id
-       ORDER BY last_heartbeat_at DESC
-       LIMIT 1
-     ) s ON true
-     WHERE  a.workspace_id = $1
-     ORDER BY a.name`,
+    // Agent rows accumulate for the workspace's lifetime (joins mint rows;
+    // nothing deletes them short of workspace deletion), so cap the payload at
+    // the 500 most recently active — the inner recency sort picks WHICH agents
+    // survive the cap, the outer sort preserves the stable by-name order.
+    `SELECT * FROM (
+       SELECT a.name,
+              a.human,
+              a.program,
+              a.model,
+              s.repo,
+              s.branch,
+              s.last_heartbeat_at
+       FROM   agents a
+       LEFT JOIN LATERAL (
+         SELECT repo, branch, last_heartbeat_at
+         FROM   sessions
+         WHERE  agent_id = a.id
+         ORDER BY last_heartbeat_at DESC
+         LIMIT 1
+       ) s ON true
+       WHERE  a.workspace_id = $1
+       ORDER BY s.last_heartbeat_at DESC NULLS LAST
+       LIMIT  500
+     ) recent
+     ORDER BY name`,
     [workspaceId]
   );
 

@@ -14,7 +14,7 @@ import {
 import { writeMarker, removeMarker, findRepoRoot } from "./marker.js";
 import { setDeclined, clearDeclined } from "./declined.js";
 import { HubUnreachable, HubRequestError, type HubClient } from "./hubClient.js";
-import { type Config } from "./config.js";
+import { DEFAULT_WORKSPACE, type Config } from "./config.js";
 import { type JoinContext } from "./resolveContext.js";
 import { type Heartbeat } from "./heartbeat.js";
 import { buildChangeReport } from "./changeReport.js";
@@ -23,6 +23,8 @@ import {
   mergeAnnouncements,
   appendAnnouncements,
   REPLY_ROUTING_HINT,
+  oneLine,
+  indentContinuation,
 } from "./inbox.js";
 import { createEditTripwire, type EditTripwire } from "./editTripwire.js";
 import { offerLinkPopup, type ElicitFn } from "./linkPopup.js";
@@ -121,7 +123,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("CONFLICTS (files overlapping with your claim):");
     for (const c of landscape.conflicts) {
       lines.push(
-        `  [${c.agentName} / ${c.human}] "${c.intent}" — globs: ${c.pathGlobs.join(", ")}`
+        `  [${c.agentName} / ${c.human}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
       );
     }
   } else {
@@ -132,7 +134,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("ACTIVE CLAIMS (other agents currently working):");
     for (const c of landscape.activeClaims) {
       lines.push(
-        `  [${c.agentName} / ${c.human}] "${c.intent}" — globs: ${c.pathGlobs.join(", ")}`
+        `  [${c.agentName} / ${c.human}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
       );
     }
   } else {
@@ -147,7 +149,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("YOUR ACTIVE CLAIMS:");
     for (const c of yourClaims) {
       lines.push(
-        `  "${c.intent}" — globs: ${c.pathGlobs.join(", ")} (workItemId: ${c.workItemId})`
+        `  "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))} (workItemId: ${c.workItemId})`
       );
     }
   } else {
@@ -158,7 +160,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("ANNOUNCEMENTS:");
     for (const a of landscape.announcements) {
       const target = a.targetAgentName ? ` → ${a.targetAgentName}` : " (broadcast)";
-      lines.push(`  [${a.fromAgentName}${target}] ${a.body}`);
+      lines.push(`  [${a.fromAgentName}${target}] ${indentContinuation(a.body)}`);
     }
     lines.push(REPLY_ROUTING_HINT);
   } else {
@@ -178,7 +180,7 @@ function formatAnnouncements(announcements: AnnouncementT[]): string {
   const lines = ["Messages for you:"];
   for (const a of announcements) {
     const target = a.targetAgentName ? ` → ${a.targetAgentName}` : " (broadcast)";
-    lines.push(`  [${a.fromAgentName}${target}] ${a.body}`);
+    lines.push(`  [${a.fromAgentName}${target}] ${indentContinuation(a.body)}`);
   }
   lines.push(REPLY_ROUTING_HINT);
   return lines.join("\n");
@@ -253,11 +255,11 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
         ? "landed, not yet in your branch — pull/rebase"
         : "not yet on your base — unpushed, coordinate";
 
-      const intent = rec.message ?? "(work in progress)";
+      const intent = oneLine(rec.message ?? "(work in progress)");
       lines.push(
         `  ${rec.agentName} / ${rec.human} (${presence(rec)}) — committed (${state}): "${intent}"`
       );
-      lines.push(`    files: ${rec.paths.join(", ")}`);
+      lines.push(`    files: ${oneLine(rec.paths.join(", "))}`);
 
       // Info-only line detail, only when the object is present locally AND we
       // still have line-range budget left for this render.
@@ -275,11 +277,11 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
     } else {
       // uncommitted: always a soft, file-level heads-up. Presence-dependent and
       // decaying — never line detail.
-      const claim = rec.message ?? "uncommitted edits in progress";
+      const claim = oneLine(rec.message ?? "uncommitted edits in progress");
       lines.push(
         `  ${rec.agentName} / ${rec.human} (${presence(rec)}) — ${claim} (uncommitted, may change)`
       );
-      lines.push(`    files: ${rec.paths.join(", ")}`);
+      lines.push(`    files: ${oneLine(rec.paths.join(", "))}`);
     }
   }
 
@@ -999,12 +1001,10 @@ export function registerTools(
       // (the Hub's ALLOWED_WORKSPACE) — exactly one workspace, so a no-arg call
       // auto-picks it. A named slug is validated against it.
       if (!isHosted) {
-        const allowed = config.WORKSPACE;
-        if (!allowed) {
-          return advisory(
-            "Self-host mode has no configured workspace (WORKSPACE is unset) — cannot link.",
-          );
-        }
+        // Mirror resolveContext's fallback: an unset WORKSPACE means the hub's
+        // out-of-the-box `default` workspace, so a docs-faithful setup (env var
+        // left unset) can still link instead of dead-ending here.
+        const allowed = config.WORKSPACE ?? DEFAULT_WORKSPACE;
         if (requested !== undefined && requested !== allowed) {
           return advisory(
             `This self-host deployment only serves the workspace \`${allowed}\`; ` +

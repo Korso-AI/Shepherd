@@ -32,9 +32,9 @@ const EMPTY_LANDSCAPE = {
 const EMPTY_ANNOUNCE = { ok: true as const, announcementIds: [] };
 
 let members: MemberSummaryT[] = [
-  { accountId: "acc_admin", displayName: "Preview Admin", githubLogin: "preview-admin", email: null, avatarUrl: null, role: "admin" },
-  { accountId: "acc_1", displayName: "Alex Rivera", githubLogin: "arivera", email: null, avatarUrl: null, role: "member" },
-  { accountId: "acc_2", displayName: "Sam Okafor", githubLogin: "sokafor", email: null, avatarUrl: null, role: "member" },
+  { accountId: "acc_admin", displayName: "Preview Admin", githubLogin: "preview-admin", email: null, avatarUrl: null, role: "admin", isOwner: true },
+  { accountId: "acc_1", displayName: "Alex Rivera", githubLogin: "arivera", email: null, avatarUrl: null, role: "member", isOwner: false },
+  { accountId: "acc_2", displayName: "Sam Okafor", githubLogin: "sokafor", email: null, avatarUrl: null, role: "member", isOwner: false },
 ];
 
 let tokens: TokenSummaryT[] = [
@@ -64,8 +64,8 @@ let emailInvites: { id: string; email: string; sentAt: string; expiresAt: string
 // A small mutable list so the app-bar workspace switcher (switch / create /
 // join) can be clicked through — create/join append here, listWorkspaces reads it.
 let workspaces: WorkspaceSummaryT[] = [
-  { id: "ws_preview", slug: "design", name: "Design Review", role: "admin" },
-  { id: "ws_acme", slug: "acme", name: "Acme Engineering", role: "member" },
+  { id: "ws_preview", slug: "design", name: "Design Review", role: "admin", isOwner: true },
+  { id: "ws_acme", slug: "acme", name: "Acme Engineering", role: "member", isOwner: false },
 ];
 let nextWsId = 1;
 
@@ -79,6 +79,7 @@ const previewClient: ShepherdClient = {
       slug: "new",
       name: body.name,
       role: "admin",
+      isOwner: true,
     };
     workspaces = [...workspaces, ws];
     return ws;
@@ -146,6 +147,7 @@ const previewClient: ShepherdClient = {
       slug: "joined",
       name: "Joined workspace",
       role: "member",
+      isOwner: false,
     };
     workspaces = [...workspaces, joined];
     return { workspace: joined };
@@ -154,6 +156,14 @@ const previewClient: ShepherdClient = {
   listMembers: async () => ({ members }),
   removeMember: async (_workspaceId, accountId) => {
     members = members.filter((m) => m.accountId !== accountId);
+  },
+  setMemberRole: async (_workspaceId, accountId, role) => {
+    members = members.map((m) => (m.accountId === accountId ? { ...m, role } : m));
+    return { ok: true, role };
+  },
+  transferOwnership: async (_workspaceId, accountId) => {
+    members = members.map((m) => ({ ...m, isOwner: m.accountId === accountId }));
+    return { ok: true };
   },
   leave: async () => {},
 

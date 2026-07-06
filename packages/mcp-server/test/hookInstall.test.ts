@@ -370,3 +370,65 @@ describe("autoInstallHooks — gates", () => {
     expect(result.status).toBe("skipped");
   });
 });
+
+describe("autoInstallHooks — locally cached hook script", () => {
+  it("caches the bundled script and points the hook command at it (node, not npx)", async () => {
+    const home = freshHome();
+    const source = join(home, "bundled-inboxHook.js");
+    writeFileSync(source, "// bundled hook v1\n");
+
+    const result = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      hookScriptSource: source,
+      log: quiet(),
+    });
+
+    expect(result.status).toBe("installed");
+    const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
+    expect(readFileSync(cached, "utf8")).toBe("// bundled hook v1\n");
+    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    const command = settings.hooks.PreToolUse[0].hooks[0].command as string;
+    expect(command).toBe(`node "${cached}"`);
+    expect(command).not.toContain("npx");
+  });
+
+  it("refreshes a stale cached script on later boots, even after the one-shot install record", async () => {
+    const home = freshHome();
+    const source = join(home, "bundled-inboxHook.js");
+    writeFileSync(source, "// v1\n");
+    await autoInstallHooks({ clientName: "claude-code", homeDir: home, hookScriptSource: source, log: quiet() });
+
+    writeFileSync(source, "// v2\n");
+    const second = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      hookScriptSource: source,
+      log: quiet(),
+    });
+
+    expect(second.status).toBe("already-attempted"); // config untouched...
+    const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
+    expect(readFileSync(cached, "utf8")).toBe("// v2\n"); // ...but the script tracked the new version
+  });
+
+  it("falls back to the pinned npx command when there is no bundle to cache (dev/src runs)", async () => {
+    const home = freshHome();
+    // No hookScriptSource and no dist/ neighbor in src-mode tests → fallback.
+    await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
+    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    const command = settings.hooks.PreToolUse[0].hooks[0].command as string;
+    expect(command).toMatch(/^npx -y --package=@korso\/shepherd@\d/);
+  });
+
+  it("codex TOML uses the cached script as a valid two-element command array", async () => {
+    const home = freshHome();
+    const source = join(home, "bundled-inboxHook.js");
+    writeFileSync(source, "// bundled\n");
+    await autoInstallHooks({ clientName: "codex", homeDir: home, hookScriptSource: source, log: quiet() });
+
+    const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
+    const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
+    expect(toml).toContain(`command = ["node", ${JSON.stringify(cached)}]`);
+  });
+});

@@ -31,7 +31,12 @@
  * race window is tiny, not because it self-heals.
  */
 
-import type { ListMembersResponseT } from "@shepherd/shared";
+import type {
+  ListMembersResponseT,
+  RoleT,
+  SetMemberRoleResponseT,
+  TransferOwnershipResponseT,
+} from "@shepherd/shared";
 
 import { getContext } from "../context.js";
 import { withTransaction } from "../db.js";
@@ -39,9 +44,12 @@ import { AuthError, ConflictError } from "../errors.js";
 import {
   listMembers,
   findMembership,
+  findWorkspaceById,
   countAdmins,
   removeMembership,
   revokeApiTokensForMember,
+  setRole,
+  setWorkspaceOwner,
 } from "../repo.js";
 import {
   requireAccountId,
@@ -49,6 +57,27 @@ import {
   requireWorkspaceId,
   type TenantContext,
 } from "../tenant.js";
+
+/**
+ * Resolve the OWNER account of `workspaceId` (workspaces.created_by), or throw
+ * 404 if the workspace has vanished. The owner is the single account allowed to
+ * change roles or transfer ownership; there is no role column value for it, so it
+ * is derived here from created_by rather than from `tenant.role`.
+ */
+async function requireOwnerAccount(
+  db: Parameters<typeof findWorkspaceById>[0],
+  workspaceId: string,
+  callerAccountId: string
+): Promise<string> {
+  const ws = await findWorkspaceById(db, workspaceId);
+  if (ws === null) {
+    throw new AuthError(404, "workspace not found");
+  }
+  if (ws.createdBy !== callerAccountId) {
+    throw new AuthError(403, "operation requires the workspace owner");
+  }
+  return ws.createdBy;
+}
 
 /**
  * List every member of the caller's workspace with their profile snapshot + role.
@@ -79,11 +108,35 @@ export async function removeMember(
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
   requireAdmin(tenant);
+  // requireAdmin already rejected the self-host TEAM_TOKEN (no role), so an
+  // accountId is always present here — needed for the owner comparisons below.
+  const callerAccountId = requireAccountId(tenant);
 
   const target = await findMembership(pool, targetAccountId, workspaceId);
   if (target === null) {
     // Not a member of THIS workspace — generic 404 (no existence leak).
     throw new AuthError(404, "member not found");
+  }
+
+  const ws = await findWorkspaceById(pool, workspaceId);
+  if (ws === null) {
+    throw new AuthError(404, "workspace not found");
+  }
+  const callerIsOwner = ws.createdBy === callerAccountId;
+
+  // The OWNER can never be removed by anyone — the power structure is theirs to
+  // hand off. They must transfer ownership first, then be removed / leave.
+  if (targetAccountId === ws.createdBy) {
+    throw new ConflictError(
+      "The workspace owner cannot be removed; transfer ownership first."
+    );
+  }
+
+  // Removing a fellow ADMIN is owner-only: a plain admin managing the roster may
+  // remove members, but not other admins — otherwise a promoted admin could
+  // still dismantle the admin group they can't demote.
+  if (target.role === "admin" && !callerIsOwner) {
+    throw new AuthError(403, "removing an admin requires the workspace owner");
   }
 
   // Last-admin guard: refuse to strip the workspace of its final admin.
@@ -134,4 +187,86 @@ export async function leaveWorkspace(
   });
 
   return { left: true, tokensRevoked };
+}
+
+/**
+ * Set `targetAccountId`'s role in the caller's workspace (promote member→admin or
+ * demote admin→member). OWNER-ONLY: restricting role changes to the owner is the
+ * escalation guard — a promoted admin cannot then demote the rest and seize the
+ * workspace. The owner cannot change their OWN role (they are always an admin),
+ * an unknown target reads as 404, and the last-admin guard still applies on a
+ * demotion (naturally satisfied while the owner remains an admin). Idempotent:
+ * setting the role a member already holds is a no-op success.
+ */
+export async function setMemberRole(
+  targetAccountId: string,
+  role: RoleT,
+  tenant: TenantContext
+): Promise<SetMemberRoleResponseT> {
+  const { pool } = getContext();
+  const workspaceId = requireWorkspaceId(tenant);
+  const callerAccountId = requireAccountId(tenant);
+  await requireOwnerAccount(pool, workspaceId, callerAccountId);
+
+  if (targetAccountId === callerAccountId) {
+    // The owner is always an admin; there is no valid self role-change.
+    throw new ConflictError("The owner's role cannot be changed.");
+  }
+
+  const target = await findMembership(pool, targetAccountId, workspaceId);
+  if (target === null) {
+    throw new AuthError(404, "member not found");
+  }
+
+  if (target.role === role) {
+    // Already at the requested role — nothing to do.
+    return { ok: true, role };
+  }
+
+  // Demotion last-admin guard (defensive: with the owner always an admin, and the
+  // owner unable to demote themselves, the workspace always retains ≥1 admin).
+  if (role === "member" && (await countAdmins(pool, workspaceId)) <= 1) {
+    throw new ConflictError(
+      "Cannot demote the last admin; promote or transfer another admin first."
+    );
+  }
+
+  await setRole(pool, workspaceId, targetAccountId, role);
+  return { ok: true, role };
+}
+
+/**
+ * Transfer ownership of the caller's workspace to `targetAccountId`. OWNER-ONLY.
+ * The target must already be a MEMBER (404 otherwise); they become the new owner
+ * (workspaces.created_by) and are promoted to admin if they weren't already, in
+ * ONE transaction so the "owner is always an admin" invariant never lapses. The
+ * former owner stays an admin. This is the only way to change who the owner is.
+ */
+export async function transferOwnership(
+  targetAccountId: string,
+  tenant: TenantContext
+): Promise<TransferOwnershipResponseT> {
+  const { pool } = getContext();
+  const workspaceId = requireWorkspaceId(tenant);
+  const callerAccountId = requireAccountId(tenant);
+  await requireOwnerAccount(pool, workspaceId, callerAccountId);
+
+  if (targetAccountId === callerAccountId) {
+    throw new ConflictError("You are already the owner of this workspace.");
+  }
+
+  const target = await findMembership(pool, targetAccountId, workspaceId);
+  if (target === null) {
+    throw new AuthError(404, "member not found");
+  }
+
+  await withTransaction(pool, async (tx) => {
+    await setWorkspaceOwner(tx, workspaceId, targetAccountId);
+    // The new owner must be an admin — promote if they were a member.
+    if (target.role !== "admin") {
+      await setRole(tx, workspaceId, targetAccountId, "admin");
+    }
+  });
+
+  return { ok: true };
 }

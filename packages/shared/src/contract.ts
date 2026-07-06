@@ -47,14 +47,17 @@ const ChangeReportEntry = z.object({
   // by git as an option on a teammate's machine (argument injection). gitContext
   // re-validates defensively as well.
   sha: z.string().regex(/^[0-9a-f]{4,64}$/).nullable(),
-  message: z.string().nullable(),
-  paths: z.array(z.string()).min(1).max(500),
+  // Length caps here and below are DB-bloat guards, not semantic limits: they
+  // sit 10-100x above any real value (commit subjects, branch names, paths),
+  // bounding what one authenticated caller can persist per field.
+  message: z.string().max(4096).nullable(),
+  paths: z.array(z.string().min(1).max(1024)).min(1).max(500),
 });
 
 export const ChangeReport = z.object({
-  branch: z.string(),
-  baseBranch: z.string(),
-  head: z.string(),
+  branch: z.string().max(512),
+  baseBranch: z.string().max(512),
+  head: z.string().max(512),
   truncated: z.boolean().default(false),
   // The only producer (gitContext.unlandedCommits) emits at most MAX_COMMITS
   // (100) committed entries + 1 uncommitted, so this ceiling is generous. If
@@ -201,11 +204,11 @@ export const WorkspaceAnnounceRequest = z.object({
   body: z.string().min(1).max(8192),
   // Direct-message a single agent (by the exact name shown in the landscape).
   // Absent/null => broadcast. The hub resolves the target's repo server-side.
-  targetAgentName: z.string().min(1).nullable().optional(),
+  targetAgentName: z.string().min(1).max(256).nullable().optional(),
   // For a broadcast, the repo to scope the message to (matches the dashboard's
   // selected repo). Absent/null => fan out to every repo in the workspace.
   // Ignored for a DM (the target's own repo is used).
-  repo: z.string().min(1).nullable().optional(),
+  repo: z.string().min(1).max(256).nullable().optional(),
 });
 
 export const WorkspaceAnnounceResponse = z.object({
@@ -218,13 +221,15 @@ export const WorkspaceAnnounceResponse = z.object({
 // ---------------------------------------------------------------------------
 // join(workspace, repo, branch, human, program, model) -> { agentName, sessionId }
 // ---------------------------------------------------------------------------
+// max(256) on the identity fields is a DB-bloat guard (persisted to agents/
+// sessions rows), far above any real slug/name/branch — not a semantic limit.
 export const JoinRequest = z.object({
-  workspace: z.string().min(1),
-  repo: z.string().min(1),
-  branch: z.string().min(1),
-  human: z.string().min(1),
-  program: z.string().min(1),
-  model: z.string().min(1).optional(),
+  workspace: z.string().min(1).max(256),
+  repo: z.string().min(1).max(256),
+  branch: z.string().min(1).max(256),
+  human: z.string().min(1).max(256),
+  program: z.string().min(1).max(256),
+  model: z.string().min(1).max(256).optional(),
 });
 
 export const JoinResponse = z.object({
@@ -277,9 +282,9 @@ export const AnnounceRequest = z.object({
   // (a dashboard user, matched case-insensitively on display name, GitHub
   // login, or email). No match => 400 listing both sets. Absent/null =>
   // broadcast to all agents. Mutually exclusive with the legacy fields below.
-  target: z.string().min(1).nullable().optional(),
+  target: z.string().min(1).max(256).nullable().optional(),
   // LEGACY (kept for older clients; prefer `target`): the exact live-agent name.
-  targetAgentName: z.string().nullable().optional(),
+  targetAgentName: z.string().max(256).nullable().optional(),
   // LEGACY (kept for older clients; prefer `target` with a member's name):
   // true => address the human operators (the dashboard) collectively. Shows in
   // the workspace feed as "<agent> → admin" and is NOT delivered to other
@@ -405,6 +410,12 @@ export const WorkspaceSummary = z.object({
   slug: z.string(),
   name: z.string(),
   role: Role,
+  // Whether this account is the workspace's OWNER — the original creator
+  // (workspaces.created_by), a flag layered on top of the admin role rather than
+  // a third role value. The owner is always an admin; only the owner may change
+  // members' roles or transfer ownership. Self-host workspaces (created_by =
+  // "self-host", no account) surface this false for every member.
+  isOwner: z.boolean(),
 });
 
 // ---------------------------------------------------------------------------
@@ -567,10 +578,48 @@ export const MemberSummary = z.object({
   email: z.string().nullable(),
   avatarUrl: z.string().nullable(),
   role: Role,
+  // Whether this member is the workspace OWNER (workspaces.created_by). Surfaced
+  // so the roster can badge them "owner" and gate the owner-only role controls;
+  // see WorkspaceSummary.isOwner for the model.
+  isOwner: z.boolean(),
 });
 
 export const ListMembersResponse = z.object({
   members: z.array(MemberSummary),
+});
+
+// ---------------------------------------------------------------------------
+// setMemberRole({ role }) -> { ok: true, role } (PATCH /workspaces/:id/members/:accountId/role)
+//
+// OWNER-ONLY. Promotes a member to admin or demotes an admin back to member. The
+// owner cannot change their OWN role (they are always an admin) and no one may
+// demote the last admin (409) — though with the owner always an admin that guard
+// is naturally satisfied. Restricting role changes to the owner is what stops a
+// promoted admin from demoting everyone else and seizing the workspace.
+// ---------------------------------------------------------------------------
+export const SetMemberRoleRequest = z.object({
+  role: Role,
+});
+
+export const SetMemberRoleResponse = z.object({
+  ok: z.literal(true),
+  role: Role,
+});
+
+// ---------------------------------------------------------------------------
+// transferOwnership({ accountId }) -> { ok: true } (POST /workspaces/:id/transfer-ownership)
+//
+// OWNER-ONLY. Hands the owner flag to another MEMBER of the workspace: the target
+// becomes the new owner (workspaces.created_by) and is promoted to admin if they
+// weren't already; the former owner stays an admin. The only way to change who
+// the owner is.
+// ---------------------------------------------------------------------------
+export const TransferOwnershipRequest = z.object({
+  accountId: z.string().min(1),
+});
+
+export const TransferOwnershipResponse = z.object({
+  ok: z.literal(true),
 });
 
 // ---------------------------------------------------------------------------

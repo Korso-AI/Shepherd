@@ -790,3 +790,102 @@ describe("requireOperator", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pre-auth failure throttle (per source IP)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  beforeEach(() => {
+    __resetRateLimiter();
+  });
+
+  afterEach(async () => {
+    await truncateAll(pool);
+    await truncateTenancy(pool);
+  });
+
+  function badBearerFrom(ip: string) {
+    return {
+      headers: { authorization: "Bearer definitely-not-a-real-token" },
+      url: "/work",
+      method: "POST",
+      ip,
+    };
+  }
+
+  it("locks out an IP after its failed-auth budget (~30 401s) and leaves other IPs alone", async () => {
+    const config = makeConfig();
+    const attackerIp = "203.0.113.9";
+
+    // Spray bad bearers until the throttle engages. The budget is 30 failures
+    // per rolling minute; the loop allows a little slack for mid-loop refill.
+    let unauthorized = 0;
+    let throttled = false;
+    for (let i = 0; i < 40 && !throttled; i++) {
+      try {
+        await resolveTenant(badBearerFrom(attackerIp) as never, config, pool);
+        expect.unreachable("a bogus bearer must never resolve");
+      } catch (err) {
+        expect(err).toBeInstanceOf(AuthError);
+        if ((err as AuthError).status === 429) throttled = true;
+        else {
+          expect((err as AuthError).status).toBe(401);
+          unauthorized += 1;
+        }
+      }
+    }
+    expect(throttled).toBe(true);
+    expect(unauthorized).toBeGreaterThanOrEqual(30);
+
+    // The lockout is up-front: even a VALID credential from the burned IP is
+    // rejected until the budget refills (this is the intended fail-closed
+    // behavior for an address actively spraying credentials).
+    const wsId = await seedWorkspace(pool, ALLOWED_WORKSPACE);
+    void wsId;
+    try {
+      await resolveTenant(
+        { ...badBearerFrom(attackerIp), headers: { authorization: `Bearer ${TEAM_TOKEN}` } } as never,
+        config,
+        pool
+      );
+      expect.unreachable("the burned IP must stay throttled");
+    } catch (err) {
+      expect((err as AuthError).status).toBe(429);
+    }
+
+    // A different source address is untouched: plain 401, no throttle.
+    try {
+      await resolveTenant(badBearerFrom("198.51.100.7") as never, config, pool);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as AuthError).status).toBe(401);
+    }
+  });
+
+  it("successful auths never consume the budget", async () => {
+    const config = makeConfig();
+    await seedWorkspace(pool, ALLOWED_WORKSPACE);
+    const ip = "192.0.2.44";
+    // Far more successes than the failure budget — none should throttle.
+    for (let i = 0; i < 35; i++) {
+      const ctx = await resolveTenant(
+        { headers: { authorization: `Bearer ${TEAM_TOKEN}` }, url: "/work", method: "POST", ip } as never,
+        config,
+        pool
+      );
+      expect(ctx.via).toBe("team");
+    }
+  });
+});

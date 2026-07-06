@@ -1,9 +1,20 @@
 import { z } from "zod";
 
+/**
+ * Final fallback for workspace identity, matching the hub's out-of-the-box
+ * ALLOWED_WORKSPACE. Precedence (highest first): the committed `.shepherd`
+ * marker → the WORKSPACE env override → this default. Lives here (not in
+ * resolveContext) so consumers can import it without pulling in the git
+ * detection machinery.
+ */
+export const DEFAULT_WORKSPACE = "default";
+
 const ConfigSchema = z
   .object({
     // Hard-required: Hub endpoint.
-    HUB_URL: z.string().min(1, "HUB_URL is required"),
+    HUB_URL: z
+      .string({ required_error: "HUB_URL is required" })
+      .url("HUB_URL must be a full URL, e.g. https://your-shepherd-hub.example.com"),
 
     // Auth credentials. Exactly one form is needed (enforced by the refine below):
     //   - SHEPHERD_TOKEN: the hosted Hub credential (carries its own workspace).
@@ -13,7 +24,8 @@ const ConfigSchema = z
     TEAM_TOKEN: z.string().min(1).optional(),
 
     // Optional overrides — resolveContext will apply defaults for any that are absent.
-    // WORKSPACE default is applied in resolveContext (auto-detected from cwd basename).
+    // WORKSPACE default ("default", matching the hub's out-of-the-box
+    // ALLOWED_WORKSPACE) is applied in resolveContext.
     // NOTE: WORKSPACE is IGNORED by the hosted Hub — the SHEPHERD_TOKEN carries the
     // workspace identity. It remains meaningful only for self-host (TEAM_TOKEN) setups.
     WORKSPACE: z.string().min(1).optional(),
@@ -87,7 +99,9 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
  */
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   try {
-    return parseConfig(env);
+    const config = parseConfig(env);
+    warnInsecureHubUrl(config.HUB_URL);
+    return config;
   } catch (err) {
     if (err instanceof z.ZodError) {
       const messages = err.issues.map((e) => `  ${e.path.join(".")}: ${e.message}`).join("\n");
@@ -96,5 +110,30 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       process.stderr.write(`[shepherd] Unexpected configuration error: ${String(err)}\n`);
     }
     process.exit(1);
+  }
+}
+
+/**
+ * A loopback hub over plain http is fine (local dev); anything else sends the
+ * team token in cleartext on every request. Warn on stderr (stdout is the MCP
+ * protocol channel) rather than refusing — a private-network hub is a
+ * legitimate, if discouraged, setup.
+ */
+function warnInsecureHubUrl(hubUrl: string): void {
+  try {
+    const url = new URL(hubUrl);
+    const loopback =
+      url.hostname === "localhost" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "::1" ||
+      url.hostname === "[::1]";
+    if (url.protocol === "http:" && !loopback) {
+      process.stderr.write(
+        `[shepherd] WARNING: HUB_URL (${hubUrl}) uses plain http to a non-local host — ` +
+          `the team token and all coordination traffic travel unencrypted. Use https.\n`,
+      );
+    }
+  } catch {
+    // Unparseable URLs are rejected by the schema before we get here.
   }
 }

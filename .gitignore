@@ -2,7 +2,11 @@ node_modules
 dist
 *.tsbuildinfo
 .env
+# Local agent-tooling state — never part of the public repo.
 .superpowers/
+.pi-tmp/
+.agents/
+.claude/
 # Per-machine Shepherd link marker — must never ship in the repo, or fresh
 # clones would arrive pre-linked and skip the first-run ask.
 .shepherd

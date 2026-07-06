@@ -9,7 +9,7 @@ import {
   readCachedHuman as realReadCachedHuman,
   writeCachedHuman as realWriteCachedHuman,
 } from "./identityCache.js";
-import type { Config } from "./config.js";
+import { DEFAULT_WORKSPACE, type Config } from "./config.js";
 import {
   readMarker as realReadMarker,
   findRepoRoot as realFindRepoRoot,
@@ -93,14 +93,6 @@ const defaultDeps: ResolveContextDeps = {
   readCachedHuman: realReadCachedHuman,
   writeCachedHuman: realWriteCachedHuman,
 };
-
-/**
- * Final fallback for workspace identity. Precedence (highest first): the
- * committed `.shepherd` marker → the WORKSPACE env override → this default.
- * A linked repo names its own workspace via the marker, so the marker wins;
- * an unlinked client lands here unless WORKSPACE is set.
- */
-const DEFAULT_WORKSPACE = "default";
 
 /**
  * Resolve each context field in order: env override → git detection → fallback.

@@ -4,6 +4,21 @@
   "description": "Auth-agnostic React UI library for the Shepherd wallboard (Dashboard, client, provider). Host injects auth; the library never reads tokens.",
   "type": "module",
   "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/Korso-AI/shepherd#readme",
+  "bugs": {
+    "url": "https://github.com/Korso-AI/shepherd/issues"
+  },
+  "author": "Korso AI",
+  "keywords": [
+    "shepherd",
+    "react",
+    "dashboard",
+    "agent",
+    "coordination"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -26,7 +41,7 @@
   },
   "types": "./dist/lib/index.d.ts",
   "files": [
-    "dist",
+    "dist/lib",
     "README.md"
   ],
   "scripts": {

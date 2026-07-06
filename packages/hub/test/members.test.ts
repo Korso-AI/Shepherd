@@ -1,8 +1,14 @@
 /**
- * Tests for the member management endpoints (Task 3.6):
- *   GET    /workspaces/:id/members                 — list members (any member).
- *   DELETE /workspaces/:id/members/:accountId      — admin removes a member.
- *   POST   /workspaces/:id/leave                    — caller removes themselves.
+ * Tests for the member management endpoints (Task 3.6 + ownership):
+ *   GET    /workspaces/:id/members                      — list members (any member).
+ *   DELETE /workspaces/:id/members/:accountId           — remove a member.
+ *   PATCH  /workspaces/:id/members/:accountId/role      — owner promotes/demotes.
+ *   POST   /workspaces/:id/transfer-ownership           — owner hands off ownership.
+ *   POST   /workspaces/:id/leave                         — caller removes themselves.
+ *
+ * Ownership is derived from workspaces.created_by (there is no "owner" role): the
+ * owner may change roles / transfer / remove admins and can never be removed;
+ * plain admins may only remove members. seedWorkspace(createdBy) sets the owner.
  *
  * All three are `/workspaces/:id/*` routes, so resolveTenant has ALREADY validated
  * the browser-via-BFF caller is a MEMBER of `:id` (a non-member is rejected 404 in
@@ -89,14 +95,44 @@ function bffAuthHeaders(accountId: string, extra: Record<string, string> = {}) {
   };
 }
 
-/** Seed a workspace by slug (idempotent); returns its uuid. */
-async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
+/**
+ * Seed a workspace by slug (idempotent); returns its uuid. `createdBy` sets the
+ * OWNER account (workspaces.created_by) — defaults to 'tester' (no seeded account
+ * is the owner), but owner-gated tests pass the caller's account id so they own it.
+ */
+async function seedWorkspace(
+  pool: pg.Pool,
+  slug: string,
+  createdBy = "tester"
+): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
-     ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, $3)
+     ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, created_by = EXCLUDED.created_by RETURNING id`,
+    [slug, slug, createdBy]
   );
   return rows[0]!.id;
+}
+
+/** The current role of (accountId, workspaceId), or null when not a member. */
+async function roleOf(
+  pool: pg.Pool,
+  accountId: string,
+  workspaceId: string
+): Promise<"admin" | "member" | null> {
+  const { rows } = await pool.query<{ role: "admin" | "member" }>(
+    `SELECT role FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
+    [accountId, workspaceId]
+  );
+  return rows[0]?.role ?? null;
+}
+
+/** The owner account (workspaces.created_by) of a workspace. */
+async function ownerOf(pool: pg.Pool, workspaceId: string): Promise<string> {
+  const { rows } = await pool.query<{ created_by: string }>(
+    `SELECT created_by FROM workspaces WHERE id = $1`,
+    [workspaceId]
+  );
+  return rows[0]!.created_by;
 }
 
 /** Seed a membership for (accountId, workspaceId) at `role` (idempotent). */
@@ -306,14 +342,14 @@ describe.skipIf(!dbAvailable)(
       expect(await isMember(pool, "acct-victim", otherWs)).toBe(true);
     });
 
-    it("removing the LAST admin is rejected (409) with NO side effects", async () => {
-      const wsId = await seedWorkspace(pool, "last-admin");
+    it("the OWNER removing themselves is rejected (409) — owner can't be removed", async () => {
+      // The lone admin here is ALSO the owner; the owner can never be removed, so
+      // this is a 409 (they must transfer ownership first), with no side effects.
+      const wsId = await seedWorkspace(pool, "last-admin", "acct-admin");
       await seedMembership(pool, "acct-admin", wsId, "admin");
       await seedMembership(pool, "acct-member", wsId, "member");
       const tok = await seedToken(pool, "acct-admin", wsId, "shp_admin");
 
-      // The lone admin removes themselves via the remove endpoint (admin removing
-      // an admin) — guard fires because countAdmins <= 1.
       const res = await app.inject({
         method: "DELETE",
         url: `/workspaces/${wsId}/members/acct-admin`,
@@ -326,8 +362,9 @@ describe.skipIf(!dbAvailable)(
       expect(await isRevoked(pool, tok)).toBe(false);
     });
 
-    it("admin removes an admin when 2+ admins exist → allowed", async () => {
-      const wsId = await seedWorkspace(pool, "two-admins");
+    it("the OWNER removes another admin (2+ admins) → allowed", async () => {
+      // Removing an admin is owner-only; acct-admin-1 owns the workspace.
+      const wsId = await seedWorkspace(pool, "two-admins", "acct-admin-1");
       await seedMembership(pool, "acct-admin-1", wsId, "admin");
       await seedMembership(pool, "acct-admin-2", wsId, "admin");
 
@@ -339,6 +376,38 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(200);
       expect(await isMember(pool, "acct-admin-2", wsId)).toBe(false);
       expect(await isMember(pool, "acct-admin-1", wsId)).toBe(true);
+    });
+
+    it("a NON-owner admin cannot remove another admin → 403, no side effects", async () => {
+      // created_by = 'tester' (no seeded account owns it), so acct-admin-1 is a
+      // plain admin — removing a fellow admin is owner-only.
+      const wsId = await seedWorkspace(pool, "nonowner-remove-admin");
+      await seedMembership(pool, "acct-admin-1", wsId, "admin");
+      await seedMembership(pool, "acct-admin-2", wsId, "admin");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/workspaces/${wsId}/members/acct-admin-2`,
+        headers: bffAuthHeaders("acct-admin-1"),
+      });
+      expect(res.statusCode).toBe(403);
+      expect(await isMember(pool, "acct-admin-2", wsId)).toBe(true);
+    });
+
+    it("the OWNER cannot be removed even by another admin → 409", async () => {
+      const wsId = await seedWorkspace(pool, "protect-owner", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+      await seedMembership(pool, "acct-admin-2", wsId, "admin");
+
+      // acct-admin-2 is an admin but not the owner; even so, the owner is protected
+      // (the owner-cannot-be-removed guard is a 409, checked before other gates).
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/workspaces/${wsId}/members/acct-owner`,
+        headers: bffAuthHeaders("acct-admin-2"),
+      });
+      expect(res.statusCode).toBe(409);
+      expect(await isMember(pool, "acct-owner", wsId)).toBe(true);
     });
 
     it("removing an accountId that is not a member of this workspace → 404", async () => {
@@ -422,6 +491,150 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(200);
       expect(await isMember(pool, "acct-admin-1", wsId)).toBe(false);
       expect(await isMember(pool, "acct-admin-2", wsId)).toBe(true);
+    });
+
+    // --- isOwner in the roster ----------------------------------------------
+
+    it("lists the owner with isOwner true and everyone else false", async () => {
+      const wsId = await seedWorkspace(pool, "owner-roster", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+      await seedMembership(pool, "acct-bob", wsId, "member");
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${wsId}/members`,
+        headers: bffAuthHeaders("acct-bob"),
+      });
+      expect(res.statusCode).toBe(200);
+      const body = ListMembersResponse.parse(res.json());
+      expect(body.members.find((m) => m.accountId === "acct-owner")!.isOwner).toBe(true);
+      expect(body.members.find((m) => m.accountId === "acct-bob")!.isOwner).toBe(false);
+    });
+
+    // --- PATCH /workspaces/:id/members/:accountId/role (owner-only) ----------
+
+    it("the owner promotes a member to admin", async () => {
+      const wsId = await seedWorkspace(pool, "promote-ws", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+      await seedMembership(pool, "acct-member", wsId, "member");
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${wsId}/members/acct-member/role`,
+        headers: bffHeaders("acct-owner"),
+        payload: { role: "admin" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, role: "admin" });
+      expect(await roleOf(pool, "acct-member", wsId)).toBe("admin");
+    });
+
+    it("the owner demotes an admin to member", async () => {
+      const wsId = await seedWorkspace(pool, "demote-ws", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+      await seedMembership(pool, "acct-admin-2", wsId, "admin");
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${wsId}/members/acct-admin-2/role`,
+        headers: bffHeaders("acct-owner"),
+        payload: { role: "member" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(await roleOf(pool, "acct-admin-2", wsId)).toBe("member");
+    });
+
+    it("a NON-owner admin cannot change roles → 403, no change", async () => {
+      const wsId = await seedWorkspace(pool, "nonowner-role"); // created_by 'tester'
+      await seedMembership(pool, "acct-admin", wsId, "admin");
+      await seedMembership(pool, "acct-member", wsId, "member");
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${wsId}/members/acct-member/role`,
+        headers: bffHeaders("acct-admin"),
+        payload: { role: "admin" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(await roleOf(pool, "acct-member", wsId)).toBe("member");
+    });
+
+    it("the owner cannot change their OWN role → 409", async () => {
+      const wsId = await seedWorkspace(pool, "owner-self-role", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${wsId}/members/acct-owner/role`,
+        headers: bffHeaders("acct-owner"),
+        payload: { role: "member" },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(await roleOf(pool, "acct-owner", wsId)).toBe("admin");
+    });
+
+    it("changing the role of a non-member → 404", async () => {
+      const wsId = await seedWorkspace(pool, "role-stranger", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${wsId}/members/acct-stranger/role`,
+        headers: bffHeaders("acct-owner"),
+        payload: { role: "admin" },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // --- POST /workspaces/:id/transfer-ownership (owner-only) ----------------
+
+    it("the owner transfers ownership: created_by moves and the target becomes admin", async () => {
+      const wsId = await seedWorkspace(pool, "transfer-ws", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+      await seedMembership(pool, "acct-next", wsId, "member");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/transfer-ownership`,
+        headers: bffHeaders("acct-owner"),
+        payload: { accountId: "acct-next" },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true });
+      expect(await ownerOf(pool, wsId)).toBe("acct-next");
+      // The new owner is promoted to admin; the former owner stays an admin.
+      expect(await roleOf(pool, "acct-next", wsId)).toBe("admin");
+      expect(await roleOf(pool, "acct-owner", wsId)).toBe("admin");
+    });
+
+    it("a NON-owner cannot transfer ownership → 403, no change", async () => {
+      const wsId = await seedWorkspace(pool, "transfer-forbidden", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+      await seedMembership(pool, "acct-admin-2", wsId, "admin");
+      await seedMembership(pool, "acct-member", wsId, "member");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/transfer-ownership`,
+        headers: bffHeaders("acct-admin-2"),
+        payload: { accountId: "acct-member" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(await ownerOf(pool, wsId)).toBe("acct-owner");
+    });
+
+    it("transferring ownership to a non-member → 404", async () => {
+      const wsId = await seedWorkspace(pool, "transfer-stranger", "acct-owner");
+      await seedMembership(pool, "acct-owner", wsId, "admin");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/transfer-ownership`,
+        headers: bffHeaders("acct-owner"),
+        payload: { accountId: "acct-stranger" },
+      });
+      expect(res.statusCode).toBe(404);
+      expect(await ownerOf(pool, wsId)).toBe("acct-owner");
     });
   }
 );

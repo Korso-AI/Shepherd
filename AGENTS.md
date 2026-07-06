@@ -20,11 +20,12 @@ It is built from four packages:
 > connect-your-agent) lives in [`README.md`](README.md); **this file is the engineering charter** (code
 > style, boundaries, the minimalism discipline, the auth invariants, Definition of Done) — read it first.
 
-> **Status:** live. The hub, the MCP server, and the `@shepherd/shared` contract are real code; **hosted multi-tenancy is implemented** (a `NOT NULL tenant_id` on every coordination table, the two-mode
-> per-request auth edge, per-tenant query scoping). `packages/ui/` now exists (React + Vite) — the
-> README's "forthcoming" note is stale. The two deployment modes (self-hosted `TEAM_TOKEN`; Korso-hosted
-> behind an upstream BFF via `x-internal-token` + trusted `x-account-id`) are described in
-> [`README.md`](README.md) and live in `packages/hub/src/tenancy.ts`.
+> **Status:** live. The hub, the MCP server, the `@shepherd/shared` contract, and the `packages/ui/`
+> dashboard (React + Vite) are real code; **hosted multi-tenancy is implemented** (a `NOT NULL
+> workspace_id` on every coordination table, account memberships, hashed `shp_…` API tokens, the
+> per-request auth edge, per-workspace query scoping). The two deployment modes (self-hosted
+> `TEAM_TOKEN`; Korso-hosted via `x-internal-token` + trusted `x-account-id`, plus minted agent tokens)
+> are described in [`README.md`](README.md) and live in `packages/hub/src/tenant.ts`.
 
 ## Repository layout
 
@@ -50,8 +51,8 @@ The dependency arrows are load-bearing — keep them true (today by review; a `d
   consumer; add or change it in `shared` so both ends of the wire move together (this is shepherd's analogue
   of a generated-client contract). `shared` imports nothing from the other packages.
 - **The hub is the sole database tier.** Only `@shepherd/hub` imports `pg`; the data layer is
-  `packages/hub/src/repo.ts` and **every query is scoped by the resolved `tenant.tenantId`**. No other
-  package touches Postgres; no SQL lives outside `repo.ts`.
+  `packages/hub/src/repo.ts` and **every query is scoped by the resolved workspace (`workspace_id`)**.
+  No other package touches Postgres; no SQL lives outside `repo.ts`.
 - **The MCP server is a thin client and the npm boundary.** `@korso/shepherd` forwards agent tool calls to
   the hub over HTTP; it holds **no coordination logic of its own** beyond local caching / context
   resolution. Because it is published, its tool surface + bin entries (`shepherd-mcp`,
@@ -81,11 +82,12 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
 - `build` — `tsc -b` for the graph; `tsup` for the published `mcp-server`; Vite for `ui`.
 - `boundaries` — `dependency-cruiser` enforces [the import rules above](#architecture--module-boundaries).
 
-> **Current gating status.** Today only `build`, `test`, and the `dev`/`migrate`
-> scripts exist; there is **no `check` aggregate, no lint, no format, no no-emit typecheck, no boundaries
-> check, and no aggregate CI verification script** (only `publish-mcp.yml`). Several dev dependencies also float on
-> `"latest"` (root + `ui`). The section above is the **target**; wiring `npm run check` + pinning those
-> deps is the first thing to do, because **a rule that isn't a failing check does not exist**.
+> **Current gating status.** `npm run check` exists today as **build + test** (root `package.json`),
+> and `.github/workflows/ci.yml` runs the same build + full test suite (against a real Postgres service
+> container) on every PR and push to main. There is still **no lint, no format check, no no-emit
+> typecheck, and no boundaries check**, and several dev dependencies float on `"latest"` (root + `ui`).
+> The full pipeline above is the **target**; extending `check` + pinning those deps is the next step,
+> because **a rule that isn't a failing check does not exist**.
 
 ## Environment & tooling
 
@@ -108,12 +110,14 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
   becomes typed is a **zod boundary parser** — never a raw cast that launders `unknown` into a domain type.
 - **Validate every external payload at the boundary with zod** (agent requests, HTTP bodies, headers, env).
   Parse, don't assume. The wire `…T` types describe the *contract*; the zod `.parse`/`.safeParse` proves the
-  *payload*. `AccountId` in `tenancy.ts` is the model: a bounded, charset-checked parser at the trust edge.
+  *payload*. The env schema in `packages/hub/src/config.ts` and the wire contract in `@shepherd/shared`
+  are the model: bounded, validated parsers at the trust edge.
 - **Secrets are server-side only.** Read them from `process.env` in the hub; never ship a secret to the UI
-  bundle. `TEAM_TOKEN` / `INTERNAL_API_TOKEN` / `DATABASE_URL` are hub config, never client-visible.
+  bundle. `TEAM_TOKEN` / `BFF_INTERNAL_TOKEN` / `DATABASE_URL` are hub config, never client-visible.
 - **TSDoc** on exported functions, types, and modules; the auth/tenancy modules already model this. Comments
   explain *why*, not *what*.
-- Keep functions small and single-purpose; prefer pure functions (`resolveRequestTenant` is pure by design).
+- Keep functions small and single-purpose; prefer pure functions (the helpers in `tenant.ts` —
+  `hashToken`, `timingSafeCompare` — are the model).
   Caps (target — to be wired into the `lint` rule): file soft 300 / hard 500 lines; function soft 50 /
   hard 75; cyclomatic complexity ≤ 10.
 - **Descriptive names**; single-letter names only in tight loops. Explicit named exports; avoid default
@@ -142,7 +146,7 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
 *correctness* you keep. The carve-outs are exactly this repo's non-negotiables, and they all live in the
 auth/tenancy edge (see [Correctness & safety](#correctness--safety)): the zod boundary parse on every wire
 payload; **constant-time** token comparison (`timingSafeCompare` — never `===` on a secret); **fail-closed**
-tenant resolution; **`tenant_id` scoping on every query**; never echoing a `sessionId` back to the agent;
+tenant resolution; **`workspace_id` scoping on every query**; never echoing a `sessionId` back to the agent;
 never leaking internal errors downstream; and the full **test discipline** on those paths. A "minimal smoke
 test" is never a substitute — never shrink a test to shrink a diff.
 
@@ -152,28 +156,30 @@ instead of treating the shortcut as load-bearing (e.g. the deferred per-session 
 
 ## Correctness & safety
 
-Shepherd's dangerous code is the **two-mode auth edge** (`packages/hub/src/tenancy.ts`) and the
-**tenant-scoped data layer** (`packages/hub/src/repo.ts`). The safety properties are bound to *that code*,
-not to a label — they hold no matter which route, mode, or tenant is in play:
+Shepherd's dangerous code is the **auth edge** (`packages/hub/src/tenant.ts`) and the
+**workspace-scoped data layer** (`packages/hub/src/repo.ts`). The safety properties are bound to *that code*,
+not to a label — they hold no matter which route, mode, or workspace is in play:
 
-- **Fail closed.** `resolveRequestTenant` denies (`401`) on every uncertain path and **never** falls back
-  from the hosted path to the self-host path. Missing/invalid identity → 401; a hosted request to a hub with
-  no `INTERNAL_API_TOKEN` configured → 401. A partial auth config is a hard error, not a fallback.
-- **Two credentials, never conflated.** The mode is chosen per request by whether a string `x-internal-token`
-  is present. Hosted: the shared secret is verified, *then* the trusted `x-account-id` becomes the tenant id;
-  the `Authorization: Bearer` is the Cloud Run OIDC token (not `TEAM_TOKEN`). Self-host: `TEAM_TOKEN` bearer
-  only, and any inbound `x-account-id` is **ignored**. A client can never supply or override the tenant id.
+- **Fail closed.** `resolveTenant` denies (`401`) on every uncertain path and **never** falls back
+  from the hosted path to the self-host path. Missing/invalid identity → 401; a request presenting
+  `x-internal-token` to a hub with no `BFF_INTERNAL_TOKEN` configured → 401. A partial auth config is a hard
+  error, not a fallback.
+- **One credential per request, never conflated.** Resolution order: `x-internal-token` (BFF — the shared
+  secret is verified, *then* the trusted `x-account-id` is honoured, and it reaches a workspace only via a
+  live **membership**), a minted `Bearer shp_…` agent token (hashed lookup, gated on live membership), or
+  the self-host `TEAM_TOKEN` bearer (scoped to `ALLOWED_WORKSPACE`; any inbound `x-account-id` is
+  **ignored**). A client can never supply or override its own account or workspace.
 - **Constant-time secret comparison.** All token checks go through `timingSafeCompare` (SHA-256 → fixed-width
   `timingSafeEqual`), one implementation shared by both modes so they can't drift. Never compare a secret
   with `===`/`startsWith` past the `Bearer ` prefix strip.
-- **`tenant_id` is the tenancy boundary, not `ALLOWED_WORKSPACE`.** Every query in `repo.ts` is scoped by the
-  resolved `tenant.tenantId`; a caller can never read or mutate another tenant's rows. Trusted headers reach
-  SQL only as parameterized values, re-validated at the boundary (`AccountId`).
+- **`workspace_id` is the tenancy boundary.** Every query in `repo.ts` is scoped by the resolved
+  workspace; a caller can never read or mutate another workspace's rows. Trusted headers reach
+  SQL only as parameterized values.
 - **`sessionId` is a capability — don't leak it.** Operations authorize on the `sessionId` in the request
   body, not on identity; the MCP server never echoes a `sessionId` back into agent-visible output.
 - **Never leak internals downstream.** Map `HubError`s to status codes and return generic messages; log
   detail server-side only. Never copy arbitrary upstream/internal headers back to a caller.
-- **Never hardcode secrets.** Read `TEAM_TOKEN` / `INTERNAL_API_TOKEN` / `DATABASE_URL` from the environment;
+- **Never hardcode secrets.** Read `TEAM_TOKEN` / `BFF_INTERNAL_TOKEN` / `DATABASE_URL` from the environment;
   `.env*` is gitignored. Secrets are never logged (`TEAM_TOKEN` and `x-internal-token` are redacted).
 
 ## Testing
@@ -182,11 +188,12 @@ not to a label — they hold no matter which route, mode, or tenant is in play:
   favor fast, deterministic tests. The hub integration suite runs against a real Postgres and truncates
   tables per test for isolation; it skips cleanly when no database URL is set.
 - **The auth/tenancy edge carries a higher bar — tie the safety to the dangerous code, not to a slice.**
-  `tenancy.ts` and the `tenant_id` scoping in `repo.ts` are shepherd's "money modules." They get explicit
-  happy-path **and** failure-path tests: forged/absent `x-internal-token`, hosted request with no
-  `INTERNAL_API_TOKEN` configured, missing/malformed/array `x-account-id` rejected, self-host `x-account-id`
-  ignored, and cross-tenant read/write isolation. Never let coverage here regress. (These already exist in
-  `test/tenancy.test.ts` and `test/operations/tenant-isolation.test.ts` — keep them green and growing.)
+  `tenant.ts` and the `workspace_id` scoping in `repo.ts` are shepherd's "money modules." They get explicit
+  happy-path **and** failure-path tests: forged/absent `x-internal-token`, a hub with no
+  `BFF_INTERNAL_TOKEN` configured, missing/malformed `x-account-id` rejected, self-host `x-account-id`
+  ignored, revoked tokens/memberships failing closed, and cross-workspace read/write isolation. Never let
+  coverage here regress. (These already exist in `test/tenant.test.ts`, `test/isolation.test.ts`, and
+  `test/repo.tenancy.test.ts` — keep them green and growing.)
 - **Test behavior, not implementation.** Assert on responses, persisted rows, raised errors — not on internal
   calls or snapshot noise. Coverage is a **floor, not a target**: never add a test whose only purpose is to
   execute a line.
@@ -197,11 +204,11 @@ not to a label — they hold no matter which route, mode, or tenant is in play:
 
 ## Definition of Done
 
-`npm run check` green (once wired: format, lint, typecheck, test, build, boundaries); new external boundaries
-have a zod parser + tests; new exported/published API carries TSDoc; **no `any`**; no secret reachable from
-the UI bundle; no hardcoded secrets; wire schema changes live in `@shepherd/shared` (both ends move together)
-and, if the MCP tool surface changed, it is treated as a release; every `repo.ts` query stays `tenant_id`-
-scoped and the auth edge stays fail-closed with failure-path tests; the coverage on the auth/tenancy paths is
+`npm run check` green (build + test today; format, lint, typecheck, boundaries once wired); new external
+boundaries have a zod parser + tests; new exported/published API carries TSDoc; **no `any`**; no secret
+reachable from the UI bundle; no hardcoded secrets; wire schema changes live in `@shepherd/shared` (both ends
+move together) and, if the MCP tool surface changed, it is treated as a release; every `repo.ts` query stays
+`workspace_id`-scoped and the auth edge stays fail-closed with failure-path tests; the coverage on the auth/tenancy paths is
 unchanged or raised; and the diff is the **smallest correct change** — climbed the
 [minimalism ladder](#minimalism--the-lazy-senior-dev-discipline), with no speculative abstraction, reinvented
 helper, or unjustified/floating new dependency.

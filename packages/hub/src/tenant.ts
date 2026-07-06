@@ -354,6 +354,77 @@ function consumeRateLimit(key: string, now: number = Date.now()): void {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-auth failure throttle (per source IP)
+// ---------------------------------------------------------------------------
+
+// The per-credential buckets above only engage AFTER a credential resolves,
+// and the bearer path costs a DB lookup per attempt — so an unauthenticated
+// flood of random bearers used to be uncounted, unbounded DB work. This
+// throttle counts FAILED authentications (401s) per source IP; once an IP has
+// burned its budget, its requests are rejected up front — before any hashing
+// or DB round-trip. Successful auths never consume, so legitimate traffic
+// (including many agents behind one NAT) is unaffected unless the shared IP
+// is actively spraying bad credentials.
+//
+// Same single-instance/in-memory caveats as the buckets above. Additionally
+// the map IS bounded (unlike the per-credential maps, its key space is
+// attacker-controlled): past MAX_TRACKED_IPS we sweep fully-refilled (idle)
+// entries, and if the sweep can't shrink it (an attacker rotating source
+// IPs), we clear the map — degrading to the pre-throttle baseline rather
+// than exhausting memory.
+
+/** Failed auths allowed per IP per window before up-front 429s. */
+const PREAUTH_FAIL_CAPACITY = 30;
+/** The refill window for failed-auth budgets, in milliseconds. */
+const PREAUTH_FAIL_WINDOW_MS = 60_000;
+/** Hard bound on distinct IPs tracked at once. */
+const MAX_TRACKED_IPS = 10_000;
+
+const preauthFailures = new Map<string, Bucket>();
+
+function refillPreauthBucket(bucket: Bucket, now: number): void {
+  const refillPerMs = PREAUTH_FAIL_CAPACITY / PREAUTH_FAIL_WINDOW_MS;
+  const elapsed = now - bucket.updatedAt;
+  if (elapsed > 0) {
+    bucket.tokens = Math.min(PREAUTH_FAIL_CAPACITY, bucket.tokens + elapsed * refillPerMs);
+    bucket.updatedAt = now;
+  }
+}
+
+/**
+ * Throw 429 when `ip` has exhausted its failed-auth budget. Read-only apart
+ * from the refill — checking never consumes, only {@link recordAuthFailure}
+ * does, so an IP that stops failing recovers at CAPACITY/WINDOW.
+ */
+function assertPreauthBudget(ip: string, now: number = Date.now()): void {
+  const bucket = preauthFailures.get(ip);
+  if (bucket === undefined) return;
+  refillPreauthBucket(bucket, now);
+  if (bucket.tokens < 1) {
+    throw new AuthError(429, "too many failed authentications from this address");
+  }
+}
+
+/** Consume one failed-auth token for `ip` (called on every 401). */
+function recordAuthFailure(ip: string, now: number = Date.now()): void {
+  let bucket = preauthFailures.get(ip);
+  if (bucket === undefined) {
+    if (preauthFailures.size >= MAX_TRACKED_IPS) {
+      for (const [key, b] of preauthFailures) {
+        refillPreauthBucket(b, now);
+        if (b.tokens >= PREAUTH_FAIL_CAPACITY) preauthFailures.delete(key);
+      }
+      if (preauthFailures.size >= MAX_TRACKED_IPS) preauthFailures.clear();
+    }
+    bucket = { tokens: PREAUTH_FAIL_CAPACITY, updatedAt: now };
+    preauthFailures.set(ip, bucket);
+  } else {
+    refillPreauthBucket(bucket, now);
+  }
+  bucket.tokens = Math.max(0, bucket.tokens - 1);
+}
+
+// ---------------------------------------------------------------------------
 // Hot-path write throttles (review finding P2.6)
 // ---------------------------------------------------------------------------
 
@@ -404,6 +475,7 @@ function throttleWrite(seen: Map<string, number>, key: string, now: number): boo
  */
 export function __resetRateLimiter(): void {
   buckets.clear();
+  preauthFailures.clear();
   lastTokenTouch.clear();
   lastProfileUpsert.clear();
 }
@@ -420,6 +492,12 @@ interface ResolvableRequest {
   headers: Record<string, string | string[] | undefined>;
   url: string;
   method: string;
+  /**
+   * Source address for the pre-auth failure throttle (Fastify's request.ip —
+   * XFF-derived when trustProxy is on). Optional so test fakes stay minimal;
+   * absent values share one "unknown" bucket.
+   */
+  ip?: string;
 }
 
 /** First value of a (possibly array-valued) header, trimmed; undefined if absent/empty. */
@@ -459,8 +537,33 @@ function routeWorkspaceId(url: string): string | null {
  * Throws {@link AuthError} (with an internal-only message and an HTTP status)
  * on any failure. See the module header for the resolution order and the
  * TenantContext `workspaceId` contract for the route-derived-workspace rule.
+ *
+ * Wraps the credential resolution in the pre-auth failure throttle: an IP
+ * that has recently burned its failed-auth budget is 429'd BEFORE any header
+ * compare, hash, or DB lookup, and every 401 the resolution produces consumes
+ * from that budget. Only 401s count — 404/400 come from callers that already
+ * authenticated (a matched BFF token or a valid member), and 429 is the
+ * per-credential limiter's own signal.
  */
 export async function resolveTenant(
+  request: ResolvableRequest,
+  config: Config,
+  pool: pg.Pool
+): Promise<TenantContext> {
+  const ip = request.ip ?? "unknown";
+  assertPreauthBudget(ip);
+  try {
+    return await resolveCredentials(request, config, pool);
+  } catch (err) {
+    if (err instanceof AuthError && err.status === 401) {
+      recordAuthFailure(ip);
+    }
+    throw err;
+  }
+}
+
+/** The credential resolution itself — see {@link resolveTenant} for the contract. */
+async function resolveCredentials(
   request: ResolvableRequest,
   config: Config,
   pool: pg.Pool
