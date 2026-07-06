@@ -252,13 +252,12 @@
          `.shepherd-config button` rule — these are plain nav links, not buttons. */
       .shepherd-config .config-nav__item { text-align:left; font:inherit; font-size:13.5px;
         color:var(--ink2); background:transparent; border:0; border-radius:8px; padding:8px 12px;
-        cursor:pointer; box-shadow:inset 2px 0 0 transparent; transition:color .12s ease, background .12s ease; }
+        cursor:pointer; transition:color .12s ease, background .12s ease; }
       /* Extra .config-nav in the chain so this out-specifies the generic dark
          `.shepherd-config button:hover` fill — a translucent tint, not a block. */
       .shepherd-config .config-nav .config-nav__item:hover { color:var(--ink);
         background:rgba(50,44,32,.06); }
-      .shepherd-config .config-nav__item--on { color:var(--ink); font-weight:600;
-        box-shadow:inset 2px 0 0 var(--ink); }
+      .shepherd-config .config-nav__item--on { color:var(--ink); font-weight:600; }
       .shepherd-config .config-nav .config-nav__item--on:hover { background:transparent; }
       .config-panel { flex:1; min-width:0; }
 
