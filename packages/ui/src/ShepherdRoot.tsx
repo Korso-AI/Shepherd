@@ -19,11 +19,11 @@ import { describeError } from "./client.js";
 // The flat tab strip (Tasks | Chat | Config) and all board chrome live in
 // <Dashboard>; ShepherdRoot renders no header or tabs of its own.
 //
-// Landing: a brand-new account with no workspace lands on Config while the
-// board shows an EmptyState — both decided inside <Dashboard> from
-// `hasWorkspace`, which also keeps the no-workspace board from polling. With no
-// workspace the switcher degrades to a "Get started" menu (create/join) and the
-// Config tab shows a prompt instead of the sidebar. It reads its data through
+// Landing: a brand-new account with no workspace lands on Tasks showing the
+// first-run setup checklist — decided inside <Dashboard> from `hasWorkspace`,
+// which also keeps the no-workspace board from polling. With no workspace the
+// switcher degrades to a "Get started" menu (create/join) and the Config tab
+// shows a prompt instead of the sidebar. It reads its data through
 // useShepherdClient() (provided by the host), so it stays auth-agnostic.
 // ---------------------------------------------------------------------------
 
@@ -154,9 +154,14 @@ export function ShepherdRoot({ hubUrl, onLogout }: ShepherdRootProps) {
     <div className="shepherd-root">
       <Dashboard
         workspaceId={selected?.id}
+        workspace={selected ?? undefined}
         config={configSection}
         switcher={switcher}
         hasWorkspace={hasWorkspace}
+        hubUrl={hubUrl}
+        onWorkspacesChanged={() => {
+          void fetchWorkspaces();
+        }}
       />
     </div>
   );

@@ -10,8 +10,8 @@ import { makeMockClient } from "./test/mockClient.js";
 //
 // Landing keys off listWorkspaces() being empty (decided once, on the first
 // resolved list, inside <Dashboard> from `hasWorkspace`):
-//   - no workspace  → land on Config; Tasks/Chat render an EmptyState, and the
-//     board never polls (nothing to scope to).
+//   - no workspace  → land on Tasks showing the first-run setup checklist; the
+//     board never polls (nothing to scope to) and Chat renders an EmptyState.
 //   - >= 1 workspace → land on Tasks for the first (selected) workspace, which
 //     the board polls via the workspace-scoped landscape(id) route.
 // ---------------------------------------------------------------------------
@@ -57,16 +57,22 @@ describe("ShepherdRoot routing / landing", () => {
     await waitFor(() => expect(client.landscape).toHaveBeenCalledWith("ws_1"));
   });
 
-  it("lands on Config when the account has no workspace", async () => {
+  it("lands on Tasks with the setup checklist when the account has no workspace", async () => {
+    // Behavior change (Task 4): the no-workspace account now lands on Tasks so
+    // the first-run setup checklist is the first thing a new operator sees,
+    // rather than landing on Config.
     client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [] });
     renderRoot();
 
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
         "aria-selected",
         "true",
       ),
     );
+    expect(
+      screen.getByRole("region", { name: /setup guide/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders hosted sign out on the no-workspace Config prompt without polling", async () => {
@@ -74,50 +80,75 @@ describe("ShepherdRoot routing / landing", () => {
     client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [] });
     renderRoot({ onLogout });
 
+    // Now lands on Tasks (the setup checklist); Config stays reachable via its
+    // tab, where the "not in a workspace" prompt + sign out live.
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+      expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
         "aria-selected",
         "true",
       ),
     );
+    await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+
     expect(screen.getByText(/not in a workspace yet/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(onLogout).toHaveBeenCalledTimes(1);
+    // Invariant preserved: a no-workspace shell never polls the landscape.
     expect(client.landscape).not.toHaveBeenCalled();
     expect(client.getLandscape).not.toHaveBeenCalled();
   });
 
-  it("shows an EmptyState (not an error) on Tasks when there is no workspace", async () => {
+  it("shows the setup checklist (not an error) on Tasks when there is no workspace", async () => {
+    // Behavior change (Task 4): Tasks now renders the setup checklist for a
+    // no-workspace account, replacing the old "No workspace yet" EmptyState.
     client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [] });
     renderRoot();
 
-    // Wait for the load to resolve (Config becomes active).
     await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      ),
+      expect(
+        screen.getByRole("region", { name: /setup guide/i }),
+      ).toBeInTheDocument(),
     );
 
-    await userEvent.click(screen.getByRole("tab", { name: "Tasks" }));
-
-    // The empty-state prompt renders, never a hard wall / crash. Its CTA
-    // routes back to Config.
-    const cta = screen.getByRole("button", { name: /go to config/i });
-    expect(
-      screen.getByRole("heading", { name: /no workspace yet/i }),
-    ).toBeInTheDocument();
     // The board never polled, since there is no workspace.
     expect(client.landscape).not.toHaveBeenCalled();
     expect(client.getLandscape).not.toHaveBeenCalled();
+  });
 
-    await userEvent.click(cta);
-    expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+  it("create step: submitting a name refetches, auto-selects the new workspace, and reaches the connect stage", async () => {
+    // Plan Task 5 integration: a no-workspace root → checklist create step
+    // submits → listWorkspaces refetched → the new workspace auto-selected and
+    // polled → the checklist advances to the connect stage.
+    let list: (typeof WS)[] = [];
+    client.listWorkspaces = vi
+      .fn()
+      .mockImplementation(async () => ({ workspaces: list }));
+    client.createWorkspace = vi.fn().mockImplementation(async () => {
+      list = [WS];
+      return WS;
+    });
+    renderRoot();
+
+    // No workspace → the create-step checklist on Tasks.
+    await screen.findByRole("region", { name: /setup guide/i });
+    await userEvent.type(screen.getByLabelText(/workspace name/i), "Acme");
+    await userEvent.click(
+      screen.getByRole("button", { name: /create workspace/i }),
     );
+
+    // The create triggers a refetch; the new workspace becomes selected and the
+    // board polls it via the workspace-scoped route.
+    await waitFor(() => expect(client.landscape).toHaveBeenCalledWith("ws_1"));
+    // Connect stage: step 1's create form is gone (replaced by the checked
+    // workspace summary) and step 2 waits for the first agent.
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/workspace name/i)).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(/waiting for your agent to check in/i),
+    ).toBeInTheDocument();
   });
 
   it("shows a loading indicator before the workspace list resolves", async () => {
