@@ -46,6 +46,7 @@ import type {
   CreateInviteRequestT,
   InviteByEmailResponseT,
   InviteResponseT,
+  ListEmailInvitesResponseT,
   RedeemInviteResponseT,
   RoleT,
 } from "@shepherd/shared";
@@ -57,6 +58,7 @@ import { sendInviteEmail } from "../email.js";
 import {
   createInvite as createInviteRow,
   findInviteByCode,
+  listPendingEmailInvites,
   revokeInviteByCode,
   incrementInviteUse,
   addMembership,
@@ -265,6 +267,8 @@ export async function inviteByEmail(
     roleGranted: DEFAULT_ROLE,
     maxUses: EMAIL_INVITE_MAX_USES,
     expiresAt,
+    // Recorded so the Config UI can list who was invited and hasn't joined yet.
+    email,
   });
 
   const joinLink = `${config.PUBLIC_WEB_URL}/shepherd/join/${encodeURIComponent(invite.code)}`;
@@ -274,6 +278,33 @@ export async function inviteByEmail(
   );
 
   return { email, sentAt: new Date().toISOString() };
+}
+
+/**
+ * List the workspace's PENDING email invites (sent, not yet redeemed / revoked /
+ * expired), newest first. Admin-only, same gating as the create paths — this is
+ * the roster behind the "Invite by email" form. The invite CODE is deliberately
+ * not returned: the join link already left by email, and this list is
+ * status-only (the redeemed row simply disappears, because an email invite is
+ * one-time-use and a claimed use excludes it from the pending predicate).
+ */
+export async function listEmailInvites(
+  tenant: TenantContext
+): Promise<ListEmailInvitesResponseT> {
+  const { pool } = getContext();
+  const workspaceId = requireWorkspaceId(tenant);
+  requireAdmin(tenant);
+
+  const rows = await listPendingEmailInvites(pool, workspaceId);
+  return {
+    invites: rows.map((r) => ({
+      id: r.id,
+      // The pending predicate is `email IS NOT NULL`, so this is always set.
+      email: r.email ?? "",
+      sentAt: r.createdAt.toISOString(),
+      expiresAt: r.expiresAt?.toISOString() ?? null,
+    })),
+  };
 }
 
 /**

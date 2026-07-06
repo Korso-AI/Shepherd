@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatRelative, formatCountdown, colorForName, initialsFor,
-  distinctRepos, matchesRepo, defaultRepo, statusLabel, formatActiveDuration, dayBucket,
+  distinctRepos, boardRepos, matchesRepo, defaultRepo, statusLabel, formatActiveDuration, dayBucket,
   parseMention, extractTarget, mentionableAgents,
   globsCover, groupActiveClaims,
 } from "../src/logic.js";
@@ -97,6 +97,35 @@ describe("distinctRepos", () => {
   it("returns sorted unique repos", () => {
     const tasks = [{ repo: "b" }, { repo: "a" }, { repo: "b" }];
     expect(distinctRepos(tasks)).toEqual(["a", "b"]);
+  });
+});
+
+describe("boardRepos", () => {
+  it("unions repos across tasks, agents, and announcements, sorted", () => {
+    const board = {
+      tasks: [{ repo: "b" }],
+      agents: [{ repo: "c" }, { repo: "b" }],
+      announcements: [{ repo: "a" }],
+    };
+    expect(boardRepos(board)).toEqual(["a", "b", "c"]);
+  });
+
+  it("surfaces repos with no tasks (agents/chat only) — the selector must not vanish", () => {
+    const board = {
+      tasks: [{ repo: "only-repo-with-tasks" }],
+      agents: [{ repo: "agent-only-repo" }],
+      announcements: [],
+    };
+    expect(boardRepos(board)).toEqual(["agent-only-repo", "only-repo-with-tasks"]);
+  });
+
+  it("skips null/empty repos (an agent with no session yet)", () => {
+    const board = {
+      tasks: [],
+      agents: [{ repo: null }, { repo: "" }, { repo: "x" }],
+      announcements: [{ repo: "" }],
+    };
+    expect(boardRepos(board)).toEqual(["x"]);
   });
 });
 

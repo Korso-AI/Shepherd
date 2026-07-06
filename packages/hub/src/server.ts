@@ -45,9 +45,11 @@ import { mintToken, listTokens, revokeToken } from "./operations/tokens.js";
 import {
   createInvite,
   inviteByEmail,
+  listEmailInvites,
   revokeInvite,
   redeemInvite,
 } from "./operations/invites.js";
+import { deleteAccount } from "./operations/account.js";
 import {
   listWorkspaceMembers,
   removeMember,
@@ -497,6 +499,13 @@ export function buildServer(): FastifyInstance {
     return inviteByEmail(parsed.data.email, request.tenant);
   });
 
+  // The pending email invites of `:id` (admin-only in the operation) — the
+  // roster the Config UI renders under the "Invite by email" form. A redeemed
+  // one-time invite drops out of this list on its own.
+  app.get("/workspaces/:id/invites/email", async (request, _reply) => {
+    return listEmailInvites(request.tenant);
+  });
+
   app.post("/workspaces/:id/invites/:code/revoke", async (request, _reply) => {
     const { code } = request.params as { code: string };
     return revokeInvite(code, request.tenant);
@@ -546,6 +555,20 @@ export function buildServer(): FastifyInstance {
 
   app.delete("/workspaces/:id", async (request, _reply) => {
     return deleteWorkspace(request.tenant);
+  });
+
+  // -------------------------------------------------------------------------
+  // Delete the CALLER's account — a non-`:id` route, permanent.
+  //
+  // Like invite redemption, the operation pins the trust itself: an account
+  // credential on the browser-via-BFF path only (an agent shp_ token and a
+  // self-host TEAM_TOKEN are rejected — see operations/account.ts, which also
+  // documents the per-workspace semantics and the last-admin 409 guard).
+  // Bodyless, like the other DELETE routes.
+  // -------------------------------------------------------------------------
+
+  app.delete("/account", async (request, _reply) => {
+    return deleteAccount(request.tenant);
   });
 
   // -------------------------------------------------------------------------

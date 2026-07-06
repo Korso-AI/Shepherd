@@ -41,7 +41,7 @@ import { __resetRateLimiter, hashToken } from "../src/tenant.js";
 import { __resetRedeemThrottle } from "../src/operations/invites.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
-import { InviteResponse, RedeemInviteResponse } from "@shepherd/shared";
+import { InviteResponse, RedeemInviteResponse, ListEmailInvitesResponse } from "@shepherd/shared";
 
 // ---------------------------------------------------------------------------
 // Config / credentials
@@ -1001,6 +1001,100 @@ describe.skipIf(!dbAvailable)(
         payload: { email: "newcomer@example.com" },
       });
       expect(res.statusCode).toBe(500);
+    });
+
+    // --- GET /workspaces/:id/invites/email (pending list) -------------------
+
+    it("lists a sent email invite as pending, then drops it after redemption", async () => {
+      const wsId = await seedWorkspace(pool, "email-pending");
+      await seedMembership(pool, "acct-admin", wsId, "admin");
+
+      fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }));
+
+      const send = await app.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/invites/email`,
+        headers: bffHeaders("acct-admin"),
+        payload: { email: "newcomer@example.com" },
+      });
+      expect(send.statusCode).toBe(200);
+
+      const pending = await app.inject({
+        method: "GET",
+        url: `/workspaces/${wsId}/invites/email`,
+        headers: bffHeaders("acct-admin"),
+      });
+      expect(pending.statusCode).toBe(200);
+      const list = ListEmailInvitesResponse.parse(pending.json());
+      expect(list.invites).toHaveLength(1);
+      expect(list.invites[0]!.email).toBe("newcomer@example.com");
+      // Status-only surface: the invite CODE must not leak into the list.
+      expect(JSON.stringify(pending.json())).not.toContain(
+        (await pool.query<{ code: string }>(
+          `SELECT code FROM invites WHERE workspace_id = $1`,
+          [wsId]
+        )).rows[0]!.code
+      );
+
+      // Redeem the one-time link — the entry disappears from the pending list.
+      const { rows } = await pool.query<{ code: string }>(
+        `SELECT code FROM invites WHERE workspace_id = $1`,
+        [wsId]
+      );
+      const redeem = await app.inject({
+        method: "POST",
+        url: `/invites/${rows[0]!.code}/redeem`,
+        headers: bffHeaders("acct-newcomer"),
+        payload: {},
+      });
+      expect(redeem.statusCode).toBe(200);
+
+      const after = await app.inject({
+        method: "GET",
+        url: `/workspaces/${wsId}/invites/email`,
+        headers: bffHeaders("acct-admin"),
+      });
+      expect(ListEmailInvitesResponse.parse(after.json()).invites).toHaveLength(0);
+    });
+
+    it("pending list excludes revoked and expired email invites, and code invites entirely", async () => {
+      const wsId = await seedWorkspace(pool, "email-pending-filter");
+      await seedMembership(pool, "acct-admin", wsId, "admin");
+
+      // Seed directly: one live, one revoked, one expired email invite, plus a
+      // plain code invite (email NULL) that must never appear here.
+      await pool.query(
+        `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, expires_at, revoked_at, email)
+         VALUES
+           ($1, 'live-code',    'tester', 'member', 1, now() + interval '7 days', NULL,  'live@example.com'),
+           ($1, 'revoked-code', 'tester', 'member', 1, now() + interval '7 days', now(), 'revoked@example.com'),
+           ($1, 'expired-code', 'tester', 'member', 1, now() - interval '1 day',  NULL,  'expired@example.com'),
+           ($1, 'plain-code',   'tester', 'member', 1, now() + interval '7 days', NULL,  NULL)`,
+        [wsId]
+      );
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${wsId}/invites/email`,
+        headers: bffHeaders("acct-admin"),
+      });
+      expect(res.statusCode).toBe(200);
+      const list = ListEmailInvitesResponse.parse(res.json());
+      expect(list.invites.map((i) => i.email)).toEqual(["live@example.com"]);
+    });
+
+    it("a non-admin (member) cannot list pending email invites → 403", async () => {
+      const wsId = await seedWorkspace(pool, "email-pending-member");
+      await seedMembership(pool, "acct-member", wsId, "member");
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${wsId}/invites/email`,
+        headers: bffHeaders("acct-member"),
+      });
+      expect(res.statusCode).toBe(403);
     });
   }
 );

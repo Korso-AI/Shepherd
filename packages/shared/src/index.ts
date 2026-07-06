@@ -44,6 +44,7 @@ export {
   CreateWorkspaceResponse,
   ListWorkspacesResponse,
   DeleteWorkspaceResponse,
+  DeleteAccountResponse,
   MintTokenRequest,
   MintTokenResponse,
   TokenSummary,
@@ -52,6 +53,8 @@ export {
   InviteResponse,
   InviteByEmailRequest,
   InviteByEmailResponse,
+  EmailInviteSummary,
+  ListEmailInvitesResponse,
   RedeemInviteResponse,
   MemberSummary,
   ListMembersResponse,
@@ -103,6 +106,7 @@ import type {
   CreateWorkspaceResponse,
   ListWorkspacesResponse,
   DeleteWorkspaceResponse,
+  DeleteAccountResponse,
   MintTokenRequest,
   MintTokenResponse,
   TokenSummary,
@@ -111,6 +115,8 @@ import type {
   InviteResponse,
   InviteByEmailRequest,
   InviteByEmailResponse,
+  EmailInviteSummary,
+  ListEmailInvitesResponse,
   RedeemInviteResponse,
   MemberSummary,
   ListMembersResponse,
@@ -170,6 +176,7 @@ export type CreateWorkspaceRequestT = z.infer<typeof CreateWorkspaceRequest>;
 export type CreateWorkspaceResponseT = z.infer<typeof CreateWorkspaceResponse>;
 export type ListWorkspacesResponseT = z.infer<typeof ListWorkspacesResponse>;
 export type DeleteWorkspaceResponseT = z.infer<typeof DeleteWorkspaceResponse>;
+export type DeleteAccountResponseT = z.infer<typeof DeleteAccountResponse>;
 export type MintTokenRequestT = z.infer<typeof MintTokenRequest>;
 export type MintTokenResponseT = z.infer<typeof MintTokenResponse>;
 export type TokenSummaryT = z.infer<typeof TokenSummary>;
@@ -178,6 +185,8 @@ export type CreateInviteRequestT = z.infer<typeof CreateInviteRequest>;
 export type InviteResponseT = z.infer<typeof InviteResponse>;
 export type InviteByEmailRequestT = z.infer<typeof InviteByEmailRequest>;
 export type InviteByEmailResponseT = z.infer<typeof InviteByEmailResponse>;
+export type EmailInviteSummaryT = z.infer<typeof EmailInviteSummary>;
+export type ListEmailInvitesResponseT = z.infer<typeof ListEmailInvitesResponse>;
 export type RedeemInviteResponseT = z.infer<typeof RedeemInviteResponse>;
 export type MemberSummaryT = z.infer<typeof MemberSummary>;
 export type ListMembersResponseT = z.infer<typeof ListMembersResponse>;

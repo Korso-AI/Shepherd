@@ -539,7 +539,38 @@ export async function revokeApiTokensForMember(
   return result.rowCount ?? 0;
 }
 
-/** A full invites row (migration 011), with camelCase fields. */
+/**
+ * Revoke EVERY live token the account owns — workspace-scoped AND account-scoped
+ * (workspace_id IS NULL) alike. This is the account-deletion sweep, deliberately
+ * broader than `revokeApiTokensForMember` above: the account is going away, so
+ * no credential of its may survive. Returns how many were revoked.
+ */
+export async function revokeAllApiTokensForAccount(
+  db: Queryable,
+  accountId: string
+): Promise<number> {
+  const result = await db.query(
+    `UPDATE api_tokens
+     SET    revoked_at = now()
+     WHERE  account_id = $1
+       AND  revoked_at IS NULL`,
+    [accountId]
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Delete the account's profile snapshot row. Part of account deletion; a
+ * missing row (an account that never had a profile upsert) is a no-op.
+ */
+export async function deleteAccountProfile(
+  db: Queryable,
+  accountId: string
+): Promise<void> {
+  await db.query(`DELETE FROM account_profiles WHERE account_id = $1`, [accountId]);
+}
+
+/** A full invites row (migration 011 + 018), with camelCase fields. */
 export interface InviteRow {
   id: string;
   workspaceId: string;
@@ -552,6 +583,8 @@ export interface InviteRow {
   useCount: number;
   revokedAt: Date | null;
   createdAt: Date;
+  // The recipient of an EMAIL invite (migration 018); null for code invites.
+  email: string | null;
 }
 
 /** SELECT/RETURNING column list for invites, aliased to InviteRow's camelCase. */
@@ -564,13 +597,15 @@ const INVITE_COLUMNS = `id,
         max_uses      AS "maxUses",
         use_count     AS "useCount",
         revoked_at    AS "revokedAt",
-        created_at    AS "createdAt"`;
+        created_at    AS "createdAt",
+        email`;
 
 /**
  * Create a redeemable invite into `workspaceId` at `roleGranted`. `code` is a
  * pre-generated unique string (the operation layer mints it); `maxUses` caps
  * redemptions (null = unlimited, until revoked) and `expiresAt` is an optional
- * hard expiry (null = never).
+ * hard expiry (null = never). `email` records the recipient of an email invite
+ * (backs the pending-invites list); code/link invites leave it null.
  */
 export async function createInvite(
   db: Queryable,
@@ -581,17 +616,45 @@ export async function createInvite(
     roleGranted: RoleT;
     maxUses: number | null;
     expiresAt?: Date | null;
+    email?: string | null;
   }
 ): Promise<InviteRow> {
-  const { workspaceId, code, createdBy, roleGranted, maxUses, expiresAt } = params;
+  const { workspaceId, code, createdBy, roleGranted, maxUses, expiresAt, email } = params;
   const { rows } = await db.query<InviteRow>(
     `INSERT INTO invites
-       (workspace_id, code, created_by, role_granted, max_uses, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6)
+       (workspace_id, code, created_by, role_granted, max_uses, expires_at, email)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${INVITE_COLUMNS}`,
-    [workspaceId, code, createdBy, roleGranted, maxUses, expiresAt ?? null]
+    [workspaceId, code, createdBy, roleGranted, maxUses, expiresAt ?? null, email ?? null]
   );
   return rows[0]!;
+}
+
+/**
+ * The PENDING email invites of `workspaceId`, newest first: rows that carry a
+ * recipient email and are still redeemable — not revoked, not expired, and with
+ * uses remaining (email invites are minted maxUses=1, so a redeemed one drops
+ * out here — exactly the "disappears once they join" the Config list wants).
+ * The predicate mirrors incrementInviteUse's atomic claim guard so this list
+ * never shows an invite that a redeem would refuse.
+ */
+export async function listPendingEmailInvites(
+  db: Queryable,
+  workspaceId: string
+): Promise<InviteRow[]> {
+  const { rows } = await db.query<InviteRow>(
+    `SELECT ${INVITE_COLUMNS}
+     FROM   invites
+     WHERE  workspace_id = $1
+       AND  email IS NOT NULL
+       AND  revoked_at IS NULL
+       AND  (max_uses IS NULL OR use_count < max_uses)
+       AND  (expires_at IS NULL OR expires_at > now())
+     ORDER BY created_at DESC
+     LIMIT  200`,
+    [workspaceId]
+  );
+  return rows;
 }
 
 /**
@@ -792,6 +855,24 @@ export async function countAdmins(
      FROM   memberships
      WHERE  workspace_id = $1
        AND  role = 'admin'`,
+    [workspaceId]
+  );
+  return Number(rows[0]!.count);
+}
+
+/**
+ * Total member count of `workspaceId` (any role). Backs account deletion's
+ * sole-member check: a workspace whose ONLY member is the deleting account is
+ * deleted outright rather than orphaned admin-less.
+ */
+export async function countMembers(
+  db: Queryable,
+  workspaceId: string
+): Promise<number> {
+  const { rows } = await db.query<{ count: string }>(
+    `SELECT count(*) AS count
+     FROM   memberships
+     WHERE  workspace_id = $1`,
     [workspaceId]
   );
   return Number(rows[0]!.count);
