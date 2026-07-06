@@ -2,10 +2,12 @@ import {
   ListWorkspacesResponse,
   CreateWorkspaceResponse,
   DeleteWorkspaceResponse,
+  DeleteAccountResponse,
   MintTokenResponse,
   ListTokensResponse,
   InviteResponse,
   InviteByEmailResponse,
+  ListEmailInvitesResponse,
   RedeemInviteResponse,
   ListMembersResponse,
   WorkspaceLandscapeResponse,
@@ -18,12 +20,14 @@ import type {
   CreateWorkspaceRequestT,
   CreateWorkspaceResponseT,
   DeleteWorkspaceResponseT,
+  DeleteAccountResponseT,
   MintTokenRequestT,
   MintTokenResponseT,
   ListTokensResponseT,
   CreateInviteRequestT,
   InviteResponseT,
   InviteByEmailResponseT,
+  ListEmailInvitesResponseT,
   RedeemInviteResponseT,
   ListMembersResponseT,
   WorkspaceLandscapeResponseT,
@@ -95,6 +99,13 @@ export interface ShepherdClient {
   createWorkspace(body: CreateWorkspaceRequestT): Promise<CreateWorkspaceResponseT>;
   /** DELETE a workspace and ALL its data (admin only). Permanent, irreversible. */
   deleteWorkspace(workspaceId: string): Promise<DeleteWorkspaceResponseT>;
+  /**
+   * DELETE the caller's own account: leaves every workspace (deleting those
+   * where the caller was the sole member), revokes every token, and erases the
+   * profile. 409s when the caller is the last admin of a workspace that still
+   * has other members. Permanent, irreversible.
+   */
+  deleteAccount(): Promise<DeleteAccountResponseT>;
 
   /** POST a new agent token; the raw `shp_` value is returned exactly once. */
   mintToken(workspaceId: string, body: MintTokenRequestT): Promise<MintTokenResponseT>;
@@ -114,6 +125,8 @@ export interface ShepherdClient {
   createInvite(workspaceId: string, body: CreateInviteRequestT): Promise<InviteResponseT>;
   /** POST a one-time-use invite emailed directly to an address (admin only). */
   inviteByEmail(workspaceId: string, email: string): Promise<InviteByEmailResponseT>;
+  /** GET the workspace's PENDING email invites (sent, not yet redeemed). Admin only. */
+  listEmailInvites(workspaceId: string): Promise<ListEmailInvitesResponseT>;
   /** POST to revoke an invite code (admin only). */
   revokeInvite(workspaceId: string, code: string): Promise<void>;
   /** POST to redeem an invite code, joining its workspace as a member. */
@@ -331,6 +344,11 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
         schema: DeleteWorkspaceResponse,
       });
     },
+    deleteAccount(): Promise<DeleteAccountResponseT> {
+      return request("DELETE", "/account", {
+        schema: DeleteAccountResponse,
+      });
+    },
 
     mintToken(workspaceId: string, body: MintTokenRequestT): Promise<MintTokenResponseT> {
       return request("POST", `/workspaces/${enc(workspaceId)}/tokens`, {
@@ -375,6 +393,11 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
       return request("POST", `/workspaces/${enc(workspaceId)}/invites/email`, {
         body: { email },
         schema: InviteByEmailResponse,
+      });
+    },
+    listEmailInvites(workspaceId: string): Promise<ListEmailInvitesResponseT> {
+      return request("GET", `/workspaces/${enc(workspaceId)}/invites/email`, {
+        schema: ListEmailInvitesResponse,
       });
     },
     revokeInvite(workspaceId: string, code: string): Promise<void> {

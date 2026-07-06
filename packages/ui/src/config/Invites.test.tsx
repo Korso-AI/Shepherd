@@ -195,4 +195,53 @@ describe("Invites", () => {
     resolve({ email: "newcomer@example.com", sentAt: "2026-06-30T00:00:00.000Z" });
     await waitFor(() => expect(btn).not.toBeDisabled());
   });
+
+  it("lists the pending email invites on mount", async () => {
+    client.listEmailInvites = vi.fn().mockResolvedValue({
+      invites: [
+        { id: "einv_1", email: "one@example.com", sentAt: "2026-06-30T00:00:00.000Z", expiresAt: null },
+        { id: "einv_2", email: "two@example.com", sentAt: "2026-06-29T00:00:00.000Z", expiresAt: null },
+      ],
+    });
+    renderInvites();
+
+    expect(await screen.findByText("one@example.com")).toBeInTheDocument();
+    expect(screen.getByText("two@example.com")).toBeInTheDocument();
+    expect(client.listEmailInvites).toHaveBeenCalledWith(WS_ID);
+  });
+
+  it("hides the pending list entirely when there are none", async () => {
+    renderInvites(); // mock default: { invites: [] }
+    await waitFor(() => expect(client.listEmailInvites).toHaveBeenCalled());
+    expect(screen.queryByRole("list", { name: /pending email invites/i })).not.toBeInTheDocument();
+  });
+
+  it("refreshes the pending list after sending an email invite", async () => {
+    client.listEmailInvites = vi
+      .fn()
+      .mockResolvedValueOnce({ invites: [] })
+      .mockResolvedValue({
+        invites: [
+          { id: "einv_1", email: "newcomer@example.com", sentAt: "2026-06-30T00:00:00.000Z", expiresAt: null },
+        ],
+      });
+    renderInvites();
+    await waitFor(() => expect(client.listEmailInvites).toHaveBeenCalledTimes(1));
+
+    await userEvent.type(screen.getByLabelText(/invite by email/i), "newcomer@example.com");
+    await userEvent.click(screen.getByRole("button", { name: /send invite/i }));
+
+    expect(await screen.findByText("newcomer@example.com")).toBeInTheDocument();
+    expect(client.listEmailInvites).toHaveBeenCalledTimes(2);
+  });
+
+  it("degrades to no list when the pending-invites endpoint fails", async () => {
+    client.listEmailInvites = vi.fn().mockRejectedValue(new Error("HTTP 404"));
+    renderInvites();
+
+    await waitFor(() => expect(client.listEmailInvites).toHaveBeenCalled());
+    // Inviting still works; the roster is just absent.
+    expect(screen.getByRole("button", { name: /send invite/i })).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /pending email invites/i })).not.toBeInTheDocument();
+  });
 });

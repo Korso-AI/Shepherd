@@ -1,0 +1,12 @@
+-- Migration 018: record the recipient email on email invites.
+--
+-- Atomic, single-transaction file (see the invariant in migrate.ts): no COMMIT,
+-- no CREATE INDEX CONCURRENTLY. Safe to apply to a database that already ran
+-- 001-017.
+--
+-- WHY: the Config UI grows a "pending email invites" list (who has been invited
+-- but hasn't joined yet). The invite row was previously anonymous — the address
+-- only ever existed inside the outbound email — so there was nothing to list.
+-- Nullable: code/link invites have no recipient and stay NULL; `email IS NOT
+-- NULL` is what marks a row as an email invite for the pending-invites query.
+ALTER TABLE invites ADD COLUMN email text;

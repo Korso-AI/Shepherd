@@ -4,7 +4,6 @@ import { GeneralSettings } from "./GeneralSettings.js";
 import { Members } from "./Members.js";
 import { Invites } from "./Invites.js";
 import { ConnectAgent } from "./ConnectAgent.js";
-import { SignOutAction } from "./SignOutAction.js";
 
 // ---------------------------------------------------------------------------
 // ConfigPanel — the Config tab's body: a left sidebar of sections (General ·
@@ -12,7 +11,9 @@ import { SignOutAction } from "./SignOutAction.js";
 // long scroll. Scoping every section to the CURRENT workspace is what let the
 // switch/create/join actions move out to the app-bar <WorkspaceSwitcher>.
 //
-//   • General — workspace name, the caller's role, Leave workspace.
+//   • General — workspace name, the caller's role, Leave/Delete workspace, and
+//     the account rows (Sign out · Delete account). Account actions live HERE —
+//     as ordinary General fields — not as a footer trailing every section.
 //   • Members — the roster (admin-gated Remove) + admin-only Invites.
 //   • Agent   — mint a token + the copy-paste install command.
 //
@@ -63,45 +64,46 @@ export function ConfigPanel({
   const isAdmin = workspace.role === "admin";
 
   return (
-    <>
-      <div className="config-layout">
-        <nav className="config-nav" aria-label="Configuration sections">
-          {SECTIONS.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              className={"config-nav__item" + (section === id ? " config-nav__item--on" : "")}
-              aria-current={section === id ? "page" : undefined}
-              onClick={() => setSection(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+    <div className="config-layout">
+      <nav className="config-nav" aria-label="Configuration sections">
+        {SECTIONS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            className={"config-nav__item" + (section === id ? " config-nav__item--on" : "")}
+            aria-current={section === id ? "page" : undefined}
+            onClick={() => setSection(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
 
-        <div className="config-panel">
-          {section === "general" && (
-            <GeneralSettings workspace={workspace} onLeft={onLeft} onDeleted={onDeleted} />
-          )}
+      <div className="config-panel">
+        {section === "general" && (
+          <GeneralSettings
+            workspace={workspace}
+            onLeft={onLeft}
+            onDeleted={onDeleted}
+            onLogout={onLogout}
+          />
+        )}
 
-          {section === "members" && (
-            <>
-              <Members
-                workspaceId={workspace.id}
-                refreshKey={membersRefreshKey}
-                canRemove={isAdmin}
-              />
-              {isAdmin && (
-                <Invites workspaceId={workspace.id} onMembersChanged={onMembersChanged} />
-              )}
-            </>
-          )}
+        {section === "members" && (
+          <>
+            <Members
+              workspaceId={workspace.id}
+              refreshKey={membersRefreshKey}
+              canRemove={isAdmin}
+            />
+            {isAdmin && (
+              <Invites workspaceId={workspace.id} onMembersChanged={onMembersChanged} />
+            )}
+          </>
+        )}
 
-          {section === "agent" && <ConnectAgent hubUrl={hubUrl} />}
-        </div>
+        {section === "agent" && <ConnectAgent hubUrl={hubUrl} />}
       </div>
-
-      {onLogout && <SignOutAction onLogout={onLogout} />}
-    </>
+    </div>
   );
 }

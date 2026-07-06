@@ -247,10 +247,13 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
         ) : (
           <ul>
             {tokens.map((t) => {
-              const name = t.name ?? t.id;
+              // An unnamed token gets a human fallback + a short id suffix to
+              // tell twins apart — NEVER the raw uuid alone, which reads like a
+              // secret and confuses the "paste your token" flow.
+              const name = t.name ?? `Unnamed token (${t.id.slice(0, 8)})`;
               return (
                 <li key={t.id}>
-                  <span>{name}</span>
+                  <span className={t.name ? undefined : "token-unnamed"}>{name}</span>
                   <span className="token-meta">{tokenMeta(t, Date.now())}</span>
                   {t.revokedAt ? (
                     <span className="revoked">revoked</span>

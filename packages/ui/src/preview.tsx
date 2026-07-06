@@ -56,6 +56,10 @@ let tokens: TokenSummaryT[] = [
 
 let nextTokenId = 3;
 let lastInvite: InviteResponseT | null = null;
+let nextEmailInviteId = 1;
+let emailInvites: { id: string; email: string; sentAt: string; expiresAt: string | null }[] = [
+  { id: "einv_0", email: "pat@example.com", sentAt: "2026-06-28T00:00:00.000Z", expiresAt: null },
+];
 
 // A small mutable list so the app-bar workspace switcher (switch / create /
 // join) can be clicked through — create/join append here, listWorkspaces reads it.
@@ -81,6 +85,11 @@ const previewClient: ShepherdClient = {
   },
   deleteWorkspace: async (workspaceId: string) => {
     workspaces = workspaces.filter((w) => w.id !== workspaceId);
+    return { deleted: true as const };
+  },
+  deleteAccount: async () => {
+    workspaces = [];
+    tokens = [];
     return { deleted: true as const };
   },
 
@@ -119,10 +128,15 @@ const previewClient: ShepherdClient = {
     };
     return lastInvite;
   },
-  inviteByEmail: async (_workspaceId, email: string) => ({
-    email,
-    sentAt: new Date().toISOString(),
-  }),
+  inviteByEmail: async (_workspaceId, email: string) => {
+    const sentAt = new Date().toISOString();
+    emailInvites = [
+      { id: `einv_${nextEmailInviteId++}`, email, sentAt, expiresAt: null },
+      ...emailInvites,
+    ];
+    return { email, sentAt };
+  },
+  listEmailInvites: async () => ({ invites: emailInvites }),
   revokeInvite: async () => {
     lastInvite = null;
   },

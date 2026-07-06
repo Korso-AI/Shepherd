@@ -438,6 +438,21 @@ export const DeleteWorkspaceResponse = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// deleteAccount() -> { deleted: true } (DELETE /account)
+//
+// Permanently deletes the CALLER's account: every membership is removed, every
+// token the account owns is revoked, workspaces where the caller was the sole
+// member are deleted outright, and the profile row is erased. Refused with 409
+// when the caller is the last admin of a workspace that still has other
+// members — they must promote another admin (or delete that workspace) first,
+// mirroring the leave/remove last-admin guard. Browser-session only (an agent
+// token must never be able to erase its owning account).
+// ---------------------------------------------------------------------------
+export const DeleteAccountResponse = z.object({
+  deleted: z.literal(true),
+});
+
+// ---------------------------------------------------------------------------
 // mintToken({ name? }) -> { token, id }
 //
 // The raw `shp_`-prefixed token is returned exactly ONCE, at mint time; the hub
@@ -502,8 +517,7 @@ export const InviteResponse = z.object({
 //
 // Mints a one-time-use invite (maxUses: 1 — the existing use-cap guard already
 // stops it dead after the first redemption, no separate expiry logic needed)
-// and emails the join link directly to `email`. Admin only. Fire-and-forget:
-// there is no list of pending email invites, just this one confirmation.
+// and emails the join link directly to `email`. Admin only.
 // ---------------------------------------------------------------------------
 export const InviteByEmailRequest = z.object({
   email: z.string().email(),
@@ -512,6 +526,27 @@ export const InviteByEmailRequest = z.object({
 export const InviteByEmailResponse = z.object({
   email: z.string(),
   sentAt: IsoTimestamp,
+});
+
+// ---------------------------------------------------------------------------
+// listEmailInvites() -> { invites: EmailInviteSummary[] }
+//
+// The PENDING email invites of a workspace (admin only): sent by email, not yet
+// redeemed, not revoked, not expired. A redeemed one-time invite (use_count
+// reached max_uses) drops out of this list, so the Config UI's "sent invites"
+// roster empties itself as people join. Deliberately omits the invite code —
+// the join link already left by email; the dashboard list is status-only.
+// ---------------------------------------------------------------------------
+export const EmailInviteSummary = z.object({
+  id: z.string(),
+  email: z.string(),
+  sentAt: IsoTimestamp,
+  // ISO timestamp string, or null when the invite never expires.
+  expiresAt: IsoTimestamp.nullable(),
+});
+
+export const ListEmailInvitesResponse = z.object({
+  invites: z.array(EmailInviteSummary),
 });
 
 // ---------------------------------------------------------------------------
