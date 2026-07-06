@@ -6,10 +6,25 @@ import type {
   WorkspaceTaskT,
   WorkspaceLandscapeResponseT,
   WorkspaceAnnounceResponseT,
+  WorkspaceSummaryT,
 } from "@shepherd/shared";
 import type { ShepherdClient } from "../../src/client.js";
 import { ShepherdClientProvider } from "../../src/context.js";
 import { Dashboard } from "../../src/components/Dashboard.js";
+import { makeMockClient } from "../../src/test/mockClient.js";
+
+/** An empty (schema-valid) landscape with zero agents. */
+function emptyLandscape(): WorkspaceLandscapeResponseT {
+  return { agents: [], tasks: [], announcements: [], serverTime: NOW };
+}
+
+/** Flush the immediate on-mount poll so state settles. */
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 /**
  * Dashboard: the wallboard shell that composes useLandscapePolling + the six
@@ -319,6 +334,147 @@ describe("Dashboard", () => {
     expect(client.announceTo).not.toHaveBeenCalled();
   });
 
+  it("hosted with no workspace lands on Tasks showing the create-stage setup checklist and never polls", async () => {
+    const client = makeMockClient({
+      landscape: vi.fn().mockResolvedValue(emptyLandscape()),
+    });
+    render(
+      <ShepherdClientProvider client={client}>
+        <Dashboard
+          hasWorkspace={false}
+          config={<div>config</div>}
+          onWorkspacesChanged={vi.fn()}
+        />
+      </ShepherdClientProvider>,
+    );
+    await flush();
+
+    // Lands on Tasks (not Config), with the checklist in the Tasks panel.
+    expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+    // The create stage keeps step 2's "Generate token" disabled.
+    expect(screen.getByRole("button", { name: "Generate token" })).toBeDisabled();
+    // No workspace → the board never polls the hub.
+    expect(client.landscape).not.toHaveBeenCalled();
+    expect(client.getLandscape).not.toHaveBeenCalled();
+  });
+
+  it("hosted with a workspace and no agents yet shows the connect-stage checklist over the board", async () => {
+    const client = makeMockClient({
+      landscape: vi.fn().mockResolvedValue(emptyLandscape()),
+    });
+    render(
+      <ShepherdClientProvider client={client}>
+        <Dashboard
+          workspaceId="ws1"
+          hasWorkspace={true}
+          config={<div>config</div>}
+          onWorkspacesChanged={vi.fn()}
+        />
+      </ShepherdClientProvider>,
+    );
+    await flush();
+
+    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+    // The connect stage enables "Generate token".
+    expect(screen.getByRole("button", { name: "Generate token" })).toBeEnabled();
+    // The board itself is replaced by the checklist.
+    expect(document.getElementById("crew")).not.toBeInTheDocument();
+  });
+
+  it("hosted with agents present shows the board and never flashes the checklist", async () => {
+    const client = makeMockClient({
+      landscape: vi.fn().mockResolvedValue(makeSnapshot()),
+    });
+    render(
+      <ShepherdClientProvider client={client}>
+        <Dashboard
+          workspaceId="ws1"
+          hasWorkspace={true}
+          config={<div>config</div>}
+          onWorkspacesChanged={vi.fn()}
+        />
+      </ShepherdClientProvider>,
+    );
+    // First render (snapshot still null) must not show the checklist.
+    expect(
+      screen.queryByRole("region", { name: "Setup guide" }),
+    ).not.toBeInTheDocument();
+
+    await flush();
+
+    expect(
+      screen.queryByRole("region", { name: "Setup guide" }),
+    ).not.toBeInTheDocument();
+    expect(document.getElementById("crew")).toBeInTheDocument();
+    expect(screen.getByText("wire the b feature")).toBeInTheDocument();
+  });
+
+  it("skips to the board, persists per-workspace, and reopens via the Setup guide button", async () => {
+    const user = userEvent.setup();
+    const props = {
+      workspaceId: "ws1",
+      hasWorkspace: true,
+      config: <div>config</div>,
+      onWorkspacesChanged: vi.fn(),
+    };
+    const client = makeMockClient({
+      landscape: vi.fn().mockResolvedValue(emptyLandscape()),
+    });
+    const { unmount } = render(
+      <ShepherdClientProvider client={client}>
+        <Dashboard {...props} />
+      </ShepherdClientProvider>,
+    );
+    await flush();
+
+    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+
+    // Board revealed, checklist gone, skip persisted for THIS workspace.
+    expect(
+      screen.queryByRole("region", { name: "Setup guide" }),
+    ).not.toBeInTheDocument();
+    expect(document.getElementById("crew")).toBeInTheDocument();
+    expect(localStorage.getItem("shepherd.setup.skipped.ws1")).not.toBeNull();
+
+    // The persistent header button re-opens the guide.
+    await user.click(screen.getByRole("button", { name: "Setup guide" }));
+    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+
+    unmount();
+
+    // Remount: the persisted skip keeps the checklist hidden.
+    const client2 = makeMockClient({
+      landscape: vi.fn().mockResolvedValue(emptyLandscape()),
+    });
+    render(
+      <ShepherdClientProvider client={client2}>
+        <Dashboard {...props} />
+      </ShepherdClientProvider>,
+    );
+    await flush();
+    expect(
+      screen.queryByRole("region", { name: "Setup guide" }),
+    ).not.toBeInTheDocument();
+    expect(document.getElementById("crew")).toBeInTheDocument();
+  });
+
+  it("self-host (no hasWorkspace) renders no checklist or Setup guide button", async () => {
+    await renderDashboard();
+
+    expect(
+      screen.queryByRole("region", { name: "Setup guide" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Setup guide" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders a loading/empty state when there is no snapshot yet", () => {
     // A client that never resolves: snapshot stays null.
     const client: ShepherdClient = {
@@ -336,5 +492,85 @@ describe("Dashboard", () => {
     );
     // No crash; the brand still shows even before the first snapshot.
     expect(screen.getByText("Shepherd")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dashboard — hosted-shell setup-checklist wiring: the connect-stage step 1
+// summary and the per-workspace-switch reset of the in-memory skip/force flags.
+// DB-free: the mock ShepherdClient is injected via ShepherdClientProvider.
+// ---------------------------------------------------------------------------
+
+const HUB_URL = "https://hub.example.run.app";
+const WS: WorkspaceSummaryT = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" };
+const WS2: WorkspaceSummaryT = { id: "ws_2", slug: "beta", name: "Beta", role: "admin" };
+
+describe("Dashboard setup checklist", () => {
+  let client: ReturnType<typeof makeMockClient>;
+
+  beforeEach(() => {
+    // The board persists its tab + the per-workspace skip flag; clear so each
+    // test starts from the default landing and an un-skipped checklist.
+    localStorage.clear();
+    client = makeMockClient();
+  });
+
+  function renderChecklistDashboard(
+    props: Partial<Parameters<typeof Dashboard>[0]> = {},
+  ) {
+    return render(
+      <ShepherdClientProvider client={client}>
+        <Dashboard
+          hasWorkspace
+          hubUrl={HUB_URL}
+          onWorkspacesChanged={vi.fn()}
+          {...props}
+        />
+      </ShepherdClientProvider>,
+    );
+  }
+
+  it("connect stage renders step 1 as the checked workspace summary, not a create form", async () => {
+    // A workspace with no agents yet (empty snapshot) → the connect stage.
+    renderChecklistDashboard({ workspaceId: "ws_1", workspace: WS });
+
+    // Step 1 shows the workspace name (checked), and the create form is gone.
+    await screen.findByText(/waiting for your agent to check in/i);
+    expect(screen.getByText("Acme")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/workspace name/i)).not.toBeInTheDocument();
+  });
+
+  it("resets the in-memory skip when the workspace changes (no cross-switch leak)", async () => {
+    const { rerender } = renderChecklistDashboard({
+      workspaceId: "ws_1",
+      workspace: WS,
+    });
+
+    // ws_1: the connect-stage checklist renders; skip it.
+    await screen.findByRole("region", { name: /setup guide/i });
+    await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: /setup guide/i }),
+      ).not.toBeInTheDocument(),
+    );
+
+    // Switch to ws_2 (Dashboard stays mounted, only workspaceId changes). The
+    // in-memory sessionSkipped flag must NOT leak: ws_2 was never skipped, so
+    // its checklist returns.
+    rerender(
+      <ShepherdClientProvider client={client}>
+        <Dashboard
+          hasWorkspace
+          hubUrl={HUB_URL}
+          onWorkspacesChanged={vi.fn()}
+          workspaceId="ws_2"
+          workspace={WS2}
+        />
+      </ShepherdClientProvider>,
+    );
+
+    await screen.findByRole("region", { name: /setup guide/i });
+    expect(screen.getByText("Beta")).toBeInTheDocument();
   });
 });

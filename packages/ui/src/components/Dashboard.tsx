@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactElement, ReactNode } from "react";
-import type { WorkspaceLandscapeResponseT } from "@shepherd/shared";
+import type {
+  WorkspaceLandscapeResponseT,
+  WorkspaceSummaryT,
+} from "@shepherd/shared";
 import { useLandscapePolling } from "../useLandscapePolling.js";
 import type { LandscapeStatus } from "../useLandscapePolling.js";
 import { defaultRepo, distinctRepos, matchesRepo } from "../logic.js";
@@ -13,6 +16,8 @@ import { Chat } from "./Chat.js";
 import { Composer } from "./Composer.js";
 import { EmptyState } from "../config/EmptyState.js";
 import { FeedbackWidget } from "./FeedbackWidget.js";
+import { SetupChecklist } from "../onboarding/SetupChecklist.js";
+import { deriveSetupStage, setupSkipKey } from "../onboarding/logic.js";
 
 /**
  * localStorage keys + page size, ported verbatim from the state block of
@@ -142,6 +147,13 @@ export interface DashboardProps {
    */
   workspaceId?: string;
   /**
+   * The selected workspace summary, forwarded to the setup checklist so its
+   * connect stage renders the checked workspace name (step 1) instead of the
+   * create form. Optional — self-host callers omit it and never render the
+   * checklist.
+   */
+  workspace?: WorkspaceSummaryT;
+  /**
    * The hosted-shell management view. When supplied, a third `Config` tab is
    * shown beside `Tasks`/`Chat` and this node renders in its panel. Omitting it
    * (the self-host case) keeps the board a plain two-tab Tasks/Chat wallboard.
@@ -166,6 +178,18 @@ export interface DashboardProps {
    * invokes this callback; authentication side effects belong to the caller.
    */
   onLogout?: () => void;
+  /**
+   * The DIRECT Hub URL the first-run setup checklist embeds in its agent install
+   * command (hosted shell). Passed through to {@link SetupChecklist}; omitted for
+   * self-host, where the checklist never renders.
+   */
+  hubUrl?: string;
+  /**
+   * Called after the setup checklist creates a workspace so the hosted shell
+   * re-lists and flips `hasWorkspace`. Optional — self-host callers omit it and
+   * never render the checklist.
+   */
+  onWorkspacesChanged?: () => void;
 }
 
 /**
@@ -192,12 +216,18 @@ export interface DashboardProps {
  */
 export function Dashboard({
   workspaceId,
+  workspace,
   config,
   switcher,
   hasWorkspace,
   onLogout,
+  hubUrl,
+  onWorkspacesChanged,
 }: DashboardProps = {}): ReactElement {
   const hasConfig = config != null;
+  // The hosted shell is the only mode with a first-run setup checklist; the
+  // discriminator is an explicit `hasWorkspace` (self-host leaves it undefined).
+  const hosted = hasWorkspace !== undefined;
   // Only the hosted shell with an explicit empty account suppresses the board;
   // self-host (hasWorkspace undefined) always has its implicit team workspace.
   const noWorkspace = hasWorkspace === false;
@@ -209,8 +239,8 @@ export function Dashboard({
   });
 
   const [activeTab, setActiveTab] = useState<Tab>(() => {
-    // No workspace yet → land on Config, where create/join lives.
-    if (hasConfig && noWorkspace) return "config";
+    // A no-workspace hosted account lands on Tasks so the setup checklist is the
+    // first thing a new user sees (Config stays reachable via its tab).
     const stored = readStored(TAB_KEY);
     if (stored === "chat") return "chat";
     if (stored === "config" && hasConfig) return "config";
@@ -273,6 +303,22 @@ export function Dashboard({
   );
   const [doneShown, setDoneShown] = useState(DONE_PAGE);
 
+  // First-run setup checklist state (hosted only). `forcedOpen` is set by the
+  // header "Setup guide" button and overrides skips; `sessionSkipped` covers the
+  // no-workspace case where there is no workspace id to key the persisted skip.
+  const [forcedOpen, setForcedOpen] = useState(false);
+  const [sessionSkipped, setSessionSkipped] = useState(false);
+
+  // `forcedOpen`/`sessionSkipped` are in-memory: the hosted shell keeps this
+  // Dashboard mounted across workspace switches (only `workspaceId` changes), so
+  // without a reset a skip (or a forced-open guide) in one workspace would leak
+  // into the next. Clear both when the workspace changes; the PER-WORKSPACE
+  // localStorage skip key (setupSkipKey) still persists intentionally.
+  useEffect(() => {
+    setForcedOpen(false);
+    setSessionSkipped(false);
+  }, [workspaceId]);
+
   // First-load guard for resolveSelectedRepo's rule 3 — a persisted repo is only
   // second-guessed once, then in-session selections are respected (a ref because
   // flipping it must not itself trigger a render).
@@ -299,6 +345,21 @@ export function Dashboard({
   const onLoadMore = useCallback(() => {
     setDoneShown((n) => n + DONE_PAGE);
   }, []);
+
+  // Re-open the setup guide from the persistent header button: force it open and
+  // route to the Tasks panel where it renders.
+  const openSetupGuide = useCallback(() => {
+    setForcedOpen(true);
+    onTab("tasks");
+  }, [onTab]);
+
+  // Dismiss the guide: persist the skip per-workspace when one exists, always
+  // record a session skip and drop any forced-open so the board shows.
+  const onSkip = useCallback(() => {
+    if (workspaceId) writeStored(setupSkipKey(workspaceId), "1");
+    setForcedOpen(false);
+    setSessionSkipped(true);
+  }, [workspaceId]);
 
   // Resolve the effective repo for this render. When the resolver derives a
   // value different from state (first-load default / vanished repo), commit it so
@@ -364,10 +425,31 @@ export function Dashboard({
     (t) => t.status !== "active" && matchesRepo(t, effectiveRepo),
   ).length;
 
+  // The first-run setup stage (hosted only). `deriveSetupStage` is the single
+  // source of truth: no workspace → "create"; a workspace with no agents yet
+  // (and not skipped) → "connect"; else "hidden". `agentsEverSeen` stays `null`
+  // until the first snapshot so an established board never flashes the checklist.
+  const skipped =
+    (workspaceId ? readStored(setupSkipKey(workspaceId)) !== null : false) ||
+    sessionSkipped;
+  const stage = hosted
+    ? deriveSetupStage({
+        hasWorkspace: !noWorkspace,
+        agentsEverSeen: snapshot ? snapshot.agents.length > 0 : null,
+        skipped,
+        forcedOpen,
+      })
+    : "hidden";
+
   // The poll-driven header chrome (repo filter, vitals, status, freshness) only
-  // makes sense for a live board — hide it on the Config tab and when there is
-  // no workspace to poll. The brand and the tab strip stay in every state.
-  const showBoardChrome = !noWorkspace && activeTab !== "config";
+  // makes sense for a live board — hide it on the Config tab, when there is no
+  // workspace to poll, and on the Tasks tab while the setup checklist replaces
+  // the board there. The Chat tab still shows a live board during the connect
+  // stage, so it keeps its chrome. The brand and tab strip stay in every state.
+  const showBoardChrome =
+    !noWorkspace &&
+    activeTab !== "config" &&
+    !(activeTab === "tasks" && stage !== "hidden");
 
   return (
     <div id="board">
@@ -411,6 +493,15 @@ export function Dashboard({
             </span>
           </>
         )}
+        {hosted && (
+          <button
+            type="button"
+            className="header-setup-guide"
+            onClick={openSetupGuide}
+          >
+            Setup guide
+          </button>
+        )}
         {onLogout && (
           <button type="button" className="header-signout" onClick={onLogout}>
             Sign out
@@ -446,8 +537,15 @@ export function Dashboard({
         aria-labelledby="tab-tasks"
         hidden={activeTab !== "tasks"}
       >
-        {noWorkspace ? (
-          <EmptyState onGetStarted={() => onTab("config")} />
+        {stage !== "hidden" ? (
+          <SetupChecklist
+            stage={stage}
+            workspace={workspace ?? null}
+            agents={snapshot?.agents ?? null}
+            hubUrl={hubUrl}
+            onWorkspacesChanged={onWorkspacesChanged ?? (() => {})}
+            onSkip={onSkip}
+          />
         ) : (
           <>
             <Crew agents={agents} tasks={tasks} selectedRepo={effectiveRepo} />
@@ -489,7 +587,12 @@ export function Dashboard({
         hidden={activeTab !== "chat"}
       >
         {noWorkspace ? (
-          <EmptyState onGetStarted={() => onTab("config")} />
+          <EmptyState
+            onGetStarted={openSetupGuide}
+            ctaLabel="Open setup guide"
+          >
+            Finish setting up your workspace to start chatting with your agents.
+          </EmptyState>
         ) : (
           <div className="chat-wrap">
             <Chat announcements={announcements} selectedRepo={effectiveRepo} nowMs={nowMs} />

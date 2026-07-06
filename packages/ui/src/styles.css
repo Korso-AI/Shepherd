@@ -27,6 +27,12 @@
       .header-signout:hover { color:var(--ink); border-color:var(--ink3); background:rgba(255,250,238,.35); }
       .header-signout:focus-visible { outline:none; border-color:var(--terr);
         box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+      .header-setup-guide { font:inherit; font-size:13px; color:var(--ink2); cursor:pointer;
+        border:1px solid var(--line); border-radius:8px; padding:5px 11px;
+        background:transparent; transition:color .12s ease, border-color .12s ease, background .12s ease; }
+      .header-setup-guide:hover { color:var(--ink); border-color:var(--ink3); background:rgba(255,250,238,.35); }
+      .header-setup-guide:focus-visible { outline:none; border-color:var(--terr);
+        box-shadow:0 0 0 3px rgba(122,106,72,.14); }
 
       /* Repo selector (hidden when <2 repos; populated by app.js) */
       .repo { position:relative; }
@@ -308,30 +314,38 @@
       .shepherd-invites .invites { gap:12px; }
       .shepherd-invites .invites > button { align-self:flex-start; }
 
-      .shepherd-config input, .shepherd-config select {
+      .shepherd-config input, .shepherd-config select,
+      .shepherd-setup input, .shepherd-setup select {
         padding:9px 12px; border-radius:8px; border:1px solid var(--line);
         /* background-COLOR, not the `background` shorthand — the shorthand
            resets background-image and erases the select's chevron above. */
         background-color:var(--bg); color:var(--ink); font:inherit;
         transition:border-color .12s ease, box-shadow .12s ease; }
-      .shepherd-config input::placeholder { color:var(--ink3); }
-      .shepherd-config input:focus, .shepherd-config select:focus {
+      .shepherd-config input::placeholder,
+      .shepherd-setup input::placeholder { color:var(--ink3); }
+      .shepherd-config input:focus, .shepherd-config select:focus,
+      .shepherd-setup input:focus, .shepherd-setup select:focus {
         outline:none; border-color:var(--terr); box-shadow:0 0 0 3px rgba(122,106,72,.14); }
       /* Select dropdown affordance. AFTER the shared input/select rule on
          purpose: `padding` there is a shorthand and would reset the wider
          padding-right reserved for the chevron. */
-      .shepherd-config select {
+      .shepherd-config select,
+      .shepherd-setup select {
         appearance:none; -webkit-appearance:none; -moz-appearance:none;
         cursor:pointer;
         background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236f6450' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
         background-repeat:no-repeat; background-position:right 14px center; padding-right:40px; }
-      .shepherd-config select:hover:not(:disabled) { border-color:var(--terr); }
-      .shepherd-config button {
+      .shepherd-config select:hover:not(:disabled),
+      .shepherd-setup select:hover:not(:disabled) { border-color:var(--terr); }
+      .shepherd-config button,
+      .shepherd-setup button {
         padding:9px 16px; border-radius:8px; border:1px solid var(--ink);
         background:var(--ink); color:var(--bg); font-weight:600; cursor:pointer; font:inherit;
         white-space:nowrap; transition:background .12s ease; }
-      .shepherd-config button:hover:not(:disabled) { background:#413a2a; }
-      .shepherd-config button:disabled { opacity:.55; cursor:default; }
+      .shepherd-config button:hover:not(:disabled),
+      .shepherd-setup button:hover:not(:disabled) { background:#413a2a; }
+      .shepherd-config button:disabled,
+      .shepherd-setup button:disabled { opacity:.55; cursor:default; }
 
       /* Token / member rows: leading name grows, meta + action ride the right.
          Flat rows separated by hairlines (mirrors the board's .claim rows)
@@ -353,12 +367,14 @@
         overflow-x:auto; white-space:pre-wrap; word-break:break-word; }
       /* Bare icon button (clipboard → check on copy), not a filled pill. Extra
          selector depth beats the generic dark `.shepherd-config button` fill. */
-      .shepherd-config .shepherd-connect-agent .install-command__copy {
+      .shepherd-config .shepherd-connect-agent .install-command__copy,
+      .shepherd-setup .install-command__copy {
         position:absolute; top:7px; right:7px; display:grid; place-items:center;
         width:28px; height:28px; padding:0; border-radius:7px; border:0;
         background:transparent; color:var(--ink3); cursor:pointer;
         transition:background .12s ease, color .12s ease; }
-      .shepherd-config .shepherd-connect-agent .install-command__copy:hover {
+      .shepherd-config .shepherd-connect-agent .install-command__copy:hover,
+      .shepherd-setup .install-command__copy:hover {
         background:rgba(50,44,32,.08); color:var(--ink); }
       .shepherd-connect-agent h4 { margin:6px 0 0; font-size:11px; font-weight:600;
         letter-spacing:.05em; text-transform:uppercase; color:var(--ink3); }
@@ -504,3 +520,35 @@
         border:1px solid var(--ink); background:var(--ink); color:var(--bg);
         font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
       .shepherd-join__retry:hover { background:#413a2a; }
+
+      /* First-run setup guide: three stacked step cards, each with the shared
+         card-head/card-body shape. Reuses --card, --line2, --ink, --live. */
+      .shepherd-setup { display:flex; flex-direction:column; gap:16px; }
+      .shepherd-setup__step { background:var(--card); border:1px solid var(--line);
+        border-radius:12px; padding:18px 20px; }
+      /* Inactive future steps read muted but stay visible; the active step
+         (aria-current) and completed steps (--done) come to full strength. */
+      .shepherd-setup__step { opacity:.62; }
+      .shepherd-setup__step[aria-current="step"],
+      .shepherd-setup__step--done { opacity:1; }
+      .shepherd-setup__step--done { border-color:var(--live); }
+      .shepherd-setup .card-head { margin-bottom:14px; }
+      .shepherd-setup .card-head h3 { margin:0; font-size:15px; font-weight:600;
+        color:var(--ink); }
+      .shepherd-setup .card-sub { margin:4px 0 0; font-size:12.5px; color:var(--ink3); }
+      .shepherd-setup .card-body { display:flex; flex-direction:column; gap:14px; }
+      .shepherd-setup .card-body > [role="alert"] { margin:0; color:var(--drop); font-size:13px; }
+      .shepherd-setup .card-body > [role="status"] { margin:0; color:var(--ink2); font-size:13px; }
+      .shepherd-setup .field { display:flex; flex-direction:column; gap:8px; }
+      .shepherd-setup .field__row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      .shepherd-setup .field__row > input { flex:1; min-width:200px; }
+      .shepherd-setup label { font-size:11px; font-weight:600; letter-spacing:.05em;
+        text-transform:uppercase; color:var(--ink3); }
+      /* Feature value-prop tiles for step 3. */
+      .shepherd-setup__cards { display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; }
+      .shepherd-setup__cards .card { background:var(--bg); border:1px solid var(--line2);
+        border-radius:10px; padding:12px 14px; }
+      .shepherd-setup__cards .card h4 { margin:0; font-size:13px; font-weight:600; color:var(--ink); }
+      @media (max-width:560px) {
+        .shepherd-setup__cards { grid-template-columns:1fr; }
+      }

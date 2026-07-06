@@ -30,6 +30,11 @@ export type { JoinWorkspaceProps } from "./JoinWorkspace.js";
 export { Dashboard } from "./components/Dashboard.js";
 export type { DashboardProps } from "./components/Dashboard.js";
 
+// The first-run setup checklist — re-exported so hosted consumers can compose
+// the onboarding surface directly without the full Dashboard/ShepherdRoot shell.
+export { SetupChecklist } from "./onboarding/SetupChecklist.js";
+export type { SetupChecklistProps } from "./onboarding/SetupChecklist.js";
+
 // Config screens — re-exported so consumers can compose the management surface
 // directly without the full ShepherdRoot shell.
 export {
