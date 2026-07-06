@@ -154,6 +154,30 @@ export function distinctRepos(tasks: Pick<WorkspaceTaskT, "repo">[]): string[] {
 }
 
 /**
+ * Every distinct repo REPRESENTED anywhere on the board: tasks, agents'
+ * (most-recent-session) repos, and announcements. Broader than
+ * {@link distinctRepos} on purpose — deriving the selector's options from tasks
+ * alone made the repo filter vanish whenever all *tasks* happened to sit in one
+ * repo, even while agents or chat spanned several. Null/empty repos (an agent
+ * with no session yet) are skipped.
+ *
+ * @param board - Landscape slices carrying `repo` fields (a structural subset
+ *   of the workspace landscape response).
+ * @returns The distinct non-empty repos, ascending.
+ */
+export function boardRepos(board: {
+  tasks: Pick<WorkspaceTaskT, "repo">[];
+  agents: { repo: string | null }[];
+  announcements: { repo: string }[];
+}): string[] {
+  const repos = new Set<string>();
+  for (const t of board.tasks) if (t.repo) repos.add(t.repo);
+  for (const a of board.agents) if (a.repo) repos.add(a.repo);
+  for (const m of board.announcements) if (m.repo) repos.add(m.repo);
+  return [...repos].sort();
+}
+
+/**
  * True if `item.repo` matches the selection; `null`/`"__all__"` = all repos.
  *
  * @param item - Anything carrying a `repo`.

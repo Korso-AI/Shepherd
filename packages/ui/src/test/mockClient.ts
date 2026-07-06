@@ -42,6 +42,7 @@ export function makeMockClient(overrides: Partial<MockClient> = {}): MockClient 
       role: "admin",
     }),
     deleteWorkspace: vi.fn().mockResolvedValue({ deleted: true }),
+    deleteAccount: vi.fn().mockResolvedValue({ deleted: true }),
     mintToken: vi.fn().mockResolvedValue({ token: "shp_mock", id: "tok_mock" }),
     listTokens: vi.fn().mockResolvedValue({ tokens: [] }),
     revokeToken: vi.fn().mockResolvedValue(undefined),
@@ -58,6 +59,7 @@ export function makeMockClient(overrides: Partial<MockClient> = {}): MockClient 
       email: "mock@example.com",
       sentAt: "2026-06-29T00:00:00.000Z",
     }),
+    listEmailInvites: vi.fn().mockResolvedValue({ invites: [] }),
     revokeInvite: vi.fn().mockResolvedValue(undefined),
     redeemInvite: vi.fn().mockResolvedValue({
       workspace: { id: "ws_joined", slug: "joined", name: "Joined", role: "member" },

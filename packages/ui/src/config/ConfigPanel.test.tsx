@@ -41,26 +41,42 @@ describe("ConfigPanel", () => {
     expect(screen.getByText("Acme")).toBeInTheDocument();
   });
 
-  it("renders a session sign out action below the Config content when logout is supplied", async () => {
+  it("renders Sign out as a General-tab field when logout is supplied", async () => {
     const onLogout = vi.fn();
     const { container } = renderPanel(ADMIN_WS, { onLogout });
 
-    expect(screen.getByRole("heading", { name: "Session" })).toBeInTheDocument();
     expect(screen.getByText("Sign out of this Shepherd dashboard session.")).toBeInTheDocument();
     const button = screen.getByRole("button", { name: "Sign out" });
 
-    const configLayout = container.querySelector(".config-layout");
-    const signOut = container.querySelector(".config-signout");
-    if (!configLayout || !signOut) throw new Error("Expected Config layout and sign out action");
-    expect(configLayout.compareDocumentPosition(signOut)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    // The action is an ordinary field INSIDE the General panel — the old
+    // free-floating footer (.config-signout below .config-layout) is gone.
+    expect(container.querySelector(".config-signout")).toBeNull();
+    const panel = container.querySelector(".config-panel");
+    if (!panel) throw new Error("Expected the Config panel");
+    expect(panel.contains(button)).toBe(true);
 
     await userEvent.click(button);
     expect(onLogout).toHaveBeenCalledTimes(1);
   });
 
+  it("does not render the sign out field on the Members or Agent sections", async () => {
+    renderPanel(ADMIN_WS, { onLogout: vi.fn() });
+
+    await userEvent.click(screen.getByRole("button", { name: "Members" }));
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Agent" }));
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+  });
+
   it("does not render the session sign out action without a logout callback", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+  });
+
+  it("renders a Delete account field in the General section", () => {
+    renderPanel();
+    expect(screen.getByRole("button", { name: "Delete account" })).toBeInTheDocument();
   });
 
   it("switches to Members when its nav item is clicked", async () => {

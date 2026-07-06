@@ -1,7 +1,8 @@
-import { useEffect, useId, useState } from "react";
-import type { InviteResponseT } from "@shepherd/shared";
+import { useCallback, useEffect, useId, useState } from "react";
+import type { EmailInviteSummaryT, InviteResponseT } from "@shepherd/shared";
 import { useShepherdClient } from "../context.js";
 import { describeError } from "../client.js";
+import { formatRelative } from "../logic.js";
 
 // ---------------------------------------------------------------------------
 // Invites — admin-only controls for adding people to the CURRENT workspace.
@@ -12,7 +13,11 @@ import { describeError } from "../client.js";
 //   • Code invite: createInvite → shows the code, a client-constructed join
 //     link, and its use count; revoke retracts the on-screen code.
 //   • Email invite: inviteByEmail → sends a one-time-use join link, reporting
-//     success/failure inline.
+//     success/failure inline. Below the form, the PENDING email invites roster
+//     (listEmailInvites) shows who was invited but hasn't joined yet — a
+//     redeemed one-time invite drops out of the hub's pending list on its own,
+//     so a row disappears once its recipient joins (refreshed on mount and
+//     after each send).
 //
 // Invite display is intentionally single-active (only the most recently created
 // code is shown); prior codes remain live server-side. InviteResponse carries
@@ -38,16 +43,33 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
   const [emailAddress, setEmailAddress] = useState("");
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const [emailBusy, setEmailBusy] = useState(false);
+  // The workspace's PENDING email invites (sent, not yet redeemed). Refreshed
+  // on mount / workspace change and after each send; a redeemed invite is
+  // excluded server-side, so the row vanishes once its recipient joins.
+  const [emailInvites, setEmailInvites] = useState<EmailInviteSummaryT[]>([]);
 
   // Which of the two copyables flashed "Copied" most recently (cleared after 2s).
   const [copied, setCopied] = useState<"code" | "link" | null>(null);
 
+  const loadEmailInvites = useCallback(async () => {
+    try {
+      const res = await client.listEmailInvites(workspaceId);
+      setEmailInvites(res.invites);
+    } catch {
+      // The roster is a nicety — a failed load (e.g. an older hub without the
+      // endpoint) silently leaves it empty rather than blocking inviting.
+      setEmailInvites([]);
+    }
+  }, [client, workspaceId]);
+
   // Clear any displayed invite/email status when the workspace changes, so a
-  // code minted for one workspace never lingers on another's screen.
+  // code minted for one workspace never lingers on another's screen — and load
+  // the new workspace's pending email invites.
   useEffect(() => {
     setInvite(null);
     setEmailStatus(null);
-  }, [workspaceId]);
+    void loadEmailInvites();
+  }, [workspaceId, loadEmailInvites]);
 
   async function createInvite() {
     if (busy) return;
@@ -87,6 +109,7 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
       setEmailStatus(`Invite sent to ${res.email}.`);
       setEmailAddress("");
       onMembersChanged?.();
+      void loadEmailInvites();
     } catch (err) {
       setEmailStatus(describeError(err));
     } finally {
@@ -183,6 +206,24 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
             </button>
           </div>
           {emailStatus && <p className="email-invite__status">{emailStatus}</p>}
+
+          {/* Who has been invited by email and hasn't joined yet. A row
+              disappears once its one-time link is redeemed (or it expires). */}
+          {emailInvites.length > 0 && (
+            <div className="email-invite__pending">
+              <p className="helper">Pending — they&apos;ll drop off this list when they join.</p>
+              <ul aria-label="Pending email invites">
+                {emailInvites.map((inv) => (
+                  <li key={inv.id}>
+                    <span>{inv.email}</span>
+                    <span className="token-meta">
+                      sent {formatRelative(inv.sentAt, Date.now())}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       </div>
     </section>

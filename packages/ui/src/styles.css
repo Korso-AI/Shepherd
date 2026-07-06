@@ -266,14 +266,11 @@
       .config-panel > section + section { margin-top:26px; padding-top:26px;
         border-top:1px solid var(--line2); }
 
-      /* No-workspace Config prompt (create/join now live in the switcher). */
+      /* No-workspace Config prompt (create/join now live in the switcher),
+         followed by the standalone Account card (sign out / delete account). */
       .config-none { color:var(--ink2); font-size:13.5px; max-width:520px; }
-      .config-signout { margin-top:28px; padding-top:24px; border-top:1px solid var(--line2); }
-      .config-signout .card-body { align-items:flex-start; }
-      .shepherd-config .config-signout button { background:transparent; color:var(--ink2);
-        border-color:var(--line); padding:7px 14px; }
-      .shepherd-config .config-signout button:hover:not(:disabled) { color:var(--ink);
-        border-color:var(--ink3); background:rgba(50,44,32,.06); }
+      .config-account { margin-top:28px; padding-top:26px; border-top:1px solid var(--line2);
+        max-width:520px; }
 
       /* Read-only workspace facts (name / role) in General. Deliberately plain
          text — no border/background — so they don't read as editable inputs. */
@@ -281,6 +278,13 @@
         padding:1px 0; font-weight:500; }
       .shepherd-general .leave { padding-top:4px; }
       .shepherd-general .delete { padding-top:4px; }
+      .shepherd-general .signout { padding-top:4px; }
+      .shepherd-general .delete-account { padding-top:4px; }
+      /* Sign out is a session action, not a primary CTA: quiet bordered pill. */
+      .shepherd-config .signout button { background:transparent; color:var(--ink2);
+        border-color:var(--line); align-self:flex-start; }
+      .shepherd-config .signout button:hover:not(:disabled) { color:var(--ink);
+        border-color:var(--ink3); background:rgba(50,44,32,.06); }
       .shepherd-config button.danger { border-color:var(--drop); background:transparent; color:var(--drop);
         align-self:flex-start; }
       .shepherd-config button.danger:hover:not(:disabled) { background:var(--drop); color:var(--bg); }
@@ -343,7 +347,16 @@
       .shepherd-config li button { padding:5px 12px; }
       .shepherd-config .role { color:var(--ink3); font-size:12px; }
       .shepherd-config .token-meta { color:var(--ink3); font-size:12px; }
+      /* Fallback label for a token minted without a name — quiet, so it never
+         reads as a secret value. */
+      .shepherd-config .token-unnamed { color:var(--ink2); font-style:italic; font-weight:400; }
       .shepherd-config .email-invite__status { margin:0; font-size:12.5px; color:var(--ink2); }
+      /* Pending email invites roster under the invite-by-email form. */
+      .shepherd-config .email-invite__pending { margin-top:6px; display:flex;
+        flex-direction:column; gap:4px; }
+      .shepherd-config .email-invite__pending .helper { font-size:11px; font-weight:600;
+        letter-spacing:.05em; text-transform:uppercase; color:var(--ink3); }
+      .shepherd-config .email-invite__pending li { padding:8px 0; }
 
       /* Install command block. */
       .shepherd-connect-agent .install-command { position:relative; }
@@ -406,8 +419,19 @@
       .shepherd-config .invite-result .link-btn:hover { background:transparent;
         text-decoration:underline; }
       .shepherd-config .revoked { color:var(--ink3); text-decoration:line-through; }
-      .shepherd-empty-state { text-align:center; color:var(--ink2); padding:48px 24px; }
-      .shepherd-empty-state button { margin-top:14px; }
+      /* The "no workspace yet" prompt on Tasks/Chat. Its button lives OUTSIDE
+         .shepherd-config, so it gets its full chrome here (matching the config
+         surface's primary buttons) rather than degrading to the UA default. */
+      .shepherd-empty-state { text-align:center; color:var(--ink2); padding:64px 24px; }
+      .shepherd-empty-state h2 { margin:0 0 8px; font-size:17px; font-weight:600;
+        color:var(--ink); }
+      .shepherd-empty-state p { margin:0 auto; max-width:440px; font-size:13.5px;
+        line-height:1.5; }
+      .shepherd-empty-state button { margin-top:18px; padding:9px 18px; border-radius:8px;
+        border:1px solid var(--ink); background:var(--ink); color:var(--bg);
+        font:inherit; font-size:13px; font-weight:600; cursor:pointer;
+        transition:background .12s ease; }
+      .shepherd-empty-state button:hover { background:#413a2a; }
 
       /* Feedback widget: fixed bottom-right, floats over every tab. */
       .shepherd-feedback { position:fixed; right:20px; bottom:20px; z-index:10; }

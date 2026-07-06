@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactElement, ReactNode } from "react";
 import type { WorkspaceLandscapeResponseT } from "@shepherd/shared";
 import { useLandscapePolling } from "../useLandscapePolling.js";
 import type { LandscapeStatus } from "../useLandscapePolling.js";
-import { defaultRepo, distinctRepos, matchesRepo } from "../logic.js";
+import { boardRepos, defaultRepo, matchesRepo } from "../logic.js";
 import { RepoSelect } from "./RepoSelect.js";
 import type { RepoCounts } from "./RepoSelect.js";
 import { Crew } from "./Crew.js";
@@ -86,7 +86,10 @@ function resolveSelectedRepo(
   snapshot: WorkspaceLandscapeResponseT,
   firstRender: boolean,
 ): string | null {
-  const repos = distinctRepos(snapshot.tasks);
+  // The same board-wide repo set the selector renders (tasks + agents + chat),
+  // so a repo that exists only via agents/announcements is both offered AND
+  // survives the vanished-repo check below.
+  const repos = boardRepos(snapshot);
   let next = selectedRepo;
 
   if (next === null && repos.length >= 2) {
@@ -328,7 +331,9 @@ export function Dashboard({
 
   const nowMs = snapshot ? Date.parse(snapshot.serverTime) : Date.now();
 
-  const repos = snapshot ? distinctRepos(snapshot.tasks) : [];
+  // Board-wide repo set (tasks + agents + announcements) — see boardRepos. The
+  // selector still hides itself below two repos (nothing to filter).
+  const repos = snapshot ? boardRepos(snapshot) : [];
   const counts = snapshot
     ? computeCounts(snapshot)
     : ({} as Record<string, RepoCounts>);

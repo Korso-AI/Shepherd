@@ -3,6 +3,7 @@ import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { useShepherdClient } from "../context.js";
 import { describeError, ShepherdClientError } from "../client.js";
 import { ConfirmDeleteWorkspace } from "./ConfirmDeleteWorkspace.js";
+import { AccountActions } from "./AccountActions.js";
 
 // ---------------------------------------------------------------------------
 // GeneralSettings — the Config → General tab: identity of the CURRENT workspace
@@ -26,9 +27,15 @@ export interface GeneralSettingsProps {
   onLeft?: () => void;
   /** Called after a successful delete, so the shell refreshes its workspace list. */
   onDeleted?: () => void;
+  /**
+   * Hosted session logout hook, rendered as the General tab's account rows
+   * (Sign out + Delete account — see AccountActions). The host owns the
+   * authentication side effect.
+   */
+  onLogout?: () => void;
 }
 
-export function GeneralSettings({ workspace, onLeft, onDeleted }: GeneralSettingsProps) {
+export function GeneralSettings({ workspace, onLeft, onDeleted, onLogout }: GeneralSettingsProps) {
   const client = useShepherdClient();
   const headingId = useId();
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +141,10 @@ export function GeneralSettings({ workspace, onLeft, onDeleted }: GeneralSetting
             </button>
           </div>
         )}
+
+        {/* Account-level rows (Sign out · Delete account) — same .field format
+            as the workspace options above; see AccountActions. */}
+        <AccountActions onLogout={onLogout} />
       </div>
 
       {confirmOpen && (

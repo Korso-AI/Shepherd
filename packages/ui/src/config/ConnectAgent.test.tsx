@@ -157,6 +157,29 @@ describe("ConnectAgent", () => {
     );
   });
 
+  it("labels an unnamed token with a human fallback instead of the raw uuid", async () => {
+    client.listAccountTokens = vi.fn().mockResolvedValue({
+      tokens: [
+        {
+          id: "75e707e5-f39b-4e0b-9999-31dc9da94352",
+          name: null,
+          lastUsedAt: null,
+          createdAt: "2026-06-01T00:00:00.000Z",
+          revokedAt: null,
+        },
+      ],
+    });
+
+    renderConnect();
+
+    // Fallback label + a short id suffix to tell unnamed twins apart — the
+    // full uuid (which reads like a secret token) must never be the label.
+    expect(await screen.findByText("Unnamed token (75e707e5)")).toBeInTheDocument();
+    expect(
+      screen.queryByText("75e707e5-f39b-4e0b-9999-31dc9da94352"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows a loading placeholder until the first token fetch resolves", async () => {
     let resolve!: (v: { tokens: [] }) => void;
     client.listAccountTokens = vi.fn().mockReturnValue(
