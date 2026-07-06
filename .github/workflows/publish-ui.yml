@@ -1,0 +1,79 @@
+# Auto-publish the Shepherd UI library (@korso/shepherd-ui) to npm.
+#
+# Trigger: push a version tag like `ui-v0.1.1`.
+#   1. bump "version" in packages/ui/package.json
+#   2. commit, then:  git tag ui-v0.1.1 && git push origin ui-v0.1.1
+#
+# The `ui-v*` prefix is DISTINCT from the MCP server's `v*` tags (publish-mcp.yml)
+# so the two publish workflows never fire on the same tag. Renovate (frontend
+# Phase 5F) also keys off this `ui-v*` convention.
+#
+# The job verifies the tag matches the package version, then publishes. The root
+# `npm run build` builds the workspace topologically so the internal (unpublished)
+# @shepherd/shared package has a dist/ for the lib build to inline — both into the
+# JS and, via vite-plugin-dts `bundleTypes`, into the .d.ts. `prepublishOnly`
+# (build:lib) re-runs the library build, so the published artifact is the bundled,
+# self-contained build with no unresolved @shepherd/shared import.
+#
+# Auth: npm **Trusted Publishing (OIDC)** — no token/secret required. GitHub mints
+# a short-lived OIDC token (`id-token: write`), npm verifies it was issued to this
+# repo + this workflow file, and publishes with provenance. Configure the trust
+# once at npmjs.com → the package → Settings → Trusted Publisher (GitHub Actions,
+# org `Korso-AI`, repo `shepherd`, workflow `publish-ui.yml`). Trusted publishing
+# requires the package to already exist on the registry, so the FIRST publish of
+# @korso/shepherd-ui must be a one-time manual `npm publish` with a token; every
+# subsequent `ui-v*` tag then publishes keylessly through this workflow.
+#
+# OIDC requires npm >= 11.5.1; the npm bundled with Node 20 is older, so we
+# upgrade npm first.
+#
+# IMPORTANT: do NOT pass `registry-url` to actions/setup-node. It writes an
+# .npmrc with `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`; with no
+# token secret that placeholder is empty. npm >= 11.6 treats an empty
+# `_authToken` as "use token auth" and skips OIDC entirely, so publish fails
+# with a misleading `E404` (a masked 401). Omitting `registry-url` leaves no
+# auth config to shadow OIDC, and the default registry is npmjs.org anyway.
+name: Publish UI library
+
+on:
+  push:
+    tags:
+      - "ui-v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build the workspace so the internal @shepherd/shared package has a dist/
+      # for the lib build to resolve and inline — without this, the lib build
+      # fails with "Could not resolve @shepherd/shared".
+      - name: Build workspace
+        run: npm run build
+
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#ui-v}"
+          PKG="$(node -p "require('./packages/ui/package.json').version")"
+          echo "tag=$TAG package.json=$PKG"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag ui-v$TAG does not match packages/ui/package.json version $PKG"
+            exit 1
+          fi
+
+      - name: Publish to npm (OIDC, no token)
+        run: npm publish --workspace=@korso/shepherd-ui

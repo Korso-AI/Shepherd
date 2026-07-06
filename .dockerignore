@@ -1,0 +1,18 @@
+# Build context is the repo root (npm workspaces). Exclude everything the
+# multi-stage Dockerfile reinstalls/rebuilds itself, so Cloud Build uploads
+# only sources + manifests.
+node_modules
+**/node_modules
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+.git
+.env
+.env.*
+!.env.example
+docs
+*.md
+**/test
+**/*.test.ts
+**/*.spec.ts

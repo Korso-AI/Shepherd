@@ -1,0 +1,67 @@
+{
+  "name": "@korso/shepherd-ui",
+  "version": "0.11.1",
+  "description": "Auth-agnostic React UI library for the Shepherd wallboard (Dashboard, client, provider). Host injects auth; the library never reads tokens.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Korso-AI/shepherd.git",
+    "directory": "packages/ui"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/lib/index.js",
+      "types": "./dist/lib/index.d.ts"
+    },
+    "./selfhost": {
+      "import": "./dist/lib/selfhost.js",
+      "types": "./dist/lib/selfhost.d.ts"
+    },
+    "./styles.css": "./dist/lib/styles.css",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/lib/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "npm run build:lib && npm run build:app",
+    "build:lib": "vite build --config vite.config.lib.ts && npm run copy:styles",
+    "build:app": "vite build --config vite.config.app.ts",
+    "copy:styles": "node -e \"const fs=require('node:fs'); if (fs.existsSync('src/styles.css')) { fs.mkdirSync('dist/lib', { recursive:true }); fs.copyFileSync('src/styles.css','dist/lib/styles.css'); }\"",
+    "dev": "vite --config vite.config.app.ts",
+    "preview": "vite preview --config vite.config.app.ts",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build:lib"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
+  },
+  "dependencies": {
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@microsoft/api-extractor": "^7",
+    "@shepherd/shared": "*",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@testing-library/user-event": "latest",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "jsdom": "latest",
+    "react": "^18",
+    "react-dom": "^18",
+    "typescript": "^5",
+    "vite": "^6",
+    "vite-plugin-dts": "^5",
+    "vitest": "^4"
+  }
+}

@@ -1,0 +1,612 @@
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Shared sub-schemas
+// ---------------------------------------------------------------------------
+
+/**
+ * ISO 8601 timestamp strings are used for expiresAt and createdAt fields so
+ * that all values remain plain JSON-serialisable strings over the wire, rather
+ * than requiring Date objects or special transport encodings.
+ */
+const IsoTimestamp = z.string(); // ISO 8601, e.g. "2026-06-22T12:00:00.000Z"
+
+/**
+ * Database identity columns are BIGINT; they fit safely in JS Number at the
+ * scale of this application (< 2^53), so z.number() is used instead of
+ * z.bigint() to avoid serialisation friction over JSON.
+ */
+const DbId = z.number(); // bigint PK serialised as number for JSON transport
+
+// ---------------------------------------------------------------------------
+// ChangeRecord — hub → client, inside Landscape
+// ---------------------------------------------------------------------------
+export const ChangeRecord = z.object({
+  agentName: z.string(),
+  human: z.string(),
+  branch: z.string(),
+  kind: z.enum(["committed", "uncommitted"]),
+  commitSha: z.string().nullable(),
+  message: z.string().nullable(),
+  paths: z.array(z.string()).min(1),
+  authorIsLive: z.boolean(),
+  authorLastActiveAt: IsoTimestamp,
+  updatedAt: IsoTimestamp,
+});
+
+// ---------------------------------------------------------------------------
+// ChangeReport — client → hub, on work/sync
+// ---------------------------------------------------------------------------
+const ChangeReportEntry = z.object({
+  kind: z.enum(["committed", "uncommitted"]),
+  // A git object id (lowercase hex, 4–64 chars) for `committed` entries, or null
+  // for `uncommitted`. This value is forwarded by the hub to OTHER clients, which
+  // feed it straight into local `git` argument vectors (isAncestor/hasCommit/
+  // changedLineRanges). Validating the shape at the wire boundary stops an
+  // attacker-controlled, flag-like value (e.g. "--output=...") from being parsed
+  // by git as an option on a teammate's machine (argument injection). gitContext
+  // re-validates defensively as well.
+  sha: z.string().regex(/^[0-9a-f]{4,64}$/).nullable(),
+  message: z.string().nullable(),
+  paths: z.array(z.string()).min(1).max(500),
+});
+
+export const ChangeReport = z.object({
+  branch: z.string(),
+  baseBranch: z.string(),
+  head: z.string(),
+  truncated: z.boolean().default(false),
+  // The only producer (gitContext.unlandedCommits) emits at most MAX_COMMITS
+  // (100) committed entries + 1 uncommitted, so this ceiling is generous. If
+  // MAX_COMMITS is ever raised above ~599, raise this in lockstep or the hub
+  // will start 400-rejecting otherwise-valid reports.
+  entries: z.array(ChangeReportEntry).max(600),
+});
+
+// ---------------------------------------------------------------------------
+// Claim
+// ---------------------------------------------------------------------------
+export const Claim = z.object({
+  workItemId: z.string().uuid(),
+  agentName: z.string(),
+  human: z.string().min(1),
+  intent: z.string().min(1).max(2048),
+  pathGlobs: z.array(z.string().min(1).max(512)).min(1).max(64),
+  // ISO timestamp string; see IsoTimestamp note above
+  expiresAt: IsoTimestamp,
+});
+
+// ---------------------------------------------------------------------------
+// Announcement
+// ---------------------------------------------------------------------------
+export const Announcement = z.object({
+  // bigint PK serialised as number; see DbId note above
+  id: DbId,
+  fromAgentName: z.string(),
+  fromHuman: z.string().min(1),
+  body: z.string().min(1).max(8192),
+  targetAgentName: z.string().nullable(),
+  // ISO timestamp string; see IsoTimestamp note above
+  createdAt: IsoTimestamp,
+});
+
+// ---------------------------------------------------------------------------
+// Landscape
+// ---------------------------------------------------------------------------
+export const Landscape = z.object({
+  conflicts: z.array(Claim),
+  activeClaims: z.array(Claim),
+  // The caller's OWN active claims. `activeClaims` deliberately excludes the
+  // caller's session, so without this an agent has no way to confirm its own
+  // claim is live. Optional with a default so an older client talking to a
+  // newer hub (or vice-versa) never fails validation on its absence.
+  yourClaims: z.array(Claim).default([]),
+  announcements: z.array(Announcement),
+  // Per-agent change records for the workspace. Defaulted for version-skew safety.
+  changeRecords: z.array(ChangeRecord).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// Wallboard — read-only whole-workspace view (GET /workspace/landscape)
+//
+// Unlike Landscape (which is scoped to a caller's session, repo, and own globs),
+// this is the UNFILTERED view a wallboard needs: every agent in the configured
+// workspace, every live claim, and recent announcements. It has no request
+// counterpart — the endpoint takes no body. Fields are version-skew safe via
+// the same ISO-string / nullable conventions as the other contract schemas.
+// ---------------------------------------------------------------------------
+
+/** One agent in the workspace, joined to its most-recent session (if any). */
+export const WorkspaceAgent = z.object({
+  name: z.string(),
+  human: z.string(),
+  program: z.string(),
+  // model is nullable in the DB (may be unknown when an agent first joins).
+  model: z.string().nullable(),
+  // repo/branch/lastHeartbeatAt come from the agent's most-recent session and
+  // are null when the agent has no session yet.
+  repo: z.string().nullable(),
+  branch: z.string().nullable(),
+  lastHeartbeatAt: IsoTimestamp.nullable(),
+  presence: z.enum(["live", "offline"]),
+});
+
+/** A task's lifecycle status, derived by the hub at read time. */
+export const TaskStatus = z.enum(["active", "done", "dropped"]);
+
+/**
+ * One task = one `work` claim (an agent's stated intent). Durable & append-only.
+ * `status` is derived from owner presence + release:
+ *   active  — not released, owner live
+ *   done    — released_at set (agent called `done`)
+ *   dropped — not released, owner went offline (stale heartbeat)
+ * `endedAt` is null for active; release time for done; owner's last heartbeat
+ * for dropped.
+ */
+export const WorkspaceTask = z.object({
+  agentName: z.string(),
+  program: z.string(),
+  model: z.string().nullable(),
+  repo: z.string(),
+  intent: z.string(),
+  pathGlobs: z.array(z.string()),
+  status: TaskStatus,
+  createdAt: IsoTimestamp,
+  endedAt: IsoTimestamp.nullable(),
+});
+
+/** One announcement in the workspace feed (broadcast or @targeted). */
+export const WorkspaceAnnouncement = z.object({
+  fromAgentName: z.string(),
+  fromHuman: z.string(),
+  body: z.string(),
+  targetAgentName: z.string().nullable(),
+  repo: z.string(),
+  // True when the message was sent by the human operator from the dashboard
+  // (no agent session). The dashboard renders these as "me" (right-aligned).
+  // Defaulted for version-skew safety with older hubs.
+  fromAdmin: z.boolean().default(false),
+  // True when an agent addressed the message TO the operator side (the
+  // dashboard) — collectively (legacy) or a specific member (see
+  // targetMemberName). Not delivered to other agents. Defaulted for
+  // version-skew safety with older hubs.
+  toAdmin: z.boolean().default(false),
+  // When an agent addressed a SPECIFIC workspace member, the member's display
+  // name snapshotted at send time — the dashboard renders "→ <name>" instead of
+  // the collective "→ admin". Null for legacy/collective operator messages and
+  // everything else. Defaulted for version-skew safety with older hubs.
+  targetMemberName: z.string().nullable().default(null),
+  createdAt: IsoTimestamp,
+});
+
+export const WorkspaceLandscapeResponse = z.object({
+  agents: z.array(WorkspaceAgent),
+  tasks: z.array(WorkspaceTask),
+  announcements: z.array(WorkspaceAnnouncement),
+  // The server's clock, so the client computes "expires in / last seen" against
+  // the hub rather than the (possibly skewed) browser clock.
+  serverTime: IsoTimestamp,
+});
+
+// ---------------------------------------------------------------------------
+// Operator → hub: send an announcement from the dashboard (POST /workspace/announce)
+//
+// Unlike `announce` (agent → hub, carries a sessionId), this is the HUMAN
+// operator's surface: authenticated at the route layer, no session. The hub
+// stamps the sender as the calling member's profile name (falling back to the
+// configured admin label for self-host / profile-less callers) and records the
+// message with no `from_session_id`.
+// ---------------------------------------------------------------------------
+export const WorkspaceAnnounceRequest = z.object({
+  body: z.string().min(1).max(8192),
+  // Direct-message a single agent (by the exact name shown in the landscape).
+  // Absent/null => broadcast. The hub resolves the target's repo server-side.
+  targetAgentName: z.string().min(1).nullable().optional(),
+  // For a broadcast, the repo to scope the message to (matches the dashboard's
+  // selected repo). Absent/null => fan out to every repo in the workspace.
+  // Ignored for a DM (the target's own repo is used).
+  repo: z.string().min(1).nullable().optional(),
+});
+
+export const WorkspaceAnnounceResponse = z.object({
+  ok: z.literal(true),
+  // One id per inserted row: a single id for a DM or repo-scoped broadcast, or
+  // several when an all-repos broadcast fans out across repos.
+  announcementIds: z.array(DbId),
+});
+
+// ---------------------------------------------------------------------------
+// join(workspace, repo, branch, human, program, model) -> { agentName, sessionId }
+// ---------------------------------------------------------------------------
+export const JoinRequest = z.object({
+  workspace: z.string().min(1),
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  human: z.string().min(1),
+  program: z.string().min(1),
+  model: z.string().min(1).optional(),
+});
+
+export const JoinResponse = z.object({
+  agentName: z.string(),
+  sessionId: z.string().uuid(),
+});
+
+// ---------------------------------------------------------------------------
+// work(sessionId, intent, pathGlobs[], ttlSeconds?) -> { workItemId, landscape }
+// ---------------------------------------------------------------------------
+export const WorkRequest = z.object({
+  sessionId: z.string().uuid(),
+  intent: z.string().min(1).max(2048),
+  pathGlobs: z.array(z.string().min(1).max(512)).min(1).max(64),
+  ttlSeconds: z.number().int().positive().optional(),
+  changeReport: ChangeReport.optional(),
+});
+
+export const WorkResponse = z.object({
+  workItemId: z.string().uuid(),
+  landscape: Landscape,
+});
+
+// ---------------------------------------------------------------------------
+// done(sessionId, workItemId) -> { ok: true }
+// ---------------------------------------------------------------------------
+export const DoneRequest = z.object({
+  sessionId: z.string().uuid(),
+  workItemId: z.string().uuid(),
+});
+
+export const DoneResponse = z.object({
+  ok: z.literal(true),
+  // Pending announcements for the caller, delivered as a side effect of done so
+  // a message lands the moment a teammate finishes a unit of work (not only on
+  // their next work/sync). Defaulted for version-skew safety with older hubs.
+  announcements: z.array(Announcement).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// announce(sessionId, body, target?) -> { ok: true, announcementId }
+// ---------------------------------------------------------------------------
+export const AnnounceRequest = z.object({
+  sessionId: z.string().uuid(),
+  body: z.string().min(1).max(8192),
+  // THE preferred addressing field: one name that reaches either kind of
+  // teammate. The hub resolves it in order — a LIVE AGENT in the sender's repo
+  // (exact landscape name, e.g. "alex-rivera-2"), else the operator label
+  // ("admin" by default => the dashboard collectively), else a WORKSPACE MEMBER
+  // (a dashboard user, matched case-insensitively on display name, GitHub
+  // login, or email). No match => 400 listing both sets. Absent/null =>
+  // broadcast to all agents. Mutually exclusive with the legacy fields below.
+  target: z.string().min(1).nullable().optional(),
+  // LEGACY (kept for older clients; prefer `target`): the exact live-agent name.
+  targetAgentName: z.string().nullable().optional(),
+  // LEGACY (kept for older clients; prefer `target` with a member's name):
+  // true => address the human operators (the dashboard) collectively. Shows in
+  // the workspace feed as "<agent> → admin" and is NOT delivered to other
+  // agents. Mutually exclusive with targetAgentName and target.
+  toAdmin: z.boolean().optional(),
+});
+
+export const AnnounceResponse = z.object({
+  ok: z.literal(true),
+  // bigint PK serialised as number; see DbId note above
+  announcementId: DbId,
+  // Pending announcements for the caller, delivered as a side effect of announce
+  // (a turn where the agent is already reading hub output) so inbound messages
+  // surface promptly. Excludes the just-sent one. Defaulted for version skew.
+  announcements: z.array(Announcement).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// sync(sessionId) -> { landscape }
+// ---------------------------------------------------------------------------
+export const SyncRequest = z.object({
+  sessionId: z.string().uuid(),
+  changeReport: ChangeReport.optional(),
+});
+
+export const SyncResponse = z.object({
+  landscape: Landscape,
+});
+
+// ---------------------------------------------------------------------------
+// Agent-facing input shapes — derived via .omit so they cannot drift from the
+// request schemas.  Task 15 will register MCP tools using these shapes' .shape.
+// ---------------------------------------------------------------------------
+
+/** Input shape an agent provides for work(); sessionId and changeReport are added/handled by the hub. */
+export const WorkAgentInput = WorkRequest.omit({ sessionId: true, changeReport: true });
+
+/** Input shape an agent provides for announce(); sessionId is added by the hub. */
+export const AnnounceAgentInput = AnnounceRequest.omit({ sessionId: true });
+
+/** Input shape an agent provides for done(); sessionId is added by the hub. */
+export const DoneAgentInput = DoneRequest.omit({ sessionId: true });
+
+/** join() requires no agent-supplied input beyond the MCP session context. */
+export const JoinAgentInput = z.object({});
+
+/** sync() requires no agent-supplied input beyond the MCP session context. */
+export const SyncAgentInput = z.object({});
+
+// ---------------------------------------------------------------------------
+// heartbeat(sessionId) -> { ok: true }
+// ---------------------------------------------------------------------------
+export const HeartbeatRequest = z.object({
+  sessionId: z.string().uuid(),
+  // Optional change report so the BACKGROUND heartbeat keeps an agent's durable
+  // change records fresh (commits surface within ~one heartbeat interval, not
+  // only when it next calls work/sync). Processed presence-style: it refreshes
+  // change records but, like the rest of heartbeat, does NOT renew claim TTLs.
+  changeReport: ChangeReport.optional(),
+  // Opt-in: when set, the heartbeat returns any pending announcements for the
+  // caller in the response. Delivery is now TWO-PHASE and crash-safe: this fetch
+  // phase does NOT mark them delivered — the client persists them to its
+  // model-visible sink (the local inbox file drained by a hook) FIRST, then acks
+  // via `ackAnnouncementIds` so the hub records the delivery only after the local
+  // write is confirmed. The MCP client only sets this when it actually has such a
+  // sink. Absent for older clients, so default behaviour (no delivery) is
+  // unchanged.
+  deliverAnnouncements: z.boolean().optional(),
+  // Phase-two ack of a previous `deliverAnnouncements` fetch: the ids the client
+  // has now durably written to its model-visible sink. The hub marks exactly
+  // these delivered to the caller's session. Decoupling the mark from the fetch
+  // guarantees a message is never recorded delivered before the client holds it
+  // (a lost response or a failed local append simply leaves it pending for the
+  // next beat). Absent on a plain presence/fetch beat.
+  ackAnnouncementIds: z.array(DbId).optional(),
+});
+
+export const HeartbeatResponse = z.object({
+  ok: z.literal(true),
+  // Pending announcements for the caller, delivered only when the request set
+  // `deliverAnnouncements`. Defaulted to [] for version-skew safety with older
+  // hubs (which return just { ok: true }).
+  announcements: z.array(Announcement).default([]),
+});
+
+// ---------------------------------------------------------------------------
+// leave(sessionId) -> { ok: true }
+//
+// Clean-shutdown signal sent by the MCP client when its process exits. It marks
+// the session's PRESENCE offline immediately (no waiting out the staleness
+// window) so the agent's live claims stop surfacing to teammates the moment it
+// disconnects. It deliberately does NOT release claims or clear change records:
+// those are durable, presence-independent signals that must outlive the session.
+// Idempotent — an unknown/already-departed session still returns { ok: true }.
+// ---------------------------------------------------------------------------
+export const LeaveRequest = z.object({
+  sessionId: z.string().uuid(),
+});
+
+export const LeaveResponse = z.object({
+  ok: z.literal(true),
+});
+
+// ---------------------------------------------------------------------------
+// Management endpoints — workspaces, tokens, invites, members
+//
+// These are the operator/dashboard surface (authenticated by the account
+// session, not an agent session). Requests and responses are plain JSON; dates
+// follow the same ISO-string convention as the rest of this file and nullable
+// fields use .nullable() so the hub and the dashboard client agree on shape.
+// ---------------------------------------------------------------------------
+
+/**
+ * A member's role within a workspace. Shared across every management schema so
+ * the admin/member vocabulary stays consistent; consumers import the inferred
+ * `RoleT` rather than re-declaring the literal union.
+ */
+export const Role = z.enum(["admin", "member"]);
+
+/** One workspace as seen by an account, with that account's role in it. */
+export const WorkspaceSummary = z.object({
+  id: z.string(),
+  slug: z.string(),
+  name: z.string(),
+  role: Role,
+});
+
+// ---------------------------------------------------------------------------
+// createWorkspace({ name }) -> WorkspaceSummary
+// ---------------------------------------------------------------------------
+export const CreateWorkspaceRequest = z.object({
+  name: z.string().min(1),
+});
+
+export const CreateWorkspaceResponse = WorkspaceSummary;
+
+// ---------------------------------------------------------------------------
+// listWorkspaces() -> { workspaces: WorkspaceSummary[] }
+// ---------------------------------------------------------------------------
+export const ListWorkspacesResponse = z.object({
+  workspaces: z.array(WorkspaceSummary),
+});
+
+// ---------------------------------------------------------------------------
+// deleteWorkspace(id) -> { deleted: true }
+//
+// Permanently deletes the workspace named by the route `:id` and every
+// workspace-scoped row (agents, sessions, tasks, announcements, change records,
+// api tokens, invites, memberships). Admin-only and irreversible; the id travels
+// in the path, so the request carries no body (mirroring the bodyless leave/
+// revoke routes). `{ deleted: true }` follows the `{ ok: true }` success-marker
+// convention used elsewhere in this file.
+// ---------------------------------------------------------------------------
+export const DeleteWorkspaceResponse = z.object({
+  deleted: z.literal(true),
+});
+
+// ---------------------------------------------------------------------------
+// mintToken({ name? }) -> { token, id }
+//
+// The raw `shp_`-prefixed token is returned exactly ONCE, at mint time; the hub
+// stores only its hash. Callers must surface/save it immediately — it is never
+// retrievable again (see ListTokensResponse, which never carries it).
+// ---------------------------------------------------------------------------
+export const MintTokenRequest = z.object({
+  name: z.string().min(1).optional(),
+});
+
+export const MintTokenResponse = z.object({
+  // The raw shp_ token, shown once at creation and never returned again.
+  token: z.string(),
+  id: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// listTokens() -> token summaries
+//
+// Deliberately omits the hash and the raw token: this is the listing surface,
+// so it carries only non-secret metadata about each token.
+// ---------------------------------------------------------------------------
+export const TokenSummary = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  // ISO timestamp string (see IsoTimestamp note above) or null when unused / not revoked.
+  lastUsedAt: IsoTimestamp.nullable(),
+  createdAt: IsoTimestamp,
+  revokedAt: IsoTimestamp.nullable(),
+});
+
+export const ListTokensResponse = z.object({
+  tokens: z.array(TokenSummary),
+});
+
+// ---------------------------------------------------------------------------
+// createInvite({ expiresInDays?, maxUses? }) -> InviteResponse
+// ---------------------------------------------------------------------------
+// Invites grant the `member` role only. The selectable-role surface was removed
+// (review finding P2.7): no UI ever sent a role and InviteResponse never returned
+// the granted role, so admin-vs-member invites were unreachable. Re-add a `role`
+// field here (and a roleGranted in InviteResponse + a selector in the Config UI)
+// when admin invites become a real feature.
+export const CreateInviteRequest = z.object({
+  expiresInDays: z.number().int().positive().optional(),
+  // Omitted = unlimited, redeemable until explicitly revoked. Pass a positive
+  // integer to cap it instead.
+  maxUses: z.number().int().positive().optional(),
+});
+
+export const InviteResponse = z.object({
+  code: z.string(),
+  // ISO timestamp string, or null when the invite never expires.
+  expiresAt: IsoTimestamp.nullable(),
+  // null = unlimited (redeemable until revoked).
+  maxUses: z.number().int().positive().nullable(),
+  useCount: z.number().int().nonnegative(),
+});
+
+// ---------------------------------------------------------------------------
+// inviteByEmail({ email }) -> { email, sentAt }
+//
+// Mints a one-time-use invite (maxUses: 1 — the existing use-cap guard already
+// stops it dead after the first redemption, no separate expiry logic needed)
+// and emails the join link directly to `email`. Admin only. Fire-and-forget:
+// there is no list of pending email invites, just this one confirmation.
+// ---------------------------------------------------------------------------
+export const InviteByEmailRequest = z.object({
+  email: z.string().email(),
+});
+
+export const InviteByEmailResponse = z.object({
+  email: z.string(),
+  sentAt: IsoTimestamp,
+});
+
+// ---------------------------------------------------------------------------
+// redeemInvite(code) -> { workspace }
+// ---------------------------------------------------------------------------
+export const RedeemInviteResponse = z.object({
+  // The workspace the caller just joined.
+  workspace: WorkspaceSummary,
+});
+
+// ---------------------------------------------------------------------------
+// listMembers() -> { members: MemberSummary[] }
+// ---------------------------------------------------------------------------
+export const MemberSummary = z.object({
+  accountId: z.string(),
+  displayName: z.string().nullable(),
+  githubLogin: z.string().nullable(),
+  email: z.string().nullable(),
+  avatarUrl: z.string().nullable(),
+  role: Role,
+});
+
+export const ListMembersResponse = z.object({
+  members: z.array(MemberSummary),
+});
+
+// ---------------------------------------------------------------------------
+// submitFeedback({ type, body }) -> { ok: true, id }
+// ---------------------------------------------------------------------------
+export const FeedbackType = z.enum(["bug", "suggestion", "other"]);
+
+export const FeedbackRequest = z.object({
+  type: FeedbackType,
+  body: z.string().trim().min(1).max(4000),
+});
+
+export const FeedbackResponse = z.object({
+  ok: z.literal(true),
+  // uuid PK (the feedback table, like workspaces, uses gen_random_uuid()).
+  id: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// platformAnalytics() -> ShepherdAnalyticsResponse (GET /admin/analytics)
+//
+// The cross-tenant, read-only product analytics rollup behind the Korso console
+// "Shepherd" tab. Operator-gated at the hub (see requireOperator in the hub's
+// tenant.ts for the trust model). This is the canonical wire contract; the
+// hub's repo/operation layers type against it so drift is caught at compile
+// time (and the operation parse-validates the payload at runtime).
+// ---------------------------------------------------------------------------
+
+/** One day's bucket in a trend series (zero-filled across the window). */
+export const TrendPoint = z.object({
+  // `YYYY-MM-DD` (UTC day).
+  date: z.string(),
+  count: z.number(),
+});
+
+/** One workspace in the "largest workspaces" leaderboard. */
+export const TopWorkspace = z.object({
+  name: z.string(),
+  slug: z.string(),
+  members: z.number(),
+  agents: z.number(),
+  liveSessions: z.number(),
+});
+
+export const ShepherdAnalyticsResponse = z.object({
+  generatedAt: IsoTimestamp,
+  totals: z.object({
+    accounts: z.number(),
+    workspaces: z.number(),
+    memberships: z.number(),
+    agents: z.number(),
+    liveSessions: z.number(),
+    activeTokens: z.number(),
+    revokedTokens: z.number(),
+    activeInvites: z.number(),
+    feedback: z.number(),
+    changeRecords: z.number(),
+    activeWorkItems: z.number(),
+  }),
+  engagement: z.object({
+    activeWorkspaces7d: z.number(),
+    activeWorkspaces30d: z.number(),
+    avgMembersPerWorkspace: z.number(),
+    largestWorkspace: z.number(),
+  }),
+  feedbackByType: z.array(z.object({ type: z.string(), count: z.number() })),
+  trends: z.object({
+    newAccounts: z.array(TrendPoint),
+    newWorkspaces: z.array(TrendPoint),
+    newSessions: z.array(TrendPoint),
+    commits: z.array(TrendPoint),
+  }),
+  topWorkspaces: z.array(TopWorkspace),
+});

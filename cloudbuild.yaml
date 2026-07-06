@@ -1,0 +1,53 @@
+# Cloud Build config for the Shepherd hub: build the image, push it, then roll it out
+# to Cloud Run. Real deployment coordinates should be supplied by Cloud Build
+# trigger substitutions (or by manual --substitutions flags), not hardcoded here.
+#
+# Manual example:
+#   gcloud builds submit --config cloudbuild.yaml --substitutions=_REGION=us-central1,_PROJECT_ID=your-gcp-project,_ARTIFACT_REGION=us-central1,_ARTIFACT_REPOSITORY=your-repository,_IMAGE_NAME=shepherd-hub,_SERVICE_NAME=shepherd-hub,_IMAGE_TAG=latest .
+#
+# The Dockerfile lives at a non-default path and needs the repo root as its
+# build context (npm workspaces), so we drive `docker build` explicitly.
+#
+# The deploy step only sets --image; Cloud Run preserves the existing service
+# config (secrets, Cloud SQL connection, min-instances, env, public access),
+# so this never needs to re-specify them.
+#
+# ORDERING IS LOAD-BEARING: build only tags the image locally in the build VM.
+# Push before deploy so Cloud Run resolves the image tag to the image just built.
+substitutions:
+  _REGION: us-central1
+  _PROJECT_ID: your-gcp-project
+  _ARTIFACT_REGION: us-central1
+  _ARTIFACT_REPOSITORY: your-artifact-repository
+  _IMAGE_NAME: shepherd-hub
+  _SERVICE_NAME: shepherd-hub
+  _IMAGE_TAG: latest
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - packages/hub/Dockerfile
+      - -t
+      - ${_ARTIFACT_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_IMAGE_TAG}
+      - .
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_ARTIFACT_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_IMAGE_TAG}
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE_NAME}
+      - --image=${_ARTIFACT_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_ARTIFACT_REPOSITORY}/${_IMAGE_NAME}:${_IMAGE_TAG}
+      - --region=${_REGION}
+      - --project=${_PROJECT_ID}
+      - --quiet
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,0 +1,63 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: shepherd-hub
+  annotations:
+    # Attach the Cloud SQL instance so the Unix-socket proxy is available.
+    # Replace <PROJECT>:<REGION>:<INSTANCE> with your actual connection name,
+    # e.g. "my-project:us-central1:shepherd-db".
+    run.googleapis.com/cloudsql-instances: "<PROJECT>:<REGION>:<INSTANCE>"
+spec:
+  template:
+    metadata:
+      annotations:
+        # Keep at least 1 instance running at all times (no cold starts).
+        autoscaling.knative.dev/minScale: "1"
+    spec:
+      containers:
+        - image: "gcr.io/<PROJECT>/shepherd-hub:latest"
+          ports:
+            - containerPort: 8080
+          env:
+            # ALLOWED_WORKSPACE is not sensitive — set it directly.
+            - name: ALLOWED_WORKSPACE
+              value: "default"
+
+            # DATABASE_URL and TEAM_TOKEN are sensitive — sourced from
+            # Secret Manager. Grant the Cloud Run service account the role
+            # "Secret Manager Secret Accessor" on each secret before deploying.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: your-database-url-secret
+                  key: latest
+            - name: TEAM_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: your-team-token-secret
+                  key: latest
+
+          # Liveness probe: Cloud Run will restart the container if /health
+          # stops responding (requires Fastify /health route).
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+
+          # Startup probe: gives the container time to run migrations before
+          # the liveness probe kicks in.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi

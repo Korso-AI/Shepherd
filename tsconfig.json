@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/hub" },
+    { "path": "packages/mcp-server" },
+    { "path": "packages/ui" }
+  ]
+}

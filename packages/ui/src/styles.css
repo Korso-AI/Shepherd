@@ -1,0 +1,507 @@
+      :root {
+        --bg:#ece0c6; --ink:#322c20; --ink2:#6f6450; --ink3:#9c917a;
+        --line:#d7c9ac; --line2:#e0d4b9; --live:#3d8b58; --drop:#bd4f3a;
+        --chip:#e3d6ba; --terr:#7a6a48; --card:#f5ecd9;
+      }
+      * { box-sizing:border-box; }
+      html,body { height:100%; }
+      body {
+        margin:0; background:var(--bg); color:var(--ink);
+        font:14px/1.45 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-font-smoothing:antialiased;
+      }
+      .wrap { max-width:1100px; margin:0 auto; padding:40px 44px; }
+
+      header { display:flex; align-items:center; gap:12px; padding-bottom:18px; }
+      .brand { font-size:17px; font-weight:600; }
+      .vitals { color:var(--ink3); font-size:12.5px; }
+      .grow { flex:1; }
+      .status { font-size:12px; color:var(--ink3); }
+      .status--ok { color:var(--live); }
+      .status--warn { color:var(--terr); }
+      .status--error { color:var(--drop); }
+      .freshness { font-size:12px; color:var(--ink3); }
+      .header-signout { font:inherit; font-size:13px; color:var(--ink2); cursor:pointer;
+        border:1px solid var(--line); border-radius:8px; padding:5px 11px;
+        background:transparent; transition:color .12s ease, border-color .12s ease, background .12s ease; }
+      .header-signout:hover { color:var(--ink); border-color:var(--ink3); background:rgba(255,250,238,.35); }
+      .header-signout:focus-visible { outline:none; border-color:var(--terr);
+        box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+
+      /* Repo selector (hidden when <2 repos; populated by app.js) */
+      .repo { position:relative; }
+      .repo-trig { display:inline-flex; align-items:center; gap:6px; font-size:13px;
+        font-family:inherit; color:var(--ink); appearance:none;
+        border:1px solid var(--line); border-radius:8px; padding:4px 10px;
+        background:rgba(255,250,238,.4); cursor:pointer; }
+      .repo-trig .slash { color:var(--ink3); }
+      .repo-menu { position:absolute; top:36px; left:0; min-width:200px; background:var(--card);
+        border:1px solid var(--line); border-radius:10px; padding:5px;
+        box-shadow:0 8px 24px rgba(50,40,20,.14); z-index:5; }
+      .repo-mi { display:flex; justify-content:space-between; gap:14px; padding:7px 9px;
+        width:100%; text-align:left; border:0; appearance:none; font-family:inherit; color:inherit;
+        background:transparent; border-radius:7px; font-size:13px; cursor:pointer; }
+      .repo-mi:hover { background:var(--chip); }
+      .repo-mi.on { background:var(--chip); font-weight:600; }
+      .repo-mi .ct { font-size:11px; color:var(--ink3); }
+      .repo-mi.all { border-top:1px solid var(--line2); margin-top:4px; padding-top:9px; color:var(--ink2); }
+
+      /* Tabs */
+      .tabs { display:flex; gap:4px; margin-left:auto; }
+      .tab { font-size:13px; color:var(--ink2); padding:5px 11px; border:0; border-radius:7px;
+        background:transparent; cursor:pointer; font:inherit; }
+      .tab--active { background:var(--ink); color:var(--bg); }
+
+      /* Workspace switcher (app-bar): the active-workspace indicator + the one
+         home for switch/create/join. Shown on every tab. */
+      .ws-switcher { position:relative; }
+      .ws-trig { display:inline-flex; align-items:center; gap:8px; font:inherit; font-size:13px;
+        font-weight:600; color:var(--ink); cursor:pointer;
+        border:1px solid var(--line); border-radius:9px; padding:5px 10px; background:var(--card); }
+      .ws-trig:hover { border-color:var(--ink3); }
+      .ws-trig--empty { background:transparent; border-style:dashed; border-color:var(--ink2); }
+      .ws-avatar { width:18px; height:18px; border-radius:6px; background:var(--ink); color:var(--bg);
+        display:grid; place-items:center; font-size:10px; font-weight:700; flex:none; }
+      .ws-avatar--sm { width:16px; height:16px; font-size:9px; }
+      .ws-plus { color:var(--ink2); font-weight:700; }
+      .ws-name { max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .ws-caret { color:var(--ink3); font-size:10px; }
+
+      .ws-menu { position:absolute; top:40px; left:0; width:240px; z-index:20;
+        background:var(--card); border:1px solid var(--line); border-radius:11px; padding:6px;
+        box-shadow:0 8px 24px rgba(50,40,20,.16); }
+      .ws-menu__head { margin:0; padding:6px 8px; font-size:10px; letter-spacing:.08em;
+        text-transform:uppercase; color:var(--ink3); }
+      .ws-menu__none { margin:0; padding:2px 8px 6px; color:var(--ink3); font-style:italic; font-size:13px; }
+      .ws-menu__list { list-style:none; margin:0; padding:0; }
+      .ws-mi { display:flex; align-items:center; gap:8px; width:100%; text-align:left; font:inherit;
+        font-size:13px; color:var(--ink); background:transparent; border:0; border-radius:7px;
+        padding:7px 8px; cursor:pointer; }
+      .ws-mi:hover { background:var(--chip); }
+      .ws-mi--on { font-weight:600; }
+      .ws-mi__name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .ws-mi__check { color:var(--live); }
+      .ws-menu__actions { display:flex; flex-direction:column; margin-top:5px; padding-top:5px;
+        border-top:1px solid var(--line2); }
+      .ws-action { display:flex; align-items:center; gap:8px; width:100%; text-align:left; font:inherit;
+        font-size:13px; color:var(--ink2); background:transparent; border:0; border-radius:7px;
+        padding:8px; cursor:pointer; }
+      .ws-action:hover { background:var(--chip); color:var(--ink); }
+
+      .ws-form { display:flex; flex-direction:column; gap:8px; padding:4px; }
+      .ws-form label { font-size:10px; font-weight:600; letter-spacing:.05em; text-transform:uppercase;
+        color:var(--ink3); }
+      .ws-form input { padding:8px 10px; border-radius:8px; border:1px solid var(--line);
+        background:var(--bg); color:var(--ink); font:inherit; }
+      .ws-form input:focus { outline:none; border-color:var(--terr); box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+      .ws-form__row { display:flex; gap:8px; justify-content:flex-end; }
+      .ws-form__row button { font:inherit; font-size:13px; font-weight:600; border-radius:8px;
+        padding:7px 14px; cursor:pointer; border:1px solid var(--ink); background:var(--ink); color:var(--bg); }
+      .ws-form__row button:disabled { opacity:.55; cursor:default; }
+      .ws-form__back { background:transparent !important; color:var(--ink2) !important;
+        border-color:var(--line) !important; }
+      .ws-menu__error { margin:6px 4px 2px; font-size:12.5px; color:var(--drop); }
+
+      /* Crew strip */
+      .crew { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:26px 0 32px; }
+      .person { display:inline-flex; align-items:center; gap:9px; padding:5px 13px 5px 5px;
+        border:1px solid var(--line); border-radius:999px; background:var(--card); font-size:13px; }
+      .person--idle { opacity:.55; }
+      .avatar { width:24px; height:24px; border-radius:50%; display:grid; place-items:center;
+        font-size:10px; font-weight:700; color:#fff; flex:none; }
+      .person__name { font-weight:600; }
+      .person__doing { color:var(--ink3); font-size:12px; }
+
+      /* Board */
+      .board { display:grid; grid-template-columns:1fr 1px 1fr; gap:0; }
+      .board__rule { background:var(--line); }
+      .col { padding:0 36px; } .col:first-child { padding-left:0; } .col:last-child { padding-right:0; }
+      .colhead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+      .colhead h2 { font-size:12px; font-weight:600; letter-spacing:.03em; margin:0;
+        text-transform:uppercase; color:var(--ink2); }
+      .colhead .n { font-size:11px; color:var(--ink3); background:var(--chip);
+        border-radius:999px; padding:1px 8px; }
+
+      .task { padding:16px 0; border-bottom:1px solid var(--line2); }
+      .task__r1 { display:flex; align-items:center; gap:8px; }
+      .task__who { font-size:13.5px; font-weight:600; }
+      .task__tag { font-size:11px; color:var(--ink3); }
+      .task__repo { font-size:11px; color:var(--terr); background:rgba(122,106,72,.1);
+        border-radius:4px; padding:0 6px; }
+      .task__stat { margin-left:auto; font-size:11px; font-weight:500; color:var(--ink3); }
+      .task__stat--drop { color:var(--drop); }
+      .livedot { width:7px; height:7px; border-radius:50%; background:var(--live); margin-left:auto; }
+      .task__intent { font-size:13.5px; margin:5px 0 0; line-height:1.45; }
+      .terr { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+      .terr__lbl { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--ink3); }
+      .glob { font-family:ui-monospace, Menlo, monospace; font-size:11px; color:var(--terr);
+        background:rgba(122,106,72,.12); border:1px solid rgba(122,106,72,.22);
+        border-radius:5px; padding:1px 7px; }
+      .task__meta { font-size:11.5px; color:var(--ink3); margin-top:6px; }
+      /* expandable territory (2+ paths collapse to a one-line "N paths" toggle) */
+      .terrx { margin-top:8px; }
+      .terrx summary { list-style:none; cursor:pointer; display:flex; align-items:center;
+        gap:6px; flex-wrap:wrap; user-select:none; }
+      .terrx summary::-webkit-details-marker { display:none; }
+      .terrx .terr--full { margin-top:8px; }
+      .glob--more { cursor:pointer; color:var(--ink2); background:var(--chip);
+        border:1px solid var(--line); }
+      .glob--more .tw { color:var(--ink3); display:inline-block; transition:transform .15s; }
+      .terrx[open] summary .glob--more .tw { transform:rotate(90deg); }
+      /* grouped agent box: header + claims rail + collapsible "narrower" fold */
+      .grp { padding:16px 0; border-bottom:1px solid var(--line2); }
+      .grp__head { display:flex; align-items:center; gap:8px; }
+      .grp__who { font-size:13.5px; font-weight:600; }
+      .grp__tag { font-size:11px; color:var(--ink3); }
+      .grp__count { font-size:11px; color:var(--ink3); }
+      .grp__dot { width:7px; height:7px; border-radius:50%; background:var(--live); margin-left:auto; }
+      .claims { margin:10px 0 0 6px; padding-left:14px; border-left:1px solid var(--line); }
+      .claim { padding:6px 0; }
+      .claim + .claim { border-top:1px solid var(--line2); margin-top:6px; }
+      .fold { margin-top:10px; }
+      .fold summary { list-style:none; cursor:pointer; font-size:12px; color:var(--ink2);
+        display:inline-flex; align-items:center; gap:6px; user-select:none; }
+      .fold summary::-webkit-details-marker { display:none; }
+      .fold summary .tw { display:inline-block; color:var(--ink3); transition:transform .15s; }
+      .fold[open] summary .tw { transform:rotate(90deg); }
+      .fold__body { margin:8px 0 0 6px; padding-left:14px; border-left:1px dashed var(--line); }
+      .covered { font-size:10.5px; color:var(--ink3); font-style:italic; margin-top:4px; }
+      .day { font-size:11px; color:var(--ink3); padding:18px 0 2px; font-weight:600; }
+      .more { margin-top:20px; font-size:12.5px; color:var(--ink2); padding:7px 13px;
+        border:1px solid var(--line); border-radius:8px; background:rgba(255,250,238,.35);
+        cursor:pointer; }
+      .empty { color:var(--ink3); font-style:italic; padding:14px 0; }
+
+      /* Chat (re-themed; structure unchanged) */
+      .chat-wrap { background:var(--card); border:1px solid var(--line); border-radius:12px;
+        display:flex; flex-direction:column; overflow:hidden; height:calc(100vh - 150px); min-height:320px; }
+      .chat { flex:1; overflow-y:auto; padding:16px; }
+      .chat { scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+      .chat::-webkit-scrollbar { width:10px; }
+      .chat::-webkit-scrollbar-track { background:transparent; }
+      .chat::-webkit-scrollbar-thumb { background:var(--line); border-radius:999px;
+        border:3px solid var(--card); background-clip:padding-box; }
+      .chat::-webkit-scrollbar-thumb:hover { background:var(--ink3); background-clip:padding-box; }
+      .chat__note { padding:9px 16px; font-size:11.5px; color:var(--ink3); }
+      .msg { display:flex; gap:11px; padding:9px 0; }
+      .msg__avatar { flex:none; width:32px; height:32px; border-radius:50%; display:grid;
+        place-items:center; font-size:12px; font-weight:700; color:#fff; }
+      .msg__body { min-width:0; flex:1; }
+      .msg__head { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+      .msg__who { font-weight:600; }
+      .msg__human { font-size:12px; color:var(--ink3); }
+      .msg__to { font-size:11.5px; color:var(--terr); }
+      .msg__time { font-size:11.5px; color:var(--ink3); margin-left:auto; }
+      .msg__text { margin-top:3px; padding:8px 12px; border-radius:4px 12px 12px 12px;
+        background:var(--chip); white-space:pre-wrap; word-break:break-word; }
+      .msg--targeted .msg__text { box-shadow:inset 3px 0 0 var(--terr); }
+
+      /* Operator's own messages — same group-chat structure, mirrored to the right. */
+      .msg--me { flex-direction:row-reverse; }
+      .msg--me .msg__head { flex-direction:row-reverse; }
+      .msg--me .msg__time { margin-left:0; margin-right:auto; }
+      .msg--me .msg__body { display:flex; flex-direction:column; align-items:flex-end; }
+      .msg--me .msg__text { border-radius:12px 4px 12px 12px; background:#d4e7d2; }
+      .msg--me.msg--targeted .msg__text { box-shadow:inset -3px 0 0 var(--terr); }
+
+      /* Composer */
+      .composer { position:relative; border-top:1px solid var(--line); padding:10px 12px; }
+      .chat-form { display:flex; gap:8px; }
+      .chat-input { flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+        background:var(--bg); color:var(--ink); font:inherit; }
+      .chat-input:focus { outline:none; border-color:var(--terr); }
+      .chat-send { padding:9px 16px; border-radius:8px; border:1px solid var(--ink);
+        background:var(--ink); color:var(--bg); font-weight:600; cursor:pointer; font:inherit; }
+      .chat-send:disabled { opacity:.5; cursor:default; }
+
+      /* @-mention autocomplete — floats above the input */
+      .mention-pop { position:absolute; left:12px; right:12px; bottom:56px; z-index:6;
+        background:var(--card); border:1px solid var(--line); border-radius:10px; padding:5px;
+        box-shadow:0 8px 24px rgba(50,40,20,.16); max-height:200px; overflow-y:auto; }
+      .mention-mi { display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+        border:0; appearance:none; font-family:inherit; color:inherit; background:transparent;
+        border-radius:7px; padding:6px 8px; font-size:13px; cursor:pointer; }
+      .mention-mi:hover, .mention-mi.on { background:var(--chip); }
+      .mention-mi .ma { width:22px; height:22px; border-radius:50%; display:grid; place-items:center;
+        font-size:9px; font-weight:700; color:#fff; flex:none; }
+
+      /* Token gate */
+      .gate { max-width:420px; margin:12vh auto 0; text-align:center; }
+      .gate h1 { font-size:19px; margin:0 0 6px; }
+      .gate p { color:var(--ink2); margin:0 0 20px; }
+      .gate form { display:flex; gap:8px; }
+      .gate input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid var(--line);
+        background:var(--card); color:var(--ink); }
+      .gate button { padding:10px 16px; border-radius:8px; border:1px solid var(--ink);
+        background:var(--ink); color:var(--bg); font-weight:600; cursor:pointer; }
+
+      /* --- Multi-workspace hosted shell + config surface. Reuses the board's
+         tokens and its editorial vocabulary (uppercase micro-labels echoing the
+         column heads, hairline rules) so Config reads as part of the board. --- */
+      .shepherd-root { max-width:1100px; margin:0 auto; padding:40px 44px; }
+      .shepherd-root > main { padding-top:18px; }
+      .shepherd-config { display:flex; flex-direction:column; }
+      .shepherd-config h2 { font-size:16px; margin:0 0 22px; }
+
+      /* Config sidebar: a left nav of sections beside the active section's
+         panel, replacing the old single long scroll. */
+      .config-layout { display:flex; gap:32px; align-items:flex-start; }
+      .config-nav { flex:none; width:170px; display:flex; flex-direction:column; gap:2px;
+        position:sticky; top:0; }
+      /* Scoped under .shepherd-config to out-specify the generic dark-fill
+         `.shepherd-config button` rule — these are plain nav links, not buttons. */
+      .shepherd-config .config-nav__item { text-align:left; font:inherit; font-size:13.5px;
+        color:var(--ink2); background:transparent; border:0; border-radius:8px; padding:8px 12px;
+        cursor:pointer; box-shadow:inset 2px 0 0 transparent; transition:color .12s ease, background .12s ease; }
+      /* Extra .config-nav in the chain so this out-specifies the generic dark
+         `.shepherd-config button:hover` fill — a translucent tint, not a block. */
+      .shepherd-config .config-nav .config-nav__item:hover { color:var(--ink);
+        background:rgba(50,44,32,.06); }
+      .shepherd-config .config-nav__item--on { color:var(--ink); font-weight:600;
+        box-shadow:inset 2px 0 0 var(--ink); }
+      .shepherd-config .config-nav .config-nav__item--on:hover { background:transparent; }
+      .config-panel { flex:1; min-width:0; }
+
+      /* Two sections can share a panel (Members + Invites); set them off by a
+         hairline, mirroring the old flat-section separation. */
+      .config-panel > section + section { margin-top:26px; padding-top:26px;
+        border-top:1px solid var(--line2); }
+
+      /* No-workspace Config prompt (create/join now live in the switcher). */
+      .config-none { color:var(--ink2); font-size:13.5px; max-width:520px; }
+      .config-signout { margin-top:28px; padding-top:24px; border-top:1px solid var(--line2); }
+      .config-signout .card-body { align-items:flex-start; }
+      .shepherd-config .config-signout button { background:transparent; color:var(--ink2);
+        border-color:var(--line); padding:7px 14px; }
+      .shepherd-config .config-signout button:hover:not(:disabled) { color:var(--ink);
+        border-color:var(--ink3); background:rgba(50,44,32,.06); }
+
+      /* Read-only workspace facts (name / role) in General. Deliberately plain
+         text — no border/background — so they don't read as editable inputs. */
+      .shepherd-config .readonly-value { margin:0; font-size:15px; color:var(--ink);
+        padding:1px 0; font-weight:500; }
+      .shepherd-general .leave { padding-top:4px; }
+      .shepherd-general .delete { padding-top:4px; }
+      .shepherd-config button.danger { border-color:var(--drop); background:transparent; color:var(--drop);
+        align-self:flex-start; }
+      .shepherd-config button.danger:hover:not(:disabled) { background:var(--drop); color:var(--bg); }
+      .shepherd-config .card-head h3 {
+        font-size:13px; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+        color:var(--ink2); margin:0; }
+      .shepherd-config .card-sub { margin:4px 0 0; font-size:12.5px; color:var(--ink3); }
+      .shepherd-config .card-head { margin-bottom:16px; }
+      .shepherd-config .card-body { display:flex; flex-direction:column; gap:16px; }
+      .shepherd-config .card-body > [role="alert"] { margin:0; color:var(--drop); font-size:13px; }
+      .shepherd-config .card-body > [role="status"] { margin:0; color:var(--ink2); font-size:13px; }
+
+      /* A field: uppercase eyebrow label, optional helper, then input(s) + action
+         on one row. Labels borrow the board's .colhead h2 treatment. */
+      .shepherd-config .field { display:flex; flex-direction:column; gap:8px; }
+      .shepherd-config .card-body label {
+        font-size:11px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--ink3); }
+      .shepherd-config .helper { margin:0; font-size:12.5px; color:var(--ink2); }
+      .shepherd-config .field > select { width:100%; }
+      .shepherd-config .field__row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      .shepherd-config .field__row > input { flex:1; min-width:200px; }
+
+      /* Invite-by-code: a compact button with the freshly-created code shown
+         above it (the button below mints another). */
+      .shepherd-invites .invites { gap:12px; }
+      .shepherd-invites .invites > button { align-self:flex-start; }
+
+      .shepherd-config input, .shepherd-config select {
+        padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+        /* background-COLOR, not the `background` shorthand — the shorthand
+           resets background-image and erases the select's chevron above. */
+        background-color:var(--bg); color:var(--ink); font:inherit;
+        transition:border-color .12s ease, box-shadow .12s ease; }
+      .shepherd-config input::placeholder { color:var(--ink3); }
+      .shepherd-config input:focus, .shepherd-config select:focus {
+        outline:none; border-color:var(--terr); box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+      /* Select dropdown affordance. AFTER the shared input/select rule on
+         purpose: `padding` there is a shorthand and would reset the wider
+         padding-right reserved for the chevron. */
+      .shepherd-config select {
+        appearance:none; -webkit-appearance:none; -moz-appearance:none;
+        cursor:pointer;
+        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%236f6450' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-repeat:no-repeat; background-position:right 14px center; padding-right:40px; }
+      .shepherd-config select:hover:not(:disabled) { border-color:var(--terr); }
+      .shepherd-config button {
+        padding:9px 16px; border-radius:8px; border:1px solid var(--ink);
+        background:var(--ink); color:var(--bg); font-weight:600; cursor:pointer; font:inherit;
+        white-space:nowrap; transition:background .12s ease; }
+      .shepherd-config button:hover:not(:disabled) { background:#413a2a; }
+      .shepherd-config button:disabled { opacity:.55; cursor:default; }
+
+      /* Token / member rows: leading name grows, meta + action ride the right.
+         Flat rows separated by hairlines (mirrors the board's .claim rows)
+         rather than individually boxed items. */
+      .shepherd-config ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+      .shepherd-config li { display:flex; align-items:center; gap:10px; padding:10px 0; font-size:13px; }
+      .shepherd-config li + li { border-top:1px solid var(--line2); }
+      .shepherd-config li > span:first-child { flex:1; min-width:0; font-weight:500; }
+      .shepherd-config li button { padding:5px 12px; }
+      .shepherd-config .role { color:var(--ink3); font-size:12px; }
+      .shepherd-config .token-meta { color:var(--ink3); font-size:12px; }
+      .shepherd-config .email-invite__status { margin:0; font-size:12.5px; color:var(--ink2); }
+
+      /* Install command block. */
+      .shepherd-connect-agent .install-command { position:relative; }
+      .shepherd-connect-agent pre { margin:0; padding:12px 14px; border-radius:8px;
+        border:1px solid var(--line); background:var(--bg); color:var(--ink);
+        font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; line-height:1.5;
+        overflow-x:auto; white-space:pre-wrap; word-break:break-word; }
+      /* Bare icon button (clipboard → check on copy), not a filled pill. Extra
+         selector depth beats the generic dark `.shepherd-config button` fill. */
+      .shepherd-config .shepherd-connect-agent .install-command__copy {
+        position:absolute; top:7px; right:7px; display:grid; place-items:center;
+        width:28px; height:28px; padding:0; border-radius:7px; border:0;
+        background:transparent; color:var(--ink3); cursor:pointer;
+        transition:background .12s ease, color .12s ease; }
+      .shepherd-config .shepherd-connect-agent .install-command__copy:hover {
+        background:rgba(50,44,32,.08); color:var(--ink); }
+      .shepherd-connect-agent h4 { margin:6px 0 0; font-size:11px; font-weight:600;
+        letter-spacing:.05em; text-transform:uppercase; color:var(--ink3); }
+
+      /* First-run auto-install note + its collapsed manual reference: even
+         rhythm, and a summary that reads as quiet body text (not a heading). */
+      .shepherd-connect-agent .hook-setup { display:flex; flex-direction:column; gap:10px; }
+      .shepherd-connect-agent .hook-setup .card-sub { margin:0; }
+      .shepherd-connect-agent .hook-reference summary { cursor:pointer; font-size:12.5px;
+        color:var(--ink2); user-select:none; }
+      .shepherd-connect-agent .hook-reference[open] summary { margin-bottom:10px; }
+
+      .shepherd-connect-agent .token-once {
+        font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;
+        padding:10px 12px; border-radius:8px;
+        background:var(--chip); border:1px solid var(--line2); }
+
+      /* Created-invite card: an eyebrow + use count + a quiet Revoke, then the
+         code and join link each with their own Copy affordance. */
+      .shepherd-config .invite-result { align-self:stretch; display:flex; flex-direction:column;
+        gap:12px; padding:14px 16px; border-radius:10px; background:var(--card);
+        border:1px solid var(--line); }
+      .shepherd-config .invite-result__head { display:flex; align-items:center; gap:12px; }
+      .shepherd-config .invite-result__eyebrow { flex:1; font-size:11px; font-weight:600;
+        letter-spacing:.05em; text-transform:uppercase; color:var(--ink3); }
+      .shepherd-config .invite-uses { font-size:12px; color:var(--ink3); }
+      .shepherd-config .invite-result__copyrow { display:flex; align-items:center; gap:10px; }
+      .shepherd-config .invite-result__copyrow > code { flex:1; min-width:0; font-size:15px;
+        font-weight:600; font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+        color:var(--ink); letter-spacing:.02em; word-break:break-all; }
+      .shepherd-config .invite-result__copyrow--link { padding-top:10px;
+        border-top:1px solid var(--line2); }
+      .shepherd-config .invite-result__copyrow--link a { flex:1; min-width:0; font-size:12px;
+        color:var(--ink2); word-break:break-all; }
+
+      /* Quiet buttons inside the card: a bordered Copy pill and a text-only
+         Revoke. Extra selector depth beats the generic dark `button` fill+hover. */
+      .shepherd-config .invite-result .copy-btn { flex:none; padding:5px 12px; font-size:12px;
+        font-weight:600; border-radius:7px; border:1px solid var(--line); background:var(--bg);
+        color:var(--ink2); cursor:pointer; }
+      .shepherd-config .invite-result .copy-btn:hover { background:var(--ink); color:var(--bg);
+        border-color:var(--ink); }
+      .shepherd-config .invite-result .link-btn { flex:none; padding:0; font-size:12px;
+        font-weight:600; border:0; background:transparent; color:var(--drop); cursor:pointer; }
+      .shepherd-config .invite-result .link-btn:hover { background:transparent;
+        text-decoration:underline; }
+      .shepherd-config .revoked { color:var(--ink3); text-decoration:line-through; }
+      .shepherd-empty-state { text-align:center; color:var(--ink2); padding:48px 24px; }
+      .shepherd-empty-state button { margin-top:14px; }
+
+      /* Feedback widget: fixed bottom-right, floats over every tab. */
+      .shepherd-feedback { position:fixed; right:20px; bottom:20px; z-index:10; }
+      .shepherd-feedback__trigger {
+        padding:9px 16px; border-radius:999px; border:1px solid var(--ink);
+        background:var(--ink); color:var(--bg); font-weight:600; font-size:13px; font:inherit;
+        cursor:pointer; box-shadow:0 8px 24px rgba(50,40,20,.18); }
+      .shepherd-feedback__trigger:hover { background:#413a2a; }
+      .shepherd-feedback__panel {
+        position:absolute; right:0; bottom:calc(100% + 10px); width:280px;
+        display:flex; flex-direction:column; gap:10px; padding:16px;
+        background:var(--card); border:1px solid var(--line); border-radius:12px;
+        box-shadow:0 8px 24px rgba(50,40,20,.18); }
+      .shepherd-feedback__panel h3 {
+        margin:0; font-size:13px; font-weight:600; letter-spacing:.04em;
+        text-transform:uppercase; color:var(--ink2); }
+      .shepherd-feedback__panel [role="status"] { margin:0; font-size:13px; color:var(--ink2); }
+      .shepherd-feedback__panel [role="alert"] { margin:0; font-size:13px; color:var(--drop); }
+      .shepherd-feedback__types { display:flex; gap:6px; }
+      .shepherd-feedback__types button {
+        flex:1; padding:6px 0; border-radius:8px; border:1px solid var(--line);
+        background:transparent; color:var(--ink2); font-size:12.5px; font:inherit;
+        cursor:pointer; transition:background .12s ease, color .12s ease; }
+      .shepherd-feedback__types button[aria-pressed="true"] {
+        background:var(--ink); color:var(--bg); border-color:var(--ink); font-weight:600; }
+      .shepherd-feedback__panel textarea {
+        min-height:80px; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+        background:var(--bg); color:var(--ink); font:inherit; resize:vertical; }
+      .shepherd-feedback__panel textarea::placeholder { color:var(--ink3); }
+      .shepherd-feedback__panel textarea:focus {
+        outline:none; border-color:var(--terr); box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+      .shepherd-feedback__panel > button {
+        padding:9px 16px; border-radius:8px; border:1px solid var(--ink);
+        background:var(--ink); color:var(--bg); font-weight:600; cursor:pointer; font:inherit; }
+      .shepherd-feedback__panel > button:hover:not(:disabled) { background:#413a2a; }
+      .shepherd-feedback__panel > button:disabled { opacity:.55; cursor:default; }
+
+      /* Modal — a centered card over a dimmed backdrop. Used by the type-to-confirm
+         Delete workspace dialog. The first true modal in the app (the feedback
+         widget is an inline popover), so its chrome lives here rather than being
+         shared with .shepherd-feedback__panel. */
+      .shepherd-modal__backdrop {
+        position:fixed; inset:0; z-index:50; display:flex; align-items:center;
+        justify-content:center; padding:20px; background:rgba(30,24,12,.45); }
+      .shepherd-modal {
+        width:100%; max-width:440px; display:flex; flex-direction:column; gap:12px;
+        padding:22px; background:var(--card); border:1px solid var(--line);
+        border-radius:12px; box-shadow:0 16px 48px rgba(50,40,20,.28); }
+      .shepherd-modal h3 {
+        margin:0; font-size:13px; font-weight:600; letter-spacing:.04em;
+        text-transform:uppercase; color:var(--ink2); }
+      .shepherd-modal__body { margin:0; font-size:13.5px; line-height:1.5; color:var(--ink); }
+      .shepherd-modal__label { font-size:12.5px; color:var(--ink2); }
+      .shepherd-modal input {
+        width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+        background:var(--bg); color:var(--ink); font:inherit;
+        transition:border-color .12s ease, box-shadow .12s ease; }
+      .shepherd-modal input:focus {
+        outline:none; border-color:var(--terr); box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+      .shepherd-modal [role="alert"] { margin:0; font-size:13px; color:var(--drop); }
+      .shepherd-modal__actions { display:flex; justify-content:flex-end; gap:10px; margin-top:4px; }
+      .shepherd-modal__actions button.danger {
+        border-color:var(--drop); background:transparent; color:var(--drop); }
+      .shepherd-modal__actions button.danger:hover:not(:disabled) {
+        background:var(--drop); color:var(--bg); }
+      .shepherd-modal__actions button:disabled { opacity:.55; cursor:default; }
+
+      /* Join workspace — the invite-link landing surface (/shepherd/join/:code).
+         A single centered card on the tan canvas; states: joining / joined /
+         error-with-retry. */
+      .shepherd-join { display:flex; align-items:center; justify-content:center;
+        min-height:70vh; padding:24px; }
+      .shepherd-join__card { width:100%; max-width:420px; display:flex;
+        flex-direction:column; align-items:center; gap:10px; text-align:center;
+        padding:36px 32px; background:var(--card); border:1px solid var(--line);
+        border-radius:14px; box-shadow:0 16px 48px rgba(50,40,20,.14); }
+      .shepherd-join__brand { margin:0; font-size:11px; font-weight:600;
+        letter-spacing:.12em; text-transform:uppercase; color:var(--ink3); }
+      .shepherd-join__card h1 { margin:0; font-size:19px; font-weight:600;
+        color:var(--ink); }
+      .shepherd-join__copy { margin:0; font-size:13.5px; line-height:1.5;
+        color:var(--ink2); }
+      .shepherd-join__copy strong { color:var(--ink); }
+      .shepherd-join__error { margin:0; font-size:13px; line-height:1.5;
+        color:var(--drop); }
+      .shepherd-join__spinner { width:22px; height:22px; margin-top:6px;
+        border-radius:50%; border:2.5px solid var(--line);
+        border-top-color:var(--ink); animation:shepherd-join-spin .8s linear infinite; }
+      @keyframes shepherd-join-spin { to { transform:rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .shepherd-join__spinner { animation:none; }
+      }
+      .shepherd-join__retry { margin-top:6px; padding:9px 18px; border-radius:8px;
+        border:1px solid var(--ink); background:var(--ink); color:var(--bg);
+        font:inherit; font-size:13px; font-weight:600; cursor:pointer; }
+      .shepherd-join__retry:hover { background:#413a2a; }

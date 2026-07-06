@@ -1,0 +1,24 @@
+{
+  "name": "shepherd",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "license": "AGPL-3.0-only",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b && npm -w @korso/shepherd-ui run type-check && npm -w @korso/shepherd-ui run build",
+    "test": "npm -w @korso/shepherd-ui run build:app && vitest run",
+    "dev:hub": "tsx watch packages/hub/src/index.ts",
+    "dev:mcp": "tsx packages/mcp-server/src/index.ts",
+    "migrate": "tsx packages/hub/src/migrate.ts"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/pg": "latest",
+    "tsx": "latest",
+    "typescript": "^5",
+    "vitest": "latest"
+  }
+}

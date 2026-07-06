@@ -1,0 +1,50 @@
+# Continuous integration: build + full test suite on every PR and push to main.
+#
+# The hub integration suite needs a real Postgres; the service container below
+# matches the setup documented in README.md ("Running integration tests").
+# Without TEST_DATABASE_URL those suites skip, so this workflow sets it to make
+# sure they actually run in CI.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: shepherd_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/shepherd_test

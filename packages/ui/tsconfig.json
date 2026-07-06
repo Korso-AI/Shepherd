@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "references": [{ "path": "../shared" }],
+  "include": ["src"],
+  "comment:exclude": "Test suites are validated by running them (vitest), not by tsc — the colocated src/**/*.test.tsx files use @testing-library/jest-dom matchers whose augmentation does not type-check cleanly under vitest 4 + jest-dom 6. This mirrors the legacy test/ suites, which sit outside include and were never type-checked. Follow-up: wire jest-dom/vitest matcher types so tests can be type-checked too.",
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "@korso/shepherd",
+  "version": "0.8.1",
+  "description": "Shepherd MCP server — gives any MCP-capable agent (Claude Code, Codex, etc.) four advisory cross-session coordination tools (work/done/announce/sync) backed by the shared Shepherd hub. Joins the workspace automatically and ships standing instructions so the agent self-coordinates.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "shepherd": "dist/index.js",
+    "shepherd-mcp": "dist/index.js",
+    "shepherd-inbox-hook": "dist/inboxHook.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Korso-AI/shepherd.git",
+    "directory": "packages/mcp-server"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "agent",
+    "coordination"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "prepublishOnly": "tsup"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@shepherd/shared": "*",
+    "tsup": "^8"
+  }
+}
