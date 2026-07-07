@@ -19,6 +19,25 @@ import * as path from "node:path";
 
 const MARKER_FILENAME = ".shepherd";
 
+/**
+ * Strict workspace-slug shape the marker's `workspace` MUST match to be trusted.
+ *
+ * TRUST BOUNDARY: the `.shepherd` marker is attacker-controllable — it rides
+ * inside any repo an agent clones, and its `workspace` value is interpolated
+ * into the MCP `initialize` instructions that compliant clients inject into the
+ * agent's SYSTEM PROMPT. An unconstrained string here would let a malicious
+ * committed marker smuggle newlines and injected directives straight into that
+ * prompt (prompt injection), while forcing the repo "linked" with zero user
+ * action. So we accept only a lowercase kebab slug: it must start with an
+ * alphanumeric and contain only `[a-z0-9-]`, 1–64 chars.
+ *
+ * This is the SAME charset the hub itself emits when it derives a workspace slug
+ * from a name (`slugifyWorkspaceName` → lowercase, `[^a-z0-9]`→`-`, trimmed), so
+ * every real, hub-issued slug passes; there is no exported shared validator to
+ * reuse, so the pattern is pinned here as the client-side trust check.
+ */
+const WORKSPACE_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
 /** Parsed marker contents. Only `workspace` is meaningful today. */
 export interface Marker {
   workspace: string;
@@ -58,6 +77,13 @@ function markerPath(cwd: string): string | null {
  * Read the `.shepherd` marker from the repo root above `cwd`. Returns the parsed
  * `{ workspace }` when present and valid, else null. Never throws: a missing
  * file, garbled JSON, or a missing/blank/non-string `workspace` all yield null.
+ *
+ * A `workspace` that is a string but does NOT match {@link WORKSPACE_SLUG_PATTERN}
+ * (newlines, injected directives, oversized, or an out-of-charset value) is
+ * rejected the SAME way — treated as NO marker (returns null → the repo stays
+ * dormant/fail-open). This is the trust-boundary check: the marker is
+ * attacker-controllable via a cloned repo, so refusing to trust a malformed
+ * value fails safe (dormant) rather than propagating it into agent-facing text.
  */
 export function readMarker(cwd: string = process.cwd()): Marker | null {
   const file = markerPath(cwd);
@@ -74,10 +100,15 @@ export function readMarker(cwd: string = process.cwd()): Marker | null {
     if (
       parsed !== null &&
       typeof parsed === "object" &&
-      typeof (parsed as { workspace?: unknown }).workspace === "string" &&
-      (parsed as { workspace: string }).workspace.length > 0
+      typeof (parsed as { workspace?: unknown }).workspace === "string"
     ) {
-      return { workspace: (parsed as { workspace: string }).workspace };
+      const workspace = (parsed as { workspace: string }).workspace;
+      // Fail-open on anything that isn't a strict slug: a blank, oversized,
+      // newline-bearing, or out-of-charset value is treated as no marker.
+      if (WORKSPACE_SLUG_PATTERN.test(workspace)) {
+        return { workspace };
+      }
+      return null;
     }
     return null;
   } catch {
@@ -88,7 +119,7 @@ export function readMarker(cwd: string = process.cwd()): Marker | null {
 
 /**
  * Write the `.shepherd` marker at the repo root above `cwd`, naming `slug` as the
- * workspace. Used by the `link` tool (Task 5.4). Throws only if there is no repo
+ * workspace. Used by the `link` tool. Throws only if there is no repo
  * root or the write fails — callers surface that to the operator.
  */
 export function writeMarker(cwd: string = process.cwd(), slug: string): void {
@@ -101,7 +132,7 @@ export function writeMarker(cwd: string = process.cwd(), slug: string): void {
 
 /**
  * Remove the `.shepherd` marker at the repo root above `cwd`. Used by the
- * `unlink` tool (Task 5.4). Idempotent: a missing marker (or no repo root) is a
+ * `unlink` tool. Idempotent: a missing marker (or no repo root) is a
  * no-op, never an error.
  */
 export function removeMarker(cwd: string = process.cwd()): void {

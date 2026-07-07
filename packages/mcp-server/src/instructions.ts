@@ -22,11 +22,23 @@ import type { LinkState } from "./resolveContext.js";
  * It is injected into EVERY session, so keep each variant tight. Strong,
  * imperative phrasing on purpose: this is the procedure, not a suggestion.
  */
+/**
+ * Defense in depth against prompt injection. `workspace` reaches here from the
+ * `.shepherd` marker (attacker-controllable via a cloned repo) and is injected
+ * VERBATIM into the agent's SYSTEM PROMPT below. readMarker already slug-validates
+ * it, but we strip newlines and cap length at the point of interpolation too, so
+ * a future unvalidated path can't reintroduce forged directives here. Minimal on
+ * purpose — a real slug (≤64 chars, no whitespace) passes through untouched.
+ */
+function sanitizeWorkspace(workspace: string): string {
+  return workspace.replace(/\s+/g, " ").slice(0, 64);
+}
+
 export function buildInstructions(state: LinkState, workspace?: string): string {
   switch (state) {
     case "linked":
       return (
-        `${INTRO} This repository is linked to the \`${workspace ?? "team"}\` workspace, ` +
+        `${INTRO} This repository is linked to the \`${workspace ? sanitizeWorkspace(workspace) : "team"}\` workspace, ` +
         `so coordination is active.\n\n${PROCEDURE}`
       );
     case "declined":
