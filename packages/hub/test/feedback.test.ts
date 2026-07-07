@@ -16,6 +16,7 @@ import {
   describe,
   it,
   expect,
+  vi,
   beforeAll,
   afterAll,
   afterEach,
@@ -34,6 +35,12 @@ import { __resetRateLimiter } from "../src/tenant.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
 import { FeedbackResponse } from "@shepherd/shared";
+import { sendFeedbackEmail } from "../src/email.js";
+
+vi.mock("../src/email.js", () => ({
+  sendInviteEmail: vi.fn(),
+  sendFeedbackEmail: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ---------------------------------------------------------------------------
 // Config / credentials
@@ -55,6 +62,10 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
     STALE_AFTER_SECONDS: 120,
     CHANGE_RECORD_TTL_SECONDS: 604800,
     HUB_ADMIN_LABEL: "admin",
+    RESEND_API_KEY: "re_test",
+    INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
+    PUBLIC_WEB_URL: "https://test.local",
+    FEEDBACK_EMAIL_TO: "dev@korsoai.com",
     ...overrides,
   };
 }
@@ -129,6 +140,7 @@ describe.skipIf(!dbAvailable)(
 
     afterEach(async () => {
       __resetRateLimiter();
+      vi.mocked(sendFeedbackEmail).mockClear();
       await truncateAll(pool);
       await truncateTenancy(pool);
     });
@@ -236,6 +248,66 @@ describe.skipIf(!dbAvailable)(
       const parsed = FeedbackResponse.parse(res.json());
       const row = await fetchFeedback(pool, parsed.id);
       expect(row.context).toBeNull();
+    });
+
+    it("emails the submission when Resend is configured", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/feedback",
+        headers: bffHeaders("acct-dave"),
+        payload: { type: "bug", body: "mail me", context: { route: "/r" } },
+      });
+      expect(res.statusCode).toBe(200);
+      const parsed = FeedbackResponse.parse(res.json());
+
+      await vi.waitFor(() => expect(sendFeedbackEmail).toHaveBeenCalledTimes(1));
+      expect(sendFeedbackEmail).toHaveBeenCalledWith(
+        {
+          id: parsed.id,
+          type: "bug",
+          body: "mail me",
+          accountId: "acct-dave",
+          workspaceId: null,
+          context: { route: "/r" },
+        },
+        {
+          RESEND_API_KEY: "re_test",
+          INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
+          FEEDBACK_EMAIL_TO: "dev@korsoai.com",
+        }
+      );
+    });
+
+    it("still succeeds when the email send rejects", async () => {
+      vi.mocked(sendFeedbackEmail).mockRejectedValueOnce(new Error("resend down"));
+      const res = await app.inject({
+        method: "POST",
+        url: "/feedback",
+        headers: bffHeaders("acct-dave"),
+        payload: { type: "other", body: "mail broke, row survives" },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("does not email when Resend is unconfigured", async () => {
+      resetContext();
+      initContext({
+        pool,
+        config: makeTestConfig({ RESEND_API_KEY: undefined, INVITE_EMAIL_FROM: undefined }),
+      });
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/feedback",
+          headers: bffHeaders("acct-erin"),
+          payload: { type: "bug", body: "quiet" },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(sendFeedbackEmail).not.toHaveBeenCalled();
+      } finally {
+        resetContext();
+        initContext({ pool, config: makeTestConfig() });
+      }
     });
 
     it("rejects an empty body with 400", async () => {

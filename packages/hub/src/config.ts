@@ -54,6 +54,10 @@ const ConfigSchema = z.object({
   // The Hub has no reliable way to infer its own public web origin from a
   // request, so this is explicit rather than derived from Host/Origin headers.
   PUBLIC_WEB_URL: z.string().min(1).optional(),
+  // Where feedback-widget submissions are emailed. Sending is enabled only
+  // when RESEND_API_KEY + INVITE_EMAIL_FROM are also set (the sender address
+  // is shared with email invites); with them unset this default is inert.
+  FEEDBACK_EMAIL_TO: z.string().min(1).default("dev@korsoai.com"),
 }).superRefine((cfg, ctx) => {
   // One Hub binary, two deployment modes. Require at least one to be fully
   // configured so the Hub never boots without a way to authenticate callers
