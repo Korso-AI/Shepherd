@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Sync `SHEPHERD_UI_VERSION` with package version for feedback metadata.
 
+## [@korso/shepherd 0.9.1](https://www.npmjs.com/package/@korso/shepherd/v/0.9.1) — 2026-07-07
+
+### Fixed
+
+- Pi's MCP adapter discards the `initialize` `instructions` field, so Pi
+  agents had the coordination tools wired up but no guidance on when to use
+  them. The Pi extension now injects the same standing procedure into the
+  agent's system prompt on every turn, scoped to repos with a `.shepherd`
+  marker.
+
 ## [@korso/shepherd 0.9.0](https://www.npmjs.com/package/@korso/shepherd/v/0.9.0) — 2026-07-07
 
 ### Added
