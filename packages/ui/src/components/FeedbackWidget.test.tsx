@@ -85,7 +85,15 @@ describe("FeedbackWidget", () => {
 
     await waitFor(() =>
       expect(client.submitFeedback).toHaveBeenCalledWith(
-        { type: "suggestion", body: "add dark mode" },
+        {
+          type: "suggestion",
+          body: "add dark mode",
+          context: expect.objectContaining({
+            appVersion: expect.any(String),
+            userAgent: expect.any(String),
+            viewport: expect.stringMatching(/^\d+x\d+$/),
+          }),
+        },
         "ws_1",
       ),
     );
@@ -100,7 +108,18 @@ describe("FeedbackWidget", () => {
     await userEvent.click(screen.getByRole("button", { name: /submit/i }));
 
     await waitFor(() =>
-      expect(client.submitFeedback).toHaveBeenCalledWith({ type: "bug", body: "hello there" }, undefined),
+      expect(client.submitFeedback).toHaveBeenCalledWith(
+        {
+          type: "bug",
+          body: "hello there",
+          context: expect.objectContaining({
+            appVersion: expect.any(String),
+            userAgent: expect.any(String),
+            viewport: expect.stringMatching(/^\d+x\d+$/),
+          }),
+        },
+        undefined,
+      ),
     );
   });
 

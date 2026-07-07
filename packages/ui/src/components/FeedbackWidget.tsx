@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import type { FeedbackTypeT } from "@shepherd/shared";
 import { useShepherdClient } from "../context.js";
 import { describeError } from "../client.js";
+import { buildFeedbackContext } from "../feedbackContext.js";
 
 // ---------------------------------------------------------------------------
 // FeedbackWidget — the limited-release "give feedback" floating button.
@@ -54,7 +55,10 @@ export function FeedbackWidget({ workspaceId }: FeedbackWidgetProps) {
     setBusy(true);
     setError(null);
     try {
-      await client.submitFeedback({ type, body: body.trim() }, workspaceId);
+      await client.submitFeedback(
+        { type, body: body.trim(), context: buildFeedbackContext() },
+        workspaceId,
+      );
       setSent(true);
       setBody("");
       setTimeout(() => {
