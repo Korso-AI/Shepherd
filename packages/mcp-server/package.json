@@ -50,6 +50,6 @@
   },
   "devDependencies": {
     "@shepherd/shared": "*",
-    "tsup": "^8"
+    "tsup": "8.4.0"
   }
 }
