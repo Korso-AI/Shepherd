@@ -15,7 +15,7 @@
  *  - listWorkspaces: every workspace the account belongs to, with its own role.
  *    Scoped by accountId, so an agent `shp_` token (which carries an accountId
  *    but is bound to a single workspace) still correctly returns ALL of that
- *    account's workspaces — this is what the MCP `link` tool relies on (Task 5.4).
+ *    account's workspaces — this is what the MCP `link` tool relies on.
  *  - deleteWorkspace: any ADMIN permanently deletes the workspace and all its
  *    data in ONE transaction (deleteWorkspaceCascade). Irreversible.
  */

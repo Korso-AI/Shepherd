@@ -6,7 +6,7 @@
  * The announcement the caller just sent creates no delivery row for anyone here;
  * recipients pull it on their next work/sync/done/announce.
  *
- * #4: announce is a model-visible turn (the agent reads its result), so we also
+ * Announce is a model-visible turn (the agent reads its result), so we also
  * surface the caller's OWN pending inbox — messages otherwise wait for the next
  * work/sync. fetchPendingAnnouncements excludes the caller's own sends, so the
  * just-recorded announcement is never echoed back. (Heartbeat deliberately does

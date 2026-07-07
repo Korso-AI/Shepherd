@@ -3,12 +3,12 @@
  * agent uses to authenticate into the hub. There are TWO surfaces, distinguished
  * only by whether the tenant carries a route-derived workspace:
  *
- *  - ACCOUNT-scoped (flat `/tokens`, Task 1.3): a non-`:id` route, so resolveTenant
+ *  - ACCOUNT-scoped (flat `/tokens`): a non-`:id` route, so resolveTenant
  *    yields `NO_ROUTE_WORKSPACE` ("") with an accountId (browser-via-BFF, or an
  *    account-scoped agent token). Mint stores `workspace_id NULL` (a token bound
  *    to the account, reachable in every workspace it is a member of); list returns
  *    every token the account owns.
- *  - WORKSPACE-narrowed (`/workspaces/:id/tokens`, Task 3.4): a `:id` route, so
+ *  - WORKSPACE-narrowed (`/workspaces/:id/tokens`): a `:id` route, so
  *    resolveTenant has ALREADY validated the browser caller is a MEMBER of `:id`
  *    (a non-member is rejected 404 in the onRequest hook). Mint stores that
  *    concrete `workspace_id` (a token locked to one workspace, the CI case); list

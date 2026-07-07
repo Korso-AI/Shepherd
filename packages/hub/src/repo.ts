@@ -41,11 +41,12 @@ type Queryable = pg.Pool | pg.PoolClient;
 const DELIVERY_BATCH_LIMIT = 200;
 
 // ---------------------------------------------------------------------------
-// Identity & tenancy (migration 011) — lookups used by resolveTenant (Task 2.2)
+// Identity & tenancy (migration 011) — lookups used by resolveTenant
 //
 // These five functions are the ONLY data access the auth/tenancy layer needs.
 // The mutating ones take a Queryable so resolveTenant can run them on the pool
-// (it never opens a transaction). The fuller CRUD over these tables is Task 3.1.
+// (it never opens a transaction). The fuller management CRUD over these tables
+// lives further below.
 // ---------------------------------------------------------------------------
 
 /** A non-revoked api_tokens row, by its token_hash. */
@@ -201,7 +202,7 @@ export async function touchApiTokenLastUsed(
 }
 
 // ---------------------------------------------------------------------------
-// Identity & tenancy CRUD (Task 3.1)
+// Identity & tenancy CRUD
 //
 // The fuller management surface over the migration-011 tables: workspaces,
 // memberships, api_tokens and invites. Every function that touches a tenant's
@@ -321,7 +322,7 @@ export async function addMembership(
  * Every workspace `accountId` is a member of, as WorkspaceSummary (the row plus
  * the caller's own role in it). Scoped by accountId via the membership join, so
  * an agent token still correctly returns ALL of that account's workspaces (the
- * MCP `link` tool relies on this — see Task 3.3). Ordered by workspace name.
+ * MCP `link` tool relies on this). Ordered by workspace name.
  */
 export async function listWorkspacesForAccount(
   db: Queryable,
@@ -753,7 +754,7 @@ export async function revokeInvite(
  * Revoke one invite by its CODE, scoped by workspaceId so the workspace + code are
  * matched in ONE atomic UPDATE — a code that belongs to another workspace (or is
  * unknown / already revoked) matches zero rows. The redeem-facing revoke path
- * (Task 3.5) holds the code, not the invite id, so this avoids a look-up-then-check
+ * holds the code, not the invite id, so this avoids a look-up-then-check
  * round trip (and its cross-tenant TOCTOU): the workspace ownership guard lives in
  * the WHERE clause. Idempotent on an already-revoked invite. Returns true when a
  * live, in-workspace invite was revoked. Sibling of `revokeInvite` (by id) — that

@@ -10,7 +10,7 @@
  * session (a teammate may still need to coordinate around the agent's unlanded
  * work).
  *
- * As of Task 2.2 leave resolves + authorizes the session via {@link
+ * Leave resolves + authorizes the session via {@link
  * resolveSession} FIRST (so account-scoped tokens work on it, and the concrete
  * workspace comes from the session rather than a route). This is a DELIBERATE
  * behavior change from the old "direct UPDATE, no getSession" form: an UNKNOWN

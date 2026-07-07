@@ -1,5 +1,5 @@
 /**
- * Member management operations (Task 3.6): list the roster, remove a member, and
+ * Member management operations: list the roster, remove a member, and
  * leave a workspace.
  *
  * All three are `/workspaces/:id/*` routes, so by the time these run resolveTenant

@@ -6,7 +6,7 @@
  * return { ok: true }. The owner-scoped WHERE clause in releaseWorkItem is the
  * entire protection — another session's claim is simply left untouched.
  *
- * #4: done is a model-visible turn (the agent reads its result), so it is a good
+ * Done is a model-visible turn (the agent reads its result), so it is a good
  * place to surface inbound messages — they otherwise wait for the next
  * work/sync. We fetch + mark-delivered exactly as the landscape does. (Heartbeat
  * does NOT do this by default — its result never reaches the model — UNLESS the
