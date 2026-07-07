@@ -20,7 +20,7 @@ read it before writing code.
 
 ```sh
 npm install
-npm run check   # build + test — the same gate CI runs
+npm run check   # lint + build + test — the same gate CI runs
 ```
 
 ## Running the hub locally

@@ -217,7 +217,9 @@ The token and session mechanics that back this today:
   into agent-visible output.
 
 **Operational guidance:** treat `TEAM_TOKEN` as a shared secret for the whole
-team, rotate it via Secret Manager if a teammate leaves, and do not paste
+team — generate a strong random value (e.g. `openssl rand -hex 32`) and never
+deploy a guessable placeholder — rotate it via Secret Manager if a teammate
+leaves, and do not paste
 `sessionId`s into shared logs or transcripts. A per-session secret returned from
 `join` and verified on later calls is a planned v2 hardening (see review P2-4).
 
@@ -412,7 +414,7 @@ the shared `TEAM_TOKEN`. On a hosted deploy, agents never hold `TEAM_TOKEN` —
 each user sets `SHEPHERD_TOKEN` to a minted `shp_…` token from the dashboard
 instead (see [`docs/shepherd-mcp-quickstart.md`](docs/shepherd-mcp-quickstart.md)).
 
-Set these in each founder's shell environment (or `.env`):
+Set these in each team member's shell environment (or `.env`):
 
 ```
 HUB_URL=https://<service-url>
@@ -455,4 +457,4 @@ source of your modified version available to that service's users.
 
 The AGPL applies to the code in this repository. If you need to use Shepherd
 under different terms (for example, embedding it in a closed-source product), a
-separate commercial license is available — contact Korso.
+separate commercial license is available — contact [support@korsoai.com](mailto:support@korsoai.com).

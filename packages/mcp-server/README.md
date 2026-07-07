@@ -504,4 +504,4 @@ AGPL-3.0-only — see the repository
 licensing section of the
 [root README](https://github.com/Korso-AI/shepherd#license): the AGPL's
 network-service clause applies to modified versions run as a service, and a
-separate commercial license is available from Korso.
+separate commercial license is available from Korso — contact [support@korsoai.com](mailto:support@korsoai.com).

@@ -81,6 +81,6 @@ is fully served by the hub in this repo.
 
 ## License
 
-AGPL-3.0-only — see the [repository LICENSE](https://github.com/Korso-AI/Shepherd/blob/main/LICENSE)
-and the [licensing section of the root README](https://github.com/Korso-AI/Shepherd#license)
+AGPL-3.0-only — see the [repository LICENSE](https://github.com/Korso-AI/shepherd/blob/main/LICENSE)
+and the [licensing section of the root README](https://github.com/Korso-AI/shepherd#license)
 (the AGPL's network-service clause applies; commercial licensing is available from Korso).

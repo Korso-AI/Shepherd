@@ -22,7 +22,7 @@ It is built from four packages:
 
 > **Status:** live. The hub, the MCP server, the `@shepherd/shared` contract, and the `packages/ui/`
 > dashboard (React + Vite) are real code; **hosted multi-tenancy is implemented** (a `NOT NULL
-workspace_id` on every coordination table, account memberships, hashed `shp_…` API tokens, the
+> workspace_id` on every coordination table, account memberships, hashed `shp_…` API tokens, the
 > per-request auth edge, per-workspace query scoping). The two deployment modes (self-hosted
 > `TEAM_TOKEN`; Korso-hosted via `x-internal-token` + trusted `x-account-id`, plus minted agent tokens)
 > are described in [`README.md`](README.md) and live in `packages/hub/src/tenant.ts`.
