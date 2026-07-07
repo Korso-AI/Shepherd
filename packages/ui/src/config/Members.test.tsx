@@ -11,6 +11,10 @@ import { makeMockClient } from "../test/mockClient.js";
 // refreshKey changes), removes members through the client, and (owner-only)
 // promotes/demotes members and transfers ownership. Rejections surface as a
 // visible alert. Self-service "leave" lives in <WorkspaceSettings>.
+//
+// Row controls live behind a per-row "⋯" actions menu (trigger labelled
+// `Actions for <name>`), so action tests open the menu first and click
+// menuitems; a row the caller cannot act on renders no trigger at all.
 // ---------------------------------------------------------------------------
 
 const WORKSPACE_ID = "ws_1";
@@ -127,7 +131,8 @@ describe("Members", () => {
     renderMembers({ canRemove: true });
 
     expect(await screen.findByText("Bob")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /remove bob/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for bob/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /remove bob/i }));
 
     await waitFor(() =>
       expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE_ID, "acc_2"),
@@ -136,16 +141,17 @@ describe("Members", () => {
     await waitFor(() => expect(screen.queryByText("Bob")).not.toBeInTheDocument());
   });
 
-  it("does not offer Remove on an admin row for a non-owner admin", async () => {
+  it("offers no actions menu on an admin row for a non-owner admin", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
       members: [member({ accountId: "acc_a", displayName: "Ada", role: "admin" })],
     });
 
-    // caller is an admin (canRemove) but NOT the owner: removing an admin is owner-only.
+    // caller is an admin (canRemove) but NOT the owner: removing an admin is
+    // owner-only, and there is nothing else the caller could do — no trigger.
     renderMembers({ canRemove: true, isOwner: false });
 
     expect(await screen.findByText("Ada")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /remove ada/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /actions for ada/i })).toBeNull();
   });
 
   it("lets the owner remove another admin", async () => {
@@ -157,7 +163,8 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Ada")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /remove ada/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for ada/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /remove ada/i }));
     await waitFor(() => expect(client.removeMember).toHaveBeenCalledWith(WORKSPACE_ID, "acc_a"));
   });
 
@@ -169,14 +176,12 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Olive")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /remove olive/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /make member/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /transfer ownership/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /actions for olive/i })).toBeNull();
   });
 
   // --- Role controls (owner-only) ------------------------------------------
 
-  it("hides role controls when the caller is not the owner", async () => {
+  it("offers only Remove (no role controls) when the caller is not the owner", async () => {
     client.listMembers = vi.fn().mockResolvedValue({
       members: [member({ accountId: "acc_m", displayName: "Mel", role: "member" })],
     });
@@ -184,8 +189,10 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: false });
 
     expect(await screen.findByText("Mel")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /make admin/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /transfer ownership/i })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /actions for mel/i }));
+    expect(screen.getByRole("menuitem", { name: /remove mel/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /make admin/i })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /transfer ownership/i })).toBeNull();
   });
 
   it("promotes a member to admin through the client (owner)", async () => {
@@ -198,14 +205,16 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true, onMembersChanged });
 
     expect(await screen.findByText("Mel")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /make admin/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for mel/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /make admin/i }));
 
     await waitFor(() =>
       expect(client.setMemberRole).toHaveBeenCalledWith(WORKSPACE_ID, "acc_m", "admin"),
     );
     await waitFor(() => expect(onMembersChanged).toHaveBeenCalled());
-    // Optimistically reflected: the label flips and the control offers demotion.
-    expect(await screen.findByRole("button", { name: /make member/i })).toBeInTheDocument();
+    // Optimistically reflected: reopening the menu now offers demotion.
+    await userEvent.click(screen.getByRole("button", { name: /actions for mel/i }));
+    expect(await screen.findByRole("menuitem", { name: /make member/i })).toBeInTheDocument();
   });
 
   it("demotes an admin to member through the client (owner)", async () => {
@@ -217,11 +226,66 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Ada")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /make member/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for ada/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /make member/i }));
 
     await waitFor(() =>
       expect(client.setMemberRole).toHaveBeenCalledWith(WORKSPACE_ID, "acc_a", "member"),
     );
+  });
+
+  // --- Actions menu behavior ------------------------------------------------
+
+  it("closes the actions menu on an outside click", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_m", displayName: "Mel", role: "member" })],
+    });
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Mel")).toBeInTheDocument();
+    const trig = screen.getByRole("button", { name: /actions for mel/i });
+    await userEvent.click(trig);
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+
+    // Click elsewhere in the card (the heading) — the menu dismisses.
+    await userEvent.click(screen.getByRole("heading", { name: /members/i }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(trig).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("closes the actions menu on Escape", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [member({ accountId: "acc_m", displayName: "Mel", role: "member" })],
+    });
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Mel")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /actions for mel/i }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("opens at most one row's menu at a time", async () => {
+    client.listMembers = vi.fn().mockResolvedValue({
+      members: [
+        member({ accountId: "acc_m", displayName: "Mel", role: "member" }),
+        member({ accountId: "acc_a", displayName: "Ada", role: "admin" }),
+      ],
+    });
+
+    renderMembers({ canRemove: true, isOwner: true });
+
+    expect(await screen.findByText("Mel")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /actions for mel/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for ada/i }));
+
+    // Only Ada's menu remains open.
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+    expect(screen.getByRole("menuitem", { name: /remove ada/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /remove mel/i })).toBeNull();
   });
 
   // --- Transfer ownership --------------------------------------------------
@@ -236,7 +300,8 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true, onWorkspaceChanged });
 
     expect(await screen.findByText("Ada")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /transfer ownership/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for ada/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /transfer ownership/i }));
 
     // A confirm dialog gates the transfer.
     const dialog = await screen.findByRole("dialog");
@@ -257,7 +322,8 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Ada")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /transfer ownership/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for ada/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /transfer ownership/i }));
 
     const dialog = await screen.findByRole("dialog");
     await userEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
@@ -277,7 +343,8 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Carol")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /remove carol/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for carol/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /remove carol/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/last admin/i);
     // The optimistic removal is rolled back, so Carol remains on the roster.
@@ -315,10 +382,11 @@ describe("Members", () => {
 
     renderMembers({ canRemove: true });
 
-    const removeBtn = await screen.findByRole("button", { name: /remove dave/i });
-    await userEvent.click(removeBtn);
+    await userEvent.click(await screen.findByRole("button", { name: /actions for dave/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /remove dave/i }));
 
-    // Optimistically dropped, so the button is gone; resolving completes cleanly.
+    // Optimistically dropped, so the row (and its menu) is gone; resolving
+    // completes cleanly.
     await waitFor(() => expect(client.removeMember).toHaveBeenCalledTimes(1));
     resolve();
     expect(await screen.findByRole("status")).toHaveTextContent(/removed dave/i);
@@ -332,7 +400,8 @@ describe("Members", () => {
     renderMembers({ canRemove: true, isOwner: true });
 
     expect(await screen.findByText("Erin")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /remove erin/i }));
+    await userEvent.click(screen.getByRole("button", { name: /actions for erin/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /remove erin/i }));
 
     // Failure path re-syncs from the server (listMembers called again) and Erin returns.
     expect(await screen.findByRole("alert")).toHaveTextContent(/last admin/i);
