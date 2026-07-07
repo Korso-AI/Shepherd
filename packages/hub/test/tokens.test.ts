@@ -15,14 +15,7 @@
  * truncateTenancy reset between tests; the rate limiter is reset in afterEach.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -36,10 +29,7 @@ import { buildServer } from "../src/server.js";
 import { __resetRateLimiter, hashToken } from "../src/tenant.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
-import {
-  MintTokenResponse,
-  ListTokensResponse,
-} from "@shepherd/shared";
+import { MintTokenResponse, ListTokensResponse } from "@shepherd/shared";
 
 // ---------------------------------------------------------------------------
 // Config / credentials
@@ -92,7 +82,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -102,19 +92,20 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)(
-  "Agent-token endpoints (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
+  "Agent-token endpoints (DB-gated)" +
+    (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
     let app: FastifyInstance;
@@ -162,7 +153,7 @@ describe.skipIf(!dbAvailable)(
       // The DB stores ONLY the hash — the raw token is nowhere in api_tokens.
       const row = await pool.query<{ token_hash: string; name: string | null }>(
         `SELECT token_hash, name FROM api_tokens WHERE id = $1`,
-        [minted.id]
+        [minted.id],
       );
       expect(row.rows).toHaveLength(1);
       expect(row.rows[0]!.name).toBe("ci-runner");
@@ -257,7 +248,7 @@ describe.skipIf(!dbAvailable)(
             headers: bffHeaders("acct-alice"),
             payload: { name: "keep" },
           })
-        ).json()
+        ).json(),
       );
       const drop = MintTokenResponse.parse(
         (
@@ -267,7 +258,7 @@ describe.skipIf(!dbAvailable)(
             headers: bffHeaders("acct-alice"),
             payload: { name: "drop" },
           })
-        ).json()
+        ).json(),
       );
       const revokeRes = await app.inject({
         method: "DELETE",
@@ -293,7 +284,7 @@ describe.skipIf(!dbAvailable)(
         `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
          SELECT $1, 'acct-alice', 'hash-' || g, 'bulk-' || g
          FROM generate_series(1, 250) AS g`,
-        [wsId]
+        [wsId],
       );
       const bounded = ListTokensResponse.parse(
         (
@@ -302,7 +293,7 @@ describe.skipIf(!dbAvailable)(
             url: `/workspaces/${wsId}/tokens`,
             headers: bffAuthHeaders("acct-alice"),
           })
-        ).json()
+        ).json(),
       );
       expect(bounded.tokens).toHaveLength(200);
     });
@@ -416,7 +407,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: `/workspaces/${wsId}/tokens`,
-        headers: { authorization: `Bearer ${TEST_TOKEN}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${TEST_TOKEN}`,
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect(res.statusCode).toBe(401);
@@ -439,7 +433,7 @@ describe.skipIf(!dbAvailable)(
 
       const row = await pool.query<{ workspace_id: string | null }>(
         `SELECT workspace_id FROM api_tokens WHERE id = $1`,
-        [id]
+        [id],
       );
       expect(row.rows[0]!.workspace_id).toBe(wsId);
     });
@@ -467,10 +461,12 @@ describe.skipIf(!dbAvailable)(
       expect(minted.token).toMatch(/^shp_/);
       expect(minted.token.length).toBeGreaterThanOrEqual(47);
 
-      const row = await pool.query<{ workspace_id: string | null; token_hash: string }>(
-        `SELECT workspace_id, token_hash FROM api_tokens WHERE id = $1`,
-        [minted.id]
-      );
+      const row = await pool.query<{
+        workspace_id: string | null;
+        token_hash: string;
+      }>(`SELECT workspace_id, token_hash FROM api_tokens WHERE id = $1`, [
+        minted.id,
+      ]);
       expect(row.rows).toHaveLength(1);
       // Account-scoped: not locked to any workspace.
       expect(row.rows[0]!.workspace_id).toBeNull();
@@ -548,7 +544,7 @@ describe.skipIf(!dbAvailable)(
       // Alice's token still authenticates (Bob's attempt revoked nothing).
       const stillLive = await pool.query(
         `SELECT 1 FROM api_tokens WHERE id = $1 AND revoked_at IS NULL`,
-        [alice.id]
+        [alice.id],
       );
       expect(stillLive.rows).toHaveLength(1);
     });
@@ -558,7 +554,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: `/tokens`,
-        headers: { authorization: `Bearer ${TEST_TOKEN}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${TEST_TOKEN}`,
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect(res.statusCode).toBe(401);
@@ -578,7 +577,10 @@ describe.skipIf(!dbAvailable)(
       const second = await app.inject({
         method: "POST",
         url: `/tokens`,
-        headers: { authorization: `Bearer ${seed.token}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${seed.token}`,
+          "content-type": "application/json",
+        },
         payload: { name: "minted-by-agent" },
       });
       expect(second.statusCode).toBe(200);
@@ -586,12 +588,14 @@ describe.skipIf(!dbAvailable)(
 
       // The new token is account-scoped (NULL workspace) and owned by the SAME
       // account — not a cross-tenant escalation.
-      const row = await pool.query<{ workspace_id: string | null; account_id: string }>(
-        `SELECT workspace_id, account_id FROM api_tokens WHERE id = $1`,
-        [minted.id]
-      );
+      const row = await pool.query<{
+        workspace_id: string | null;
+        account_id: string;
+      }>(`SELECT workspace_id, account_id FROM api_tokens WHERE id = $1`, [
+        minted.id,
+      ]);
       expect(row.rows[0]!.workspace_id).toBeNull();
       expect(row.rows[0]!.account_id).toBe("acct-alice");
     });
-  }
+  },
 );

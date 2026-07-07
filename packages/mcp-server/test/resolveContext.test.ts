@@ -9,7 +9,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     HUB_URL: "http://hub.test",
     TEAM_TOKEN: "tok",
     HEARTBEAT_INTERVAL_SECONDS: 60,
-  SHEPHERD_NO_AUTO_HOOKS: false,
+    SHEPHERD_NO_AUTO_HOOKS: false,
     ...overrides,
   };
 }
@@ -64,9 +64,7 @@ const nullDeps = {
   ...noCacheDeps,
 };
 
-const KNOWN_NAMES = new Set(
-  adjectives.flatMap((a) => nouns.map((n) => a + n)),
-);
+const KNOWN_NAMES = new Set(adjectives.flatMap((a) => nouns.map((n) => a + n)));
 
 describe("resolveContext", () => {
   it("env overrides win over detection", async () => {
@@ -79,7 +77,11 @@ describe("resolveContext", () => {
       MODEL: "custom-model",
     });
 
-    const ctx: JoinContext = await resolveContext(config, "/some/cwd", detectingDeps);
+    const ctx: JoinContext = await resolveContext(
+      config,
+      "/some/cwd",
+      detectingDeps,
+    );
 
     expect(ctx).toEqual({
       workspace: "ws-override",
@@ -289,10 +291,14 @@ describe("resolveContext", () => {
   describe("human device-identity cache", () => {
     it("HUMAN env override wins and never writes the cache", async () => {
       const cache = memoryCache(null);
-      const ctx = await resolveContext(baseConfig({ HUMAN: "OverrideHuman" }), "/cwd", {
-        ...detectingDeps,
-        ...cache,
-      });
+      const ctx = await resolveContext(
+        baseConfig({ HUMAN: "OverrideHuman" }),
+        "/cwd",
+        {
+          ...detectingDeps,
+          ...cache,
+        },
+      );
       expect(ctx.human).toBe("OverrideHuman");
       expect(cache.writes).toEqual([]);
     });

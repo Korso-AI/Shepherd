@@ -68,7 +68,7 @@ export function createEditTripwire({
           console.error(
             `[shepherd] edit-tripwire handler failed: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
         }
         return;
@@ -119,7 +119,7 @@ function defaultRunGitStatus(cwd: string): Promise<string | null> {
       { cwd, timeout: 5_000, windowsHide: true },
       (err, stdout) => {
         resolve(err ? null : stdout);
-      }
+      },
     );
   });
 }

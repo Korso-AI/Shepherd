@@ -41,7 +41,11 @@ import { __resetRateLimiter, hashToken } from "../src/tenant.js";
 import { __resetRedeemThrottle } from "../src/operations/invites.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
-import { InviteResponse, RedeemInviteResponse, ListEmailInvitesResponse } from "@shepherd/shared";
+import {
+  InviteResponse,
+  RedeemInviteResponse,
+  ListEmailInvitesResponse,
+} from "@shepherd/shared";
 
 // ---------------------------------------------------------------------------
 // Config / credentials
@@ -82,7 +86,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -92,19 +96,19 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
 /** Read an invite's raw row (use_count, revoked_at, …) directly for assertions. */
 async function readInvite(
   pool: pg.Pool,
-  code: string
+  code: string,
 ): Promise<{
   workspace_id: string;
   role_granted: string;
@@ -116,7 +120,7 @@ async function readInvite(
   const { rows } = await pool.query(
     `SELECT workspace_id, role_granted, use_count, max_uses, expires_at, revoked_at
      FROM invites WHERE code = $1`,
-    [code]
+    [code],
   );
   return rows[0] ?? null;
 }
@@ -131,12 +135,12 @@ async function readInvite(
 async function seedAccountScopedToken(
   pool: pg.Pool,
   accountId: string,
-  plaintext = "shp_account_scoped_redeem"
+  plaintext = "shp_account_scoped_redeem",
 ): Promise<string> {
   await pool.query(
     `INSERT INTO api_tokens (account_id, workspace_id, token_hash, name)
      VALUES ($1, NULL, $2, 'account-scoped-test')`,
-    [accountId, hashToken(plaintext)]
+    [accountId, hashToken(plaintext)],
   );
   return plaintext;
 }
@@ -145,7 +149,7 @@ async function seedAccountScopedToken(
 async function mintAgentToken(
   app: FastifyInstance,
   workspaceId: string,
-  accountId: string
+  accountId: string,
 ): Promise<string> {
   const res = await app.inject({
     method: "POST",
@@ -260,21 +264,24 @@ describe.skipIf(!dbAvailable)(
       await seedMembership(pool, "acct-admin", wsId, "admin");
 
       const a = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        }))
-          .json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
       const b = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
       expect(a.code).not.toBe(b.code);
     });
@@ -299,12 +306,14 @@ describe.skipIf(!dbAvailable)(
       await seedMembership(pool, "acct-admin", wsId, "admin");
 
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       const revoke = await app.inject({
@@ -335,12 +344,14 @@ describe.skipIf(!dbAvailable)(
       await seedMembership(pool, "acct-member", wsId, "member");
 
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       const res = await app.inject({
@@ -360,12 +371,14 @@ describe.skipIf(!dbAvailable)(
 
       // B's admin creates an invite into B.
       const inviteB = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsB}/invites`,
-          headers: bffHeaders("acct-b-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsB}/invites`,
+            headers: bffHeaders("acct-b-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       // A's admin tries to revoke B's code SCOPED TO A's workspace → 404
@@ -415,7 +428,7 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, expires_at)
          VALUES ($1, $2, 'acct-admin', 'admin', 25, now() + interval '7 days')`,
-        [wsId, code]
+        [wsId, code],
       );
 
       const redeem = await app.inject({
@@ -432,7 +445,7 @@ describe.skipIf(!dbAvailable)(
       // Membership now exists at the granted role.
       const mem = await pool.query<{ role: string }>(
         `SELECT role FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-newcomer", wsId]
+        ["acct-newcomer", wsId],
       );
       expect(mem.rows).toHaveLength(1);
       expect(mem.rows[0]!.role).toBe("admin");
@@ -456,7 +469,7 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, expires_at)
          VALUES ($1, $2, 'acct-admin', 'member', 25, now() + interval '7 days')`,
-        [wsId, code]
+        [wsId, code],
       );
 
       const redeem = await app.inject({
@@ -471,7 +484,7 @@ describe.skipIf(!dbAvailable)(
 
       const mem = await pool.query(
         `SELECT role FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-empty-body", wsId]
+        ["acct-empty-body", wsId],
       );
       expect(mem.rows).toHaveLength(1);
     });
@@ -486,7 +499,7 @@ describe.skipIf(!dbAvailable)(
       const countAdmins = async () => {
         const { rows } = await pool.query<{ n: string }>(
           `SELECT count(*)::text AS n FROM memberships WHERE workspace_id = $1 AND role = 'admin'`,
-          [wsId]
+          [wsId],
         );
         return Number(rows[0]!.n);
       };
@@ -507,7 +520,7 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, expires_at)
          VALUES ($1, $2, 'acct-admin1', 'admin', 25, now() + interval '7 days')`,
-        [wsId, code]
+        [wsId, code],
       );
       const redeem = await app.inject({
         method: "POST",
@@ -534,7 +547,7 @@ describe.skipIf(!dbAvailable)(
       // admin1's membership is gone; admin2 remains the surviving admin.
       const a1 = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-admin1", wsId]
+        ["acct-admin1", wsId],
       );
       expect(a1.rows).toHaveLength(0);
       expect(await countAdmins()).toBe(1);
@@ -546,12 +559,14 @@ describe.skipIf(!dbAvailable)(
       await seedMembership(pool, "acct-member", wsId, "member");
 
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       const redeem = await app.inject({
@@ -579,7 +594,7 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, expires_at)
          VALUES ($1, 'EXPIRED-CODE', 'acct-admin', 'member', 25, now() - interval '1 hour')`,
-        [wsId]
+        [wsId],
       );
 
       const redeem = await app.inject({
@@ -593,7 +608,7 @@ describe.skipIf(!dbAvailable)(
       // No membership, no use burned.
       const mem = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-late", wsId]
+        ["acct-late", wsId],
       );
       expect(mem.rows).toHaveLength(0);
       const row = await readInvite(pool, "EXPIRED-CODE");
@@ -608,7 +623,7 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, use_count)
          VALUES ($1, 'EXHAUSTED', 'acct-admin', 'member', 1, 1)`,
-        [wsId]
+        [wsId],
       );
 
       const redeem = await app.inject({
@@ -629,7 +644,7 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses, revoked_at)
          VALUES ($1, 'REVOKED-CODE', 'acct-admin', 'member', 25, now())`,
-        [wsId]
+        [wsId],
       );
 
       const redeem = await app.inject({
@@ -657,19 +672,24 @@ describe.skipIf(!dbAvailable)(
       const wsId = await seedWorkspace(pool, "forged-ws");
       await seedMembership(pool, "acct-admin", wsId, "admin");
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       // A raw client asserts an account WITHOUT the BFF internal token.
       const redeem = await app.inject({
         method: "POST",
         url: `/invites/${created.code}/redeem`,
-        headers: { "x-account-id": "acct-attacker", "content-type": "application/json" },
+        headers: {
+          "x-account-id": "acct-attacker",
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect(redeem.statusCode).toBe(401);
@@ -677,7 +697,7 @@ describe.skipIf(!dbAvailable)(
       // No membership was created for the forged account.
       const mem = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-attacker", wsId]
+        ["acct-attacker", wsId],
       );
       expect(mem.rows).toHaveLength(0);
     });
@@ -690,12 +710,14 @@ describe.skipIf(!dbAvailable)(
 
       // An invite into the TARGET workspace (which the agent is NOT a member of).
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsTarget}/invites`,
-          headers: bffHeaders("acct-target-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsTarget}/invites`,
+            headers: bffHeaders("acct-target-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       // The agent's shp_ token is scoped to wsHome. It must NOT be able to redeem.
@@ -703,7 +725,10 @@ describe.skipIf(!dbAvailable)(
       const redeem = await app.inject({
         method: "POST",
         url: `/invites/${created.code}/redeem`,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect([401, 403]).toContain(redeem.statusCode);
@@ -711,7 +736,7 @@ describe.skipIf(!dbAvailable)(
       // The agent's account did NOT self-join the target workspace.
       const mem = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-agent", wsTarget]
+        ["acct-agent", wsTarget],
       );
       expect(mem.rows).toHaveLength(0);
       // And the use was not burned.
@@ -730,19 +755,24 @@ describe.skipIf(!dbAvailable)(
       await seedMembership(pool, "acct-target-admin", wsTarget, "admin");
 
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsTarget}/invites`,
-          headers: bffHeaders("acct-target-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsTarget}/invites`,
+            headers: bffHeaders("acct-target-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       const token = await seedAccountScopedToken(pool, "acct-scoped-agent");
       const redeem = await app.inject({
         method: "POST",
         url: `/invites/${created.code}/redeem`,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect([401, 403]).toContain(redeem.statusCode);
@@ -750,7 +780,7 @@ describe.skipIf(!dbAvailable)(
       // The account did NOT self-join the target workspace, and no use was burned.
       const mem = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-scoped-agent", wsTarget]
+        ["acct-scoped-agent", wsTarget],
       );
       expect(mem.rows).toHaveLength(0);
       const row = await readInvite(pool, created.code);
@@ -762,13 +792,16 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses)
          VALUES ($1, 'TEAM-CODE', 'seed', 'member', 25)`,
-        [wsId]
+        [wsId],
       );
 
       const redeem = await app.inject({
         method: "POST",
         url: `/invites/TEAM-CODE/redeem`,
-        headers: { authorization: `Bearer ${TEST_TOKEN}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${TEST_TOKEN}`,
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect([401, 403]).toContain(redeem.statusCode);
@@ -783,12 +816,14 @@ describe.skipIf(!dbAvailable)(
       const wsId = await seedWorkspace(pool, "throttle-ws");
       await seedMembership(pool, "acct-admin", wsId, "admin");
       const created = InviteResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: `/workspaces/${wsId}/invites`,
-          headers: bffHeaders("acct-admin"),
-          payload: {},
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${wsId}/invites`,
+            headers: bffHeaders("acct-admin"),
+            payload: {},
+          })
+        ).json(),
       );
 
       // The attacker enumerates invalid codes from one account until throttled.
@@ -860,7 +895,7 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(400);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -913,7 +948,9 @@ describe.skipIf(!dbAvailable)(
 
       fetchSpy = vi
         .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }));
+        .mockResolvedValue(
+          new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }),
+        );
 
       const res = await app.inject({
         method: "POST",
@@ -934,14 +971,18 @@ describe.skipIf(!dbAvailable)(
       const requestBody = JSON.parse((init as RequestInit).body as string);
       expect(requestBody.to).toBe("newcomer@example.com");
       expect(requestBody.from).toBe("invites@example.com");
-      expect(requestBody.html).toContain("https://app.example.com/shepherd/join/");
+      expect(requestBody.html).toContain(
+        "https://app.example.com/shepherd/join/",
+      );
 
       // The minted invite is one-time-use (maxUses fixed at 1, not the
       // unlimited code/link default).
-      const { rows } = await pool.query<{ max_uses: number; use_count: number }>(
-        `SELECT max_uses, use_count FROM invites WHERE workspace_id = $1`,
-        [wsId]
-      );
+      const { rows } = await pool.query<{
+        max_uses: number;
+        use_count: number;
+      }>(`SELECT max_uses, use_count FROM invites WHERE workspace_id = $1`, [
+        wsId,
+      ]);
       expect(rows).toHaveLength(1);
       expect(rows[0]!.max_uses).toBe(1);
       expect(rows[0]!.use_count).toBe(0);
@@ -953,7 +994,9 @@ describe.skipIf(!dbAvailable)(
 
       fetchSpy = vi
         .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }));
+        .mockResolvedValue(
+          new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }),
+        );
 
       const send = await app.inject({
         method: "POST",
@@ -965,7 +1008,7 @@ describe.skipIf(!dbAvailable)(
 
       const { rows } = await pool.query<{ code: string }>(
         `SELECT code FROM invites WHERE workspace_id = $1`,
-        [wsId]
+        [wsId],
       );
       const code = rows[0]!.code;
 
@@ -990,9 +1033,12 @@ describe.skipIf(!dbAvailable)(
       const wsId = await seedWorkspace(pool, "email-resend-failure");
       await seedMembership(pool, "acct-admin", wsId, "admin");
 
-      fetchSpy = vi
-        .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response("rate limited", { status: 429, statusText: "Too Many Requests" }));
+      fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response("rate limited", {
+          status: 429,
+          statusText: "Too Many Requests",
+        }),
+      );
 
       const res = await app.inject({
         method: "POST",
@@ -1011,7 +1057,9 @@ describe.skipIf(!dbAvailable)(
 
       fetchSpy = vi
         .spyOn(globalThis, "fetch")
-        .mockResolvedValue(new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }));
+        .mockResolvedValue(
+          new Response(JSON.stringify({ id: "resend-id" }), { status: 200 }),
+        );
 
       const send = await app.inject({
         method: "POST",
@@ -1032,16 +1080,18 @@ describe.skipIf(!dbAvailable)(
       expect(list.invites[0]!.email).toBe("newcomer@example.com");
       // Status-only surface: the invite CODE must not leak into the list.
       expect(JSON.stringify(pending.json())).not.toContain(
-        (await pool.query<{ code: string }>(
-          `SELECT code FROM invites WHERE workspace_id = $1`,
-          [wsId]
-        )).rows[0]!.code
+        (
+          await pool.query<{ code: string }>(
+            `SELECT code FROM invites WHERE workspace_id = $1`,
+            [wsId],
+          )
+        ).rows[0]!.code,
       );
 
       // Redeem the one-time link — the entry disappears from the pending list.
       const { rows } = await pool.query<{ code: string }>(
         `SELECT code FROM invites WHERE workspace_id = $1`,
-        [wsId]
+        [wsId],
       );
       const redeem = await app.inject({
         method: "POST",
@@ -1056,7 +1106,9 @@ describe.skipIf(!dbAvailable)(
         url: `/workspaces/${wsId}/invites/email`,
         headers: bffHeaders("acct-admin"),
       });
-      expect(ListEmailInvitesResponse.parse(after.json()).invites).toHaveLength(0);
+      expect(ListEmailInvitesResponse.parse(after.json()).invites).toHaveLength(
+        0,
+      );
     });
 
     it("pending list excludes revoked and expired email invites, and code invites entirely", async () => {
@@ -1072,7 +1124,7 @@ describe.skipIf(!dbAvailable)(
            ($1, 'revoked-code', 'tester', 'member', 1, now() + interval '7 days', now(), 'revoked@example.com'),
            ($1, 'expired-code', 'tester', 'member', 1, now() - interval '1 day',  NULL,  'expired@example.com'),
            ($1, 'plain-code',   'tester', 'member', 1, now() + interval '7 days', NULL,  NULL)`,
-        [wsId]
+        [wsId],
       );
 
       const res = await app.inject({
@@ -1096,5 +1148,5 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(403);
     });
-  }
+  },
 );

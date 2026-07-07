@@ -33,7 +33,8 @@ export function EmptyState({
     <section className="shepherd-empty-state" aria-labelledby={headingId}>
       <h2 id={headingId}>{title}</h2>
       <p>
-        {children ?? "Create a workspace or join one with an invite code to get started."}
+        {children ??
+          "Create a workspace or join one with an invite code to get started."}
       </p>
       {onGetStarted && (
         <button type="button" onClick={onGetStarted}>

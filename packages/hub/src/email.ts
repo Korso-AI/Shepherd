@@ -22,7 +22,7 @@ export interface SendInviteEmailParams {
  */
 export async function sendInviteEmail(
   params: SendInviteEmailParams,
-  config: { RESEND_API_KEY: string; INVITE_EMAIL_FROM: string }
+  config: { RESEND_API_KEY: string; INVITE_EMAIL_FROM: string },
 ): Promise<void> {
   const { to, joinLink, workspaceName } = params;
 
@@ -42,11 +42,16 @@ export async function sendInviteEmail(
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`Resend API error (${res.status}): ${detail || res.statusText}`);
+    throw new Error(
+      `Resend API error (${res.status}): ${detail || res.statusText}`,
+    );
   }
 }
 
-function renderInviteEmailHtml(params: { joinLink: string; workspaceName: string }): string {
+function renderInviteEmailHtml(params: {
+  joinLink: string;
+  workspaceName: string;
+}): string {
   const { joinLink, workspaceName } = params;
   return `
     <p>You've been invited to join <strong>${escapeHtml(workspaceName)}</strong> on Shepherd.</p>
@@ -97,7 +102,9 @@ function formatAccount(account: SendFeedbackEmailParams["account"]): string {
 }
 
 /** "Acme Team (acme · wsId)" → falls back to the raw id when unresolved. */
-function formatWorkspace(workspace: SendFeedbackEmailParams["workspace"]): string {
+function formatWorkspace(
+  workspace: SendFeedbackEmailParams["workspace"],
+): string {
   if (!workspace) return "—";
   const { id, name, slug } = workspace;
   return name ? `${name} (${slug ?? id})` : id;
@@ -111,7 +118,11 @@ function formatWorkspace(workspace: SendFeedbackEmailParams["workspace"]): strin
  */
 export async function sendFeedbackEmail(
   params: SendFeedbackEmailParams,
-  config: { RESEND_API_KEY: string; INVITE_EMAIL_FROM: string; FEEDBACK_EMAIL_TO: string }
+  config: {
+    RESEND_API_KEY: string;
+    INVITE_EMAIL_FROM: string;
+    FEEDBACK_EMAIL_TO: string;
+  },
 ): Promise<void> {
   const { id, type, body, account, workspace, context } = params;
 
@@ -144,6 +155,8 @@ export async function sendFeedbackEmail(
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`Resend API error (${res.status}): ${detail || res.statusText}`);
+    throw new Error(
+      `Resend API error (${res.status}): ${detail || res.statusText}`,
+    );
   }
 }

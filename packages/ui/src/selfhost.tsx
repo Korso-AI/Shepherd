@@ -28,7 +28,11 @@ function readToken(): string {
  *
  * @param props.onSubmit - Called with the entered token once the form is submitted.
  */
-function Gate({ onSubmit }: { onSubmit: (token: string) => void }): ReactElement {
+function Gate({
+  onSubmit,
+}: {
+  onSubmit: (token: string) => void;
+}): ReactElement {
   const [value, setValue] = useState("");
 
   const handle = (e: FormEvent): void => {

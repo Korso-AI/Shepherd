@@ -125,7 +125,9 @@ export function readMarker(cwd: string = process.cwd()): Marker | null {
 export function writeMarker(cwd: string = process.cwd(), slug: string): void {
   const file = markerPath(cwd);
   if (file === null) {
-    throw new Error("not inside a git repository — cannot write .shepherd marker");
+    throw new Error(
+      "not inside a git repository — cannot write .shepherd marker",
+    );
   }
   fs.writeFileSync(file, JSON.stringify({ workspace: slug }) + "\n", "utf8");
 }

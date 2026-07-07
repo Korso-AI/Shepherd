@@ -37,6 +37,11 @@ spec:
                   name: your-team-token-secret
                   key: latest
 
+            # Set when the hub sits behind Cloud Run's load balancer so
+            # request.ip reflects the real client for pre-auth throttling.
+            - name: TRUST_PROXY
+              value: "true"
+
           # Liveness probe: Cloud Run will restart the container if /health
           # stops responding (requires Fastify /health route).
           livenessProbe:

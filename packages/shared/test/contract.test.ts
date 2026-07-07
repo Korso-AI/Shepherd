@@ -78,7 +78,7 @@ describe("WorkRequest", () => {
         sessionId: VALID_UUID,
         intent: "x",
         pathGlobs: [],
-      })
+      }),
     ).toThrow();
   });
 
@@ -86,7 +86,11 @@ describe("WorkRequest", () => {
   it("throws when pathGlobs has 65 entries", () => {
     const globs = Array.from({ length: 65 }, (_, i) => `src/file${i}.ts`);
     expect(() =>
-      WorkRequest.parse({ sessionId: VALID_UUID, intent: "x", pathGlobs: globs })
+      WorkRequest.parse({
+        sessionId: VALID_UUID,
+        intent: "x",
+        pathGlobs: globs,
+      }),
     ).toThrow();
   });
 
@@ -98,7 +102,7 @@ describe("WorkRequest", () => {
         intent: "x",
         pathGlobs: ["src/**"],
         ttlSeconds: 0,
-      })
+      }),
     ).toThrow();
   });
 
@@ -109,13 +113,17 @@ describe("WorkRequest", () => {
         intent: "x",
         pathGlobs: ["src/**"],
         ttlSeconds: -5,
-      })
+      }),
     ).toThrow();
   });
 
   it("throws when sessionId is not a uuid", () => {
     expect(() =>
-      WorkRequest.parse({ sessionId: "not-a-uuid", intent: "x", pathGlobs: ["src/**"] })
+      WorkRequest.parse({
+        sessionId: "not-a-uuid",
+        intent: "x",
+        pathGlobs: ["src/**"],
+      }),
     ).toThrow();
   });
 });
@@ -159,20 +167,26 @@ describe("AnnounceRequest", () => {
     });
     expect(result.target).toBe("Alice Chen");
     // Absent => broadcast, same as the legacy fields.
-    expect(AnnounceRequest.parse({ sessionId: VALID_UUID, body: "b" }).target).toBeUndefined();
+    expect(
+      AnnounceRequest.parse({ sessionId: VALID_UUID, body: "b" }).target,
+    ).toBeUndefined();
     // Empty target is malformed (broadcast is expressed by omission/null).
     expect(() =>
-      AnnounceRequest.parse({ sessionId: VALID_UUID, body: "b", target: "" })
+      AnnounceRequest.parse({ sessionId: VALID_UUID, body: "b", target: "" }),
     ).toThrow();
   });
 
   it("throws when body exceeds 8192 characters", () => {
     const body = "a".repeat(8193);
-    expect(() => AnnounceRequest.parse({ sessionId: VALID_UUID, body })).toThrow();
+    expect(() =>
+      AnnounceRequest.parse({ sessionId: VALID_UUID, body }),
+    ).toThrow();
   });
 
   it("throws when body is empty", () => {
-    expect(() => AnnounceRequest.parse({ sessionId: VALID_UUID, body: "" })).toThrow();
+    expect(() =>
+      AnnounceRequest.parse({ sessionId: VALID_UUID, body: "" }),
+    ).toThrow();
   });
 });
 
@@ -220,7 +234,7 @@ describe("DoneRequest", () => {
 
   it("throws when workItemId is not a uuid", () => {
     expect(() =>
-      DoneRequest.parse({ sessionId: VALID_UUID, workItemId: "not-a-uuid" })
+      DoneRequest.parse({ sessionId: VALID_UUID, workItemId: "not-a-uuid" }),
     ).toThrow();
   });
 });
@@ -318,7 +332,10 @@ describe("Agent input shapes", () => {
 // ---------------------------------------------------------------------------
 describe("JoinResponse", () => {
   it("parses a valid join response", () => {
-    const result = JoinResponse.parse({ agentName: "RedDragon", sessionId: VALID_UUID });
+    const result = JoinResponse.parse({
+      agentName: "RedDragon",
+      sessionId: VALID_UUID,
+    });
     expect(result.agentName).toBe("RedDragon");
   });
 });
@@ -401,13 +418,13 @@ describe("ChangeRecord", () => {
 
   it("throws when kind is outside the enum", () => {
     expect(() =>
-      ChangeRecord.parse({ ...validChangeRecord, kind: "staged" })
+      ChangeRecord.parse({ ...validChangeRecord, kind: "staged" }),
     ).toThrow();
   });
 
   it("throws when paths is an empty array", () => {
     expect(() =>
-      ChangeRecord.parse({ ...validChangeRecord, paths: [] })
+      ChangeRecord.parse({ ...validChangeRecord, paths: [] }),
     ).toThrow();
   });
 });
@@ -461,7 +478,12 @@ describe("ChangeReport", () => {
   it("throws when entries exceeds 600", () => {
     const entries = Array.from({ length: 601 }, () => oneCommitted);
     expect(() =>
-      ChangeReport.parse({ branch: "b", baseBranch: "main", head: "h", entries })
+      ChangeReport.parse({
+        branch: "b",
+        baseBranch: "main",
+        head: "h",
+        entries,
+      }),
     ).toThrow();
   });
 
@@ -472,8 +494,10 @@ describe("ChangeReport", () => {
         branch: "b",
         baseBranch: "main",
         head: "h",
-        entries: [{ kind: "committed", sha: "abc", message: "m", paths: bigPaths }],
-      })
+        entries: [
+          { kind: "committed", sha: "abc", message: "m", paths: bigPaths },
+        ],
+      }),
     ).toThrow();
   });
 
@@ -484,7 +508,7 @@ describe("ChangeReport", () => {
         baseBranch: "main",
         head: "h",
         entries: [{ kind: "committed", sha: "abc", message: "m", paths: [] }],
-      })
+      }),
     ).toThrow();
   });
 
@@ -494,20 +518,31 @@ describe("ChangeReport", () => {
         branch: "b",
         baseBranch: "main",
         head: "h",
-        entries: [{ kind: "staged", sha: null, message: null, paths: ["f.ts"] }],
-      })
+        entries: [
+          { kind: "staged", sha: null, message: null, paths: ["f.ts"] },
+        ],
+      }),
     ).toThrow();
   });
 
   it("rejects a non-hex / flag-like commit sha (argument-injection guard, SEC-1)", () => {
-    for (const badSha of ["--output=/tmp/pwn", "-rf", "HEAD", "abc;rm", "z".repeat(8), "ab"]) {
+    for (const badSha of [
+      "--output=/tmp/pwn",
+      "-rf",
+      "HEAD",
+      "abc;rm",
+      "z".repeat(8),
+      "ab",
+    ]) {
       expect(() =>
         ChangeReport.parse({
           branch: "b",
           baseBranch: "main",
           head: "h",
-          entries: [{ kind: "committed", sha: badSha, message: "m", paths: ["f.ts"] }],
-        })
+          entries: [
+            { kind: "committed", sha: badSha, message: "m", paths: ["f.ts"] },
+          ],
+        }),
       ).toThrow();
     }
   });
@@ -519,7 +554,12 @@ describe("ChangeReport", () => {
       head: "h",
       entries: [
         { kind: "committed", sha: "deadbeef", message: "m", paths: ["f.ts"] },
-        { kind: "committed", sha: "a".repeat(40), message: "m", paths: ["g.ts"] },
+        {
+          kind: "committed",
+          sha: "a".repeat(40),
+          message: "m",
+          paths: ["g.ts"],
+        },
       ],
     });
     expect(result.entries).toHaveLength(2);
@@ -670,7 +710,10 @@ describe("HeartbeatRequest", () => {
   });
 
   it("accepts an optional deliverAnnouncements flag", () => {
-    const on = HeartbeatRequest.parse({ sessionId: VALID_UUID, deliverAnnouncements: true });
+    const on = HeartbeatRequest.parse({
+      sessionId: VALID_UUID,
+      deliverAnnouncements: true,
+    });
     expect(on.deliverAnnouncements).toBe(true);
     // Absent by default (old clients never send it).
     const off = HeartbeatRequest.parse({ sessionId: VALID_UUID });
@@ -809,7 +852,7 @@ describe("WorkspaceLandscapeResponse", () => {
         tasks: [],
         announcements: [],
         serverTime: VALID_ISO,
-      })
+      }),
     ).toThrow();
   });
 
@@ -819,7 +862,7 @@ describe("WorkspaceLandscapeResponse", () => {
         agents: [],
         tasks: [],
         announcements: [],
-      })
+      }),
     ).toThrow();
   });
 });
@@ -844,23 +887,37 @@ describe("WorkspaceTask", () => {
   it("rejects an unknown status", () => {
     expect(() =>
       WorkspaceTask.parse({
-        agentName: "x", program: "p", model: null, repo: "r",
-        intent: "i", pathGlobs: [], status: "paused",
-        createdAt: "2026-06-25T12:00:00.000Z", endedAt: null,
-      })
+        agentName: "x",
+        program: "p",
+        model: null,
+        repo: "r",
+        intent: "i",
+        pathGlobs: [],
+        status: "paused",
+        createdAt: "2026-06-25T12:00:00.000Z",
+        endedAt: null,
+      }),
     ).toThrow();
   });
 
   it("WorkspaceAnnouncement defaults fromAdmin to false and parses true", () => {
     const agentMsg = WorkspaceAnnouncement.parse({
-      fromAgentName: "alice", fromHuman: "Alice", body: "hi",
-      targetAgentName: null, repo: "r", createdAt: "2026-06-25T12:00:00.000Z",
+      fromAgentName: "alice",
+      fromHuman: "Alice",
+      body: "hi",
+      targetAgentName: null,
+      repo: "r",
+      createdAt: "2026-06-25T12:00:00.000Z",
     });
     expect(agentMsg.fromAdmin).toBe(false);
 
     const adminMsg = WorkspaceAnnouncement.parse({
-      fromAgentName: "admin@x.com", fromHuman: "admin@x.com", body: "hi",
-      targetAgentName: "alice", repo: "r", fromAdmin: true,
+      fromAgentName: "admin@x.com",
+      fromHuman: "admin@x.com",
+      body: "hi",
+      targetAgentName: "alice",
+      repo: "r",
+      fromAdmin: true,
       createdAt: "2026-06-25T12:00:00.000Z",
     });
     expect(adminMsg.fromAdmin).toBe(true);
@@ -877,8 +934,13 @@ describe("WorkspaceTask", () => {
     });
 
     it("accepts a DM with a target and a repo-scoped broadcast", () => {
-      expect(WorkspaceAnnounceRequest.parse({ body: "hi", targetAgentName: "alice" }).targetAgentName).toBe("alice");
-      expect(WorkspaceAnnounceRequest.parse({ body: "hi", repo: "org/repo" }).repo).toBe("org/repo");
+      expect(
+        WorkspaceAnnounceRequest.parse({ body: "hi", targetAgentName: "alice" })
+          .targetAgentName,
+      ).toBe("alice");
+      expect(
+        WorkspaceAnnounceRequest.parse({ body: "hi", repo: "org/repo" }).repo,
+      ).toBe("org/repo");
     });
 
     it("rejects an empty body", () => {
@@ -889,17 +951,32 @@ describe("WorkspaceTask", () => {
   it("round-trips a landscape response with tasks + repo on announcements", () => {
     const payload = {
       agents: [],
-      tasks: [{
-        agentName: "alice", program: "human", model: null, repo: "my-repo",
-        intent: "fix login", pathGlobs: ["src/login/**"], status: "done",
-        createdAt: "2026-06-25T11:00:00.000Z", endedAt: "2026-06-25T11:22:00.000Z",
-      }],
-      announcements: [{
-        fromAgentName: "alice", fromHuman: "Alice", body: "heads up",
-        targetAgentName: null, repo: "my-repo", fromAdmin: false, toAdmin: false,
-        targetMemberName: null,
-        createdAt: "2026-06-25T11:30:00.000Z",
-      }],
+      tasks: [
+        {
+          agentName: "alice",
+          program: "human",
+          model: null,
+          repo: "my-repo",
+          intent: "fix login",
+          pathGlobs: ["src/login/**"],
+          status: "done",
+          createdAt: "2026-06-25T11:00:00.000Z",
+          endedAt: "2026-06-25T11:22:00.000Z",
+        },
+      ],
+      announcements: [
+        {
+          fromAgentName: "alice",
+          fromHuman: "Alice",
+          body: "heads up",
+          targetAgentName: null,
+          repo: "my-repo",
+          fromAdmin: false,
+          toAdmin: false,
+          targetMemberName: null,
+          createdAt: "2026-06-25T11:30:00.000Z",
+        },
+      ],
       serverTime: "2026-06-25T12:00:00.000Z",
     };
     expect(WorkspaceLandscapeResponse.parse(payload)).toEqual(payload);
@@ -927,13 +1004,18 @@ describe("CreateInviteRequest", () => {
     // The selectable-role surface was removed; a stray `role` is simply stripped
     // (Zod's default object behavior) rather than honored, so callers cannot mint
     // admin invites through the contract.
-    const r = CreateInviteRequest.parse({ role: "admin" } as Record<string, unknown>);
+    const r = CreateInviteRequest.parse({ role: "admin" } as Record<
+      string,
+      unknown
+    >);
     expect((r as Record<string, unknown>)["role"]).toBeUndefined();
   });
 
   it("rejects a non-positive / non-integer maxUses", () => {
     expect(CreateInviteRequest.safeParse({ maxUses: 0 }).success).toBe(false);
-    expect(CreateInviteRequest.safeParse({ expiresInDays: -1 }).success).toBe(false);
+    expect(CreateInviteRequest.safeParse({ expiresInDays: -1 }).success).toBe(
+      false,
+    );
     expect(CreateInviteRequest.safeParse({ maxUses: 1.5 }).success).toBe(false);
   });
 });
@@ -950,47 +1032,83 @@ describe("MintTokenResponse", () => {
   });
 
   it("rejects a non-string token", () => {
-    expect(MintTokenResponse.safeParse({ token: 123, id: "tok_1" }).success).toBe(false);
+    expect(
+      MintTokenResponse.safeParse({ token: 123, id: "tok_1" }).success,
+    ).toBe(false);
   });
 });
 
 describe("WorkspaceSummary", () => {
   it("parses a workspace summary with a valid role", () => {
-    const r = WorkspaceSummary.parse({ id: "w1", slug: "acme", name: "Acme", role: "member", isOwner: false });
+    const r = WorkspaceSummary.parse({
+      id: "w1",
+      slug: "acme",
+      name: "Acme",
+      role: "member",
+      isOwner: false,
+    });
     expect(r.role).toBe("member");
     expect(r.isOwner).toBe(false);
   });
 
   it("rejects a role outside the enum", () => {
-    expect(WorkspaceSummary.safeParse({ id: "w1", slug: "acme", name: "Acme", role: "guest", isOwner: false }).success).toBe(false);
+    expect(
+      WorkspaceSummary.safeParse({
+        id: "w1",
+        slug: "acme",
+        name: "Acme",
+        role: "guest",
+        isOwner: false,
+      }).success,
+    ).toBe(false);
   });
 
   it("requires isOwner", () => {
-    expect(WorkspaceSummary.safeParse({ id: "w1", slug: "acme", name: "Acme", role: "admin" }).success).toBe(false);
+    expect(
+      WorkspaceSummary.safeParse({
+        id: "w1",
+        slug: "acme",
+        name: "Acme",
+        role: "admin",
+      }).success,
+    ).toBe(false);
   });
 });
 
 describe("MemberSummary", () => {
   it("parses a member with an isOwner flag", () => {
     const r = MemberSummary.parse({
-      accountId: "acc_1", displayName: "Ada", githubLogin: null, email: null,
-      avatarUrl: null, role: "admin", isOwner: true,
+      accountId: "acc_1",
+      displayName: "Ada",
+      githubLogin: null,
+      email: null,
+      avatarUrl: null,
+      role: "admin",
+      isOwner: true,
     });
     expect(r.isOwner).toBe(true);
   });
 
   it("requires isOwner", () => {
-    expect(MemberSummary.safeParse({
-      accountId: "acc_1", displayName: null, githubLogin: null, email: null,
-      avatarUrl: null, role: "member",
-    }).success).toBe(false);
+    expect(
+      MemberSummary.safeParse({
+        accountId: "acc_1",
+        displayName: null,
+        githubLogin: null,
+        email: null,
+        avatarUrl: null,
+        role: "member",
+      }).success,
+    ).toBe(false);
   });
 });
 
 describe("SetMemberRole / TransferOwnership", () => {
   it("SetMemberRoleRequest accepts a valid role and rejects others", () => {
     expect(SetMemberRoleRequest.parse({ role: "admin" }).role).toBe("admin");
-    expect(SetMemberRoleRequest.safeParse({ role: "owner" }).success).toBe(false);
+    expect(SetMemberRoleRequest.safeParse({ role: "owner" }).success).toBe(
+      false,
+    );
   });
 
   it("SetMemberRoleResponse carries ok + the new role", () => {
@@ -1000,8 +1118,12 @@ describe("SetMemberRole / TransferOwnership", () => {
   });
 
   it("TransferOwnershipRequest requires a non-empty accountId", () => {
-    expect(TransferOwnershipRequest.parse({ accountId: "acc_2" }).accountId).toBe("acc_2");
-    expect(TransferOwnershipRequest.safeParse({ accountId: "" }).success).toBe(false);
+    expect(
+      TransferOwnershipRequest.parse({ accountId: "acc_2" }).accountId,
+    ).toBe("acc_2");
+    expect(TransferOwnershipRequest.safeParse({ accountId: "" }).success).toBe(
+      false,
+    );
   });
 
   it("TransferOwnershipResponse is an ok marker", () => {
@@ -1012,7 +1134,11 @@ describe("SetMemberRole / TransferOwnership", () => {
 describe("TokenSummary", () => {
   it("parses with nullable lastUsedAt / revokedAt", () => {
     const r = TokenSummary.parse({
-      id: "t1", name: null, lastUsedAt: null, createdAt: VALID_ISO, revokedAt: null,
+      id: "t1",
+      name: null,
+      lastUsedAt: null,
+      createdAt: VALID_ISO,
+      revokedAt: null,
     });
     expect(r.name).toBeNull();
     expect(r.lastUsedAt).toBeNull();
@@ -1021,8 +1147,13 @@ describe("TokenSummary", () => {
 
   it("never carries a hash or raw token (excess keys are stripped, not surfaced)", () => {
     const r = TokenSummary.parse({
-      id: "t1", name: "ci", lastUsedAt: VALID_ISO, createdAt: VALID_ISO, revokedAt: null,
-      hash: "secret", token: "shp_leak",
+      id: "t1",
+      name: "ci",
+      lastUsedAt: VALID_ISO,
+      createdAt: VALID_ISO,
+      revokedAt: null,
+      hash: "secret",
+      token: "shp_leak",
     } as Record<string, unknown>);
     expect("hash" in r).toBe(false);
     expect("token" in r).toBe(false);
@@ -1031,39 +1162,62 @@ describe("TokenSummary", () => {
 
 describe("InviteResponse", () => {
   it("parses with a null expiresAt (never-expiring invite)", () => {
-    const r = InviteResponse.parse({ code: "INV123", expiresAt: null, maxUses: 5, useCount: 0 });
+    const r = InviteResponse.parse({
+      code: "INV123",
+      expiresAt: null,
+      maxUses: 5,
+      useCount: 0,
+    });
     expect(r.expiresAt).toBeNull();
     expect(r.useCount).toBe(0);
   });
 
   it("parses with an ISO expiresAt", () => {
-    const r = InviteResponse.parse({ code: "INV123", expiresAt: VALID_ISO, maxUses: 1, useCount: 1 });
+    const r = InviteResponse.parse({
+      code: "INV123",
+      expiresAt: VALID_ISO,
+      maxUses: 1,
+      useCount: 1,
+    });
     expect(r.expiresAt).toBe(VALID_ISO);
   });
 });
 
 describe("FeedbackRequest", () => {
   it("parses a valid bug report", () => {
-    const r = FeedbackRequest.parse({ type: "bug", body: "the button is broken" });
+    const r = FeedbackRequest.parse({
+      type: "bug",
+      body: "the button is broken",
+    });
     expect(r.type).toBe("bug");
     expect(r.body).toBe("the button is broken");
   });
 
   it("accepts suggestion and other types", () => {
-    expect(FeedbackRequest.parse({ type: "suggestion", body: "x" }).type).toBe("suggestion");
-    expect(FeedbackRequest.parse({ type: "other", body: "x" }).type).toBe("other");
+    expect(FeedbackRequest.parse({ type: "suggestion", body: "x" }).type).toBe(
+      "suggestion",
+    );
+    expect(FeedbackRequest.parse({ type: "other", body: "x" }).type).toBe(
+      "other",
+    );
   });
 
   it("rejects a type outside the enum", () => {
-    expect(FeedbackRequest.safeParse({ type: "praise", body: "x" }).success).toBe(false);
+    expect(
+      FeedbackRequest.safeParse({ type: "praise", body: "x" }).success,
+    ).toBe(false);
   });
 
   it("rejects an empty body", () => {
-    expect(FeedbackRequest.safeParse({ type: "bug", body: "" }).success).toBe(false);
+    expect(FeedbackRequest.safeParse({ type: "bug", body: "" }).success).toBe(
+      false,
+    );
   });
 
   it("rejects a whitespace-only body", () => {
-    expect(FeedbackRequest.safeParse({ type: "bug", body: "   " }).success).toBe(false);
+    expect(
+      FeedbackRequest.safeParse({ type: "bug", body: "   " }).success,
+    ).toBe(false);
   });
 
   it("trims the body", () => {
@@ -1072,7 +1226,10 @@ describe("FeedbackRequest", () => {
   });
 
   it("rejects a body over 4000 characters", () => {
-    expect(FeedbackRequest.safeParse({ type: "bug", body: "a".repeat(4001) }).success).toBe(false);
+    expect(
+      FeedbackRequest.safeParse({ type: "bug", body: "a".repeat(4001) })
+        .success,
+    ).toBe(false);
   });
 });
 
@@ -1108,7 +1265,7 @@ describe("FeedbackRequest context", () => {
         type: "bug",
         body: "x",
         context: { userAgent: "u".repeat(513) },
-      })
+      }),
     ).toThrow();
   });
 });
@@ -1121,6 +1278,8 @@ describe("FeedbackResponse", () => {
   });
 
   it("throws when ok is false", () => {
-    expect(() => FeedbackResponse.parse({ ok: false, id: VALID_UUID })).toThrow();
+    expect(() =>
+      FeedbackResponse.parse({ ok: false, id: VALID_UUID }),
+    ).toThrow();
   });
 });

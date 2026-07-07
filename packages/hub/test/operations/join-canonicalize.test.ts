@@ -40,64 +40,84 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-describe.skipIf(!dbAvailable)("join — repo canonicalization at ingestion", () => {
-  let pool: pg.Pool;
+describe.skipIf(!dbAvailable)(
+  "join — repo canonicalization at ingestion",
+  () => {
+    let pool: pg.Pool;
 
-  beforeAll(async () => {
-    pool = createTestPool();
-    await runTestMigrations(pool);
-    const { rows } = await pool.query<{ id: string }>(
-      `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      ["test-ws", "test-ws"]
-    );
-    workspaceId = rows[0]!.id;
-    tenant = { workspaceId };
-  });
+    beforeAll(async () => {
+      pool = createTestPool();
+      await runTestMigrations(pool);
+      const { rows } = await pool.query<{ id: string }>(
+        `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+        ["test-ws", "test-ws"],
+      );
+      workspaceId = rows[0]!.id;
+      tenant = { workspaceId };
+    });
 
-  afterEach(async () => {
-    await truncateAll(pool);
-    resetContext();
-  });
+    afterEach(async () => {
+      await truncateAll(pool);
+      resetContext();
+    });
 
-  afterAll(async () => {
-    await pool.end();
-  });
+    afterAll(async () => {
+      await pool.end();
+    });
 
-  async function sessionRepo(sessionId: string): Promise<string> {
-    const { rows } = await pool.query<{ repo: string }>(
-      "SELECT repo FROM sessions WHERE id = $1",
-      [sessionId]
-    );
-    return rows[0]!.repo;
-  }
+    async function sessionRepo(sessionId: string): Promise<string> {
+      const { rows } = await pool.query<{ repo: string }>(
+        "SELECT repo FROM sessions WHERE id = $1",
+        [sessionId],
+      );
+      return rows[0]!.repo;
+    }
 
-  it.each([
-    ["Acme/widgets", "widgets"],
-    ["widgets", "widgets"],
-    ["git@github.com:Acme/widgets.git", "widgets"],
-    ["https://github.com/Acme/Widgets", "widgets"],
-  ])("stores %j as %j on the session", async (input, expected) => {
-    initContext({ pool, config: makeTestConfig() });
-    const { sessionId } = await join({
-      workspace: "test-ws",
-      repo: input,
-      branch: "main",
-      human: "Alex Rivera",
-      program: "claude",
-    }, tenant);
-    expect(await sessionRepo(sessionId)).toBe(expected);
-  });
+    it.each([
+      ["Acme/widgets", "widgets"],
+      ["widgets", "widgets"],
+      ["git@github.com:Acme/widgets.git", "widgets"],
+      ["https://github.com/Acme/Widgets", "widgets"],
+    ])("stores %j as %j on the session", async (input, expected) => {
+      initContext({ pool, config: makeTestConfig() });
+      const { sessionId } = await join(
+        {
+          workspace: "test-ws",
+          repo: input,
+          branch: "main",
+          human: "Alex Rivera",
+          program: "claude",
+        },
+        tenant,
+      );
+      expect(await sessionRepo(sessionId)).toBe(expected);
+    });
 
-  it("converges owner-form and bare-form clients onto the same key", async () => {
-    initContext({ pool, config: makeTestConfig() });
-    const a = await join({
-      workspace: "test-ws", repo: "Acme/widgets", branch: "main",
-      human: "Alex", program: "claude",
-    }, tenant);
-    const b = await join({
-      workspace: "test-ws", repo: "widgets", branch: "main",
-      human: "Sam", program: "claude",
-    }, tenant);
-    expect(await sessionRepo(a.sessionId)).toBe(await sessionRepo(b.sessionId));
-  });
-});
+    it("converges owner-form and bare-form clients onto the same key", async () => {
+      initContext({ pool, config: makeTestConfig() });
+      const a = await join(
+        {
+          workspace: "test-ws",
+          repo: "Acme/widgets",
+          branch: "main",
+          human: "Alex",
+          program: "claude",
+        },
+        tenant,
+      );
+      const b = await join(
+        {
+          workspace: "test-ws",
+          repo: "widgets",
+          branch: "main",
+          human: "Sam",
+          program: "claude",
+        },
+        tenant,
+      );
+      expect(await sessionRepo(a.sessionId)).toBe(
+        await sessionRepo(b.sessionId),
+      );
+    });
+  },
+);

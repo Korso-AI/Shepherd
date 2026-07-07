@@ -114,7 +114,10 @@ export interface MentionMatch {
  * @param caretIndex - The caret position within `text`.
  * @returns The mention slice and query, or `null` when not in a mention.
  */
-export function parseMention(text: string, caretIndex: number): MentionMatch | null {
+export function parseMention(
+  text: string,
+  caretIndex: number,
+): MentionMatch | null {
   const before = text.slice(0, caretIndex);
   const m = before.match(new RegExp(`(?:^|\\s)@([${MENTION_CHARS}]*)$`));
   if (!m) return null;
@@ -132,7 +135,10 @@ export function parseMention(text: string, caretIndex: number): MentionMatch | n
  * @param knownNames - Canonical agent names to resolve against (case-insensitive).
  * @returns The canonical name of the first matching mention, or `null`.
  */
-export function extractTarget(text: string, knownNames: string[]): string | null {
+export function extractTarget(
+  text: string,
+  knownNames: string[],
+): string | null {
   const re = new RegExp(`(?:^|\\s)@([${MENTION_CHARS}]+)`, "g");
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
@@ -184,7 +190,10 @@ export function boardRepos(board: {
  * @param selected - The selected repo, or `null`/`"__all__"` for all.
  * @returns Whether the item belongs to the current board filter.
  */
-export function matchesRepo(item: { repo: string }, selected: string | null): boolean {
+export function matchesRepo(
+  item: { repo: string },
+  selected: string | null,
+): boolean {
   return selected === null || selected === "__all__" || item.repo === selected;
 }
 
@@ -221,7 +230,9 @@ export function mentionableAgents(
  *   {@link WorkspaceTaskT}); assumed newest-first.
  * @returns The repo to select on first load, or `null` when there are no tasks.
  */
-export function defaultRepo(tasks: Pick<WorkspaceTaskT, "repo" | "status">[]): string | null {
+export function defaultRepo(
+  tasks: Pick<WorkspaceTaskT, "repo" | "status">[],
+): string | null {
   const active = tasks.find((t) => t.status === "active");
   if (active) return active.repo;
   return tasks.length ? tasks[0].repo : null;
@@ -244,9 +255,14 @@ export function statusLabel(status: string): string {
  * @param endedIso - The task's end instant, or `null` while still active.
  * @returns A duration label, or the empty string for an unfinished task.
  */
-export function formatActiveDuration(createdIso: string, endedIso: string | null): string {
+export function formatActiveDuration(
+  createdIso: string,
+  endedIso: string | null,
+): string {
   if (!endedIso) return "";
-  const secs = Math.floor((Date.parse(endedIso) - Date.parse(createdIso)) / 1000);
+  const secs = Math.floor(
+    (Date.parse(endedIso) - Date.parse(createdIso)) / 1000,
+  );
   const mins = Math.floor(secs / 60);
   if (mins < 60) return `active ${mins}m`;
   return `active ${Math.floor(mins / 60)}h`;
@@ -286,7 +302,10 @@ function normalizeGlob(pattern: string): string[] {
   const out: string[] = [];
   for (const seg of p.split("/")) {
     if (seg === "" || seg === ".") continue;
-    if (seg === "..") { if (out.length) out.pop(); continue; }
+    if (seg === "..") {
+      if (out.length) out.pop();
+      continue;
+    }
     out.push(seg);
   }
   return out;
@@ -326,7 +345,8 @@ function patternCovers(a: string[], b: string[]): boolean {
     const key = i * (b.length + 1) + j;
     const cached = memo.get(key);
     if (cached !== undefined) return cached;
-    const ah = a[i], bh = b[j];
+    const ah = a[i],
+      bh = b[j];
     let res: boolean;
     if (ah === "**") {
       res = go(i + 1, j) || go(i, j + 1); // consume zero, or one B segment
@@ -406,21 +426,25 @@ export interface ClaimGroup<T extends ClaimLike = ClaimLike> {
  *   {@link WorkspaceTaskT}).
  * @returns One {@link ClaimGroup} per agent, newest-claim-first.
  */
-export function groupActiveClaims<T extends ClaimLike>(tasks: T[]): ClaimGroup<T>[] {
+export function groupActiveClaims<T extends ClaimLike>(
+  tasks: T[],
+): ClaimGroup<T>[] {
   const byAgent = new Map<string, T[]>();
   for (const t of tasks) {
     if (!byAgent.has(t.agentName)) byAgent.set(t.agentName, []);
     byAgent.get(t.agentName)!.push(t);
   }
-  const newestFirst = (a: T, b: T): number => b.createdAt.localeCompare(a.createdAt);
+  const newestFirst = (a: T, b: T): number =>
+    b.createdAt.localeCompare(a.createdAt);
   const groups: ClaimGroup<T>[] = [];
   for (const [agentName, claims] of byAgent) {
     const sorted = [...claims].sort(newestFirst);
     const isNarrower = sorted.map((c) =>
-      sorted.some((o) =>
-        o !== c &&
-        globsCover(o.pathGlobs, c.pathGlobs) &&
-        !globsCover(c.pathGlobs, o.pathGlobs),
+      sorted.some(
+        (o) =>
+          o !== c &&
+          globsCover(o.pathGlobs, c.pathGlobs) &&
+          !globsCover(c.pathGlobs, o.pathGlobs),
       ),
     );
     const head = sorted[0];

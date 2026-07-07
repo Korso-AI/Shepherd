@@ -39,7 +39,11 @@ interface CapturedTool {
 function makeFakeServer() {
   const tools: Record<string, CapturedTool> = {};
   const server = {
-    registerTool(name: string, def: ToolDef, handler: ToolHandler): CapturedTool {
+    registerTool(
+      name: string,
+      def: ToolDef,
+      handler: ToolHandler,
+    ): CapturedTool {
       const tool: CapturedTool = {
         name,
         def,
@@ -68,7 +72,14 @@ function makeFakeServer() {
 // ---------------------------------------------------------------------------
 
 /** Every tool that must disappear in a declined repo. `link` never hides. */
-const GATED = ["work", "done", "announce", "sync", "unlink", "decline"] as const;
+const GATED = [
+  "work",
+  "done",
+  "announce",
+  "sync",
+  "unlink",
+  "decline",
+] as const;
 
 function freshRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "shepherd-surface-"));
@@ -127,7 +138,9 @@ const linkedContext: JoinContext = {
 function setup(context: JoinContext) {
   const post = vi.fn().mockResolvedValue(JOIN_OK);
   const get = vi.fn().mockResolvedValue({
-    workspaces: [{ id: "id-0", slug: "foo", name: "foo", role: "member" as const }],
+    workspaces: [
+      { id: "id-0", slug: "foo", name: "foo", role: "member" as const },
+    ],
   });
   const hubClient = { post, get } as unknown as HubClient;
   const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };

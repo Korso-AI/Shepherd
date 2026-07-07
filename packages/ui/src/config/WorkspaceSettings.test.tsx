@@ -65,18 +65,24 @@ describe("WorkspaceSettings", () => {
     const onLeft = vi.fn();
     renderWorkspace({ onLeft });
 
-    await userEvent.click(screen.getByRole("button", { name: /leave workspace/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /leave workspace/i }),
+    );
 
     await waitFor(() => expect(client.leave).toHaveBeenCalledWith("ws_1"));
     await waitFor(() => expect(onLeft).toHaveBeenCalledTimes(1));
   });
 
   it("surfaces an error and does NOT call onLeft when leave is rejected", async () => {
-    client.leave = vi.fn().mockRejectedValue(new Error("cannot leave as the last admin"));
+    client.leave = vi
+      .fn()
+      .mockRejectedValue(new Error("cannot leave as the last admin"));
     const onLeft = vi.fn();
     renderWorkspace({ onLeft });
 
-    await userEvent.click(screen.getByRole("button", { name: /leave workspace/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /leave workspace/i }),
+    );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/last admin/i);
     expect(onLeft).not.toHaveBeenCalled();
@@ -106,8 +112,12 @@ describe("WorkspaceSettings", () => {
   it("does NOT show the Delete section for a non-admin member", () => {
     renderWorkspace({ workspace: { ...WS, role: "member" } });
     // The leave button is present; the delete trigger is not.
-    expect(screen.getByRole("button", { name: /leave workspace/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /delete workspace/i })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /leave workspace/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /delete workspace/i }),
+    ).toBeNull();
   });
 
   it("requires typing the exact workspace name before Delete is enabled, then deletes and calls onDeleted", async () => {
@@ -116,9 +126,13 @@ describe("WorkspaceSettings", () => {
     renderWorkspace({ onDeleted });
 
     // Open the confirm modal from the Delete section trigger.
-    await userEvent.click(screen.getByRole("button", { name: /delete workspace/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /delete workspace/i }),
+    );
     const dialog = screen.getByRole("dialog");
-    const confirm = within(dialog).getByRole("button", { name: /delete workspace/i });
+    const confirm = within(dialog).getByRole("button", {
+      name: /delete workspace/i,
+    });
 
     // Disabled until the exact name is typed.
     expect(confirm).toBeDisabled();
@@ -131,17 +145,23 @@ describe("WorkspaceSettings", () => {
     expect(confirm).toBeEnabled();
 
     await userEvent.click(confirm);
-    await waitFor(() => expect(client.deleteWorkspace).toHaveBeenCalledWith("ws_1"));
+    await waitFor(() =>
+      expect(client.deleteWorkspace).toHaveBeenCalledWith("ws_1"),
+    );
     await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
   });
 
   it("points the last admin at Delete when a leave is rejected with 409", async () => {
     client.leave = vi
       .fn()
-      .mockRejectedValue(new ShepherdClientError("HTTP 409: You are the last admin", 409));
+      .mockRejectedValue(
+        new ShepherdClientError("HTTP 409: You are the last admin", 409),
+      );
     renderWorkspace(); // WS.role === "admin"
 
-    await userEvent.click(screen.getByRole("button", { name: /leave workspace/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /leave workspace/i }),
+    );
 
     // The hint steers them to the Delete action below.
     expect(await screen.findByText(/delete it below/i)).toBeInTheDocument();

@@ -101,7 +101,9 @@ export interface ShepherdClient {
   /** GET the caller's workspaces, each tagged with the caller's role. */
   listWorkspaces(): Promise<ListWorkspacesResponseT>;
   /** POST a new workspace; the caller becomes its admin. */
-  createWorkspace(body: CreateWorkspaceRequestT): Promise<CreateWorkspaceResponseT>;
+  createWorkspace(
+    body: CreateWorkspaceRequestT,
+  ): Promise<CreateWorkspaceResponseT>;
   /** DELETE a workspace and ALL its data (admin only). Permanent, irreversible. */
   deleteWorkspace(workspaceId: string): Promise<DeleteWorkspaceResponseT>;
   /**
@@ -113,7 +115,10 @@ export interface ShepherdClient {
   deleteAccount(): Promise<DeleteAccountResponseT>;
 
   /** POST a new agent token; the raw `shp_` value is returned exactly once. */
-  mintToken(workspaceId: string, body: MintTokenRequestT): Promise<MintTokenResponseT>;
+  mintToken(
+    workspaceId: string,
+    body: MintTokenRequestT,
+  ): Promise<MintTokenResponseT>;
   /** GET the workspace's token metadata (never the raw token). */
   listTokens(workspaceId: string): Promise<ListTokensResponseT>;
   /** DELETE (revoke) a token by id. */
@@ -127,9 +132,15 @@ export interface ShepherdClient {
   revokeAccountToken(id: string): Promise<void>;
 
   /** POST a new invite code for the workspace (admin only). */
-  createInvite(workspaceId: string, body: CreateInviteRequestT): Promise<InviteResponseT>;
+  createInvite(
+    workspaceId: string,
+    body: CreateInviteRequestT,
+  ): Promise<InviteResponseT>;
   /** POST a one-time-use invite emailed directly to an address (admin only). */
-  inviteByEmail(workspaceId: string, email: string): Promise<InviteByEmailResponseT>;
+  inviteByEmail(
+    workspaceId: string,
+    email: string,
+  ): Promise<InviteByEmailResponseT>;
   /** GET the workspace's PENDING email invites (sent, not yet redeemed). Admin only. */
   listEmailInvites(workspaceId: string): Promise<ListEmailInvitesResponseT>;
   /** POST to revoke an invite code (admin only). */
@@ -169,7 +180,10 @@ export interface ShepherdClient {
    * case — a validated workspace to attach), or the flat `/feedback` otherwise
    * (self-host, or a hosted caller with no workspace selected yet).
    */
-  submitFeedback(body: FeedbackRequestT, workspaceId?: string): Promise<FeedbackResponseT>;
+  submitFeedback(
+    body: FeedbackRequestT,
+    workspaceId?: string,
+  ): Promise<FeedbackResponseT>;
 
   // --- self-host singular aliases (implicit single workspace) -------------
   /** GET the unfiltered whole-workspace view (agents, tasks, announcements). */
@@ -242,7 +256,9 @@ async function readErrorDetail(res: Response): Promise<string> {
  * @param config - Base URL, optional injected auth, 401 hook, and timeout.
  * @returns A {@link ShepherdClient}.
  */
-export function createShepherdClient(config: ShepherdClientConfig): ShepherdClient {
+export function createShepherdClient(
+  config: ShepherdClientConfig,
+): ShepherdClient {
   // Strip a trailing slash so `${baseUrl}/workspace/...` never yields a double
   // slash regardless of how the host configured the origin. An empty baseUrl
   // stays "" so paths resolve root-relative (same-origin).
@@ -284,7 +300,7 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
       const authHeaders: Record<string, string> =
         typeof resolved === "string"
           ? { Authorization: resolved }
-          : resolved ?? {};
+          : (resolved ?? {});
       const init: RequestInit = {
         method,
         headers: { ...baseHeaders, ...authHeaders },
@@ -312,9 +328,7 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
     if (!res.ok) {
       const detail = await readErrorDetail(res);
       throw new ShepherdClientError(
-        detail !== ""
-          ? `HTTP ${res.status}: ${detail}`
-          : `HTTP ${res.status}`,
+        detail !== "" ? `HTTP ${res.status}: ${detail}` : `HTTP ${res.status}`,
         res.status,
       );
     }
@@ -349,7 +363,9 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
         schema: ListWorkspacesResponse,
       });
     },
-    createWorkspace(body: CreateWorkspaceRequestT): Promise<CreateWorkspaceResponseT> {
+    createWorkspace(
+      body: CreateWorkspaceRequestT,
+    ): Promise<CreateWorkspaceResponseT> {
       return request("POST", "/workspaces", {
         body,
         schema: CreateWorkspaceResponse,
@@ -366,7 +382,10 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
       });
     },
 
-    mintToken(workspaceId: string, body: MintTokenRequestT): Promise<MintTokenResponseT> {
+    mintToken(
+      workspaceId: string,
+      body: MintTokenRequestT,
+    ): Promise<MintTokenResponseT> {
       return request("POST", `/workspaces/${enc(workspaceId)}/tokens`, {
         body,
         schema: MintTokenResponse,
@@ -399,13 +418,19 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
       return request<void>("DELETE", `/tokens/${enc(id)}`);
     },
 
-    createInvite(workspaceId: string, body: CreateInviteRequestT): Promise<InviteResponseT> {
+    createInvite(
+      workspaceId: string,
+      body: CreateInviteRequestT,
+    ): Promise<InviteResponseT> {
       return request("POST", `/workspaces/${enc(workspaceId)}/invites`, {
         body,
         schema: InviteResponse,
       });
     },
-    inviteByEmail(workspaceId: string, email: string): Promise<InviteByEmailResponseT> {
+    inviteByEmail(
+      workspaceId: string,
+      email: string,
+    ): Promise<InviteByEmailResponseT> {
       return request("POST", `/workspaces/${enc(workspaceId)}/invites/email`, {
         body: { email },
         schema: InviteByEmailResponse,
@@ -444,19 +469,27 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
       accountId: string,
       role: RoleT,
     ): Promise<SetMemberRoleResponseT> {
-      return request("PATCH", `/workspaces/${enc(workspaceId)}/members/${enc(accountId)}/role`, {
-        body: { role },
-        schema: SetMemberRoleResponse,
-      });
+      return request(
+        "PATCH",
+        `/workspaces/${enc(workspaceId)}/members/${enc(accountId)}/role`,
+        {
+          body: { role },
+          schema: SetMemberRoleResponse,
+        },
+      );
     },
     transferOwnership(
       workspaceId: string,
       accountId: string,
     ): Promise<TransferOwnershipResponseT> {
-      return request("POST", `/workspaces/${enc(workspaceId)}/transfer-ownership`, {
-        body: { accountId },
-        schema: TransferOwnershipResponse,
-      });
+      return request(
+        "POST",
+        `/workspaces/${enc(workspaceId)}/transfer-ownership`,
+        {
+          body: { accountId },
+          schema: TransferOwnershipResponse,
+        },
+      );
     },
     leave(workspaceId: string): Promise<void> {
       return request<void>("POST", `/workspaces/${enc(workspaceId)}/leave`);
@@ -482,10 +515,14 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
       });
     },
 
-    submitFeedback(body: FeedbackRequestT, workspaceId?: string): Promise<FeedbackResponseT> {
-      const path = workspaceId !== undefined
-        ? `/workspaces/${enc(workspaceId)}/feedback`
-        : "/feedback";
+    submitFeedback(
+      body: FeedbackRequestT,
+      workspaceId?: string,
+    ): Promise<FeedbackResponseT> {
+      const path =
+        workspaceId !== undefined
+          ? `/workspaces/${enc(workspaceId)}/feedback`
+          : "/feedback";
       return request("POST", path, { body, schema: FeedbackResponse });
     },
 
@@ -497,7 +534,9 @@ export function createShepherdClient(config: ShepherdClientConfig): ShepherdClie
         schema: WorkspaceLandscapeResponse,
       }) as Promise<WorkspaceLandscapeResponseT>;
     },
-    announce(req: WorkspaceAnnounceRequestT): Promise<WorkspaceAnnounceResponseT> {
+    announce(
+      req: WorkspaceAnnounceRequestT,
+    ): Promise<WorkspaceAnnounceResponseT> {
       // The request body is NOT validated here — the caller owns input shape;
       // only the RESPONSE is parsed at the boundary.
       return request("POST", "/workspace/announce", {

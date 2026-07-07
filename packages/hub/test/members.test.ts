@@ -26,14 +26,7 @@
  * in afterEach.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -103,12 +96,12 @@ function bffAuthHeaders(accountId: string, extra: Record<string, string> = {}) {
 async function seedWorkspace(
   pool: pg.Pool,
   slug: string,
-  createdBy = "tester"
+  createdBy = "tester",
 ): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, $3)
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, created_by = EXCLUDED.created_by RETURNING id`,
-    [slug, slug, createdBy]
+    [slug, slug, createdBy],
   );
   return rows[0]!.id;
 }
@@ -117,11 +110,11 @@ async function seedWorkspace(
 async function roleOf(
   pool: pg.Pool,
   accountId: string,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<"admin" | "member" | null> {
   const { rows } = await pool.query<{ role: "admin" | "member" }>(
     `SELECT role FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-    [accountId, workspaceId]
+    [accountId, workspaceId],
   );
   return rows[0]?.role ?? null;
 }
@@ -130,7 +123,7 @@ async function roleOf(
 async function ownerOf(pool: pg.Pool, workspaceId: string): Promise<string> {
   const { rows } = await pool.query<{ created_by: string }>(
     `SELECT created_by FROM workspaces WHERE id = $1`,
-    [workspaceId]
+    [workspaceId],
   );
   return rows[0]!.created_by;
 }
@@ -140,12 +133,12 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -158,7 +151,7 @@ async function seedProfile(
     githubLogin?: string | null;
     email?: string | null;
     avatarUrl?: string | null;
-  } = {}
+  } = {},
 ): Promise<void> {
   await pool.query(
     `INSERT INTO account_profiles (account_id, display_name, github_login, email, avatar_url)
@@ -174,7 +167,7 @@ async function seedProfile(
       fields.githubLogin ?? null,
       fields.email ?? null,
       fields.avatarUrl ?? null,
-    ]
+    ],
   );
 }
 
@@ -183,12 +176,12 @@ async function seedToken(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  raw: string
+  raw: string,
 ): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES ($1, $2, $3, NULL) RETURNING id`,
-    [workspaceId, accountId, hashToken(raw)]
+    [workspaceId, accountId, hashToken(raw)],
   );
   return rows[0]!.id;
 }
@@ -197,7 +190,7 @@ async function seedToken(
 async function isRevoked(pool: pg.Pool, tokenId: string): Promise<boolean> {
   const { rows } = await pool.query<{ revoked_at: Date | null }>(
     `SELECT revoked_at FROM api_tokens WHERE id = $1`,
-    [tokenId]
+    [tokenId],
   );
   return rows[0]!.revoked_at !== null;
 }
@@ -206,11 +199,11 @@ async function isRevoked(pool: pg.Pool, tokenId: string): Promise<boolean> {
 async function isMember(
   pool: pg.Pool,
   accountId: string,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-    [accountId, workspaceId]
+    [accountId, workspaceId],
   );
   return rows.length > 0;
 }
@@ -325,7 +318,12 @@ describe.skipIf(!dbAvailable)(
       await seedMembership(pool, "acct-victim", otherWs, "member");
 
       const tokThis = await seedToken(pool, "acct-victim", wsId, "shp_this");
-      const tokOther = await seedToken(pool, "acct-victim", otherWs, "shp_other");
+      const tokOther = await seedToken(
+        pool,
+        "acct-victim",
+        otherWs,
+        "shp_other",
+      );
 
       const res = await app.inject({
         method: "DELETE",
@@ -507,8 +505,12 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(200);
       const body = ListMembersResponse.parse(res.json());
-      expect(body.members.find((m) => m.accountId === "acct-owner")!.isOwner).toBe(true);
-      expect(body.members.find((m) => m.accountId === "acct-bob")!.isOwner).toBe(false);
+      expect(
+        body.members.find((m) => m.accountId === "acct-owner")!.isOwner,
+      ).toBe(true);
+      expect(
+        body.members.find((m) => m.accountId === "acct-bob")!.isOwner,
+      ).toBe(false);
     });
 
     // --- PATCH /workspaces/:id/members/:accountId/role (owner-only) ----------
@@ -608,7 +610,11 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("a NON-owner cannot transfer ownership → 403, no change", async () => {
-      const wsId = await seedWorkspace(pool, "transfer-forbidden", "acct-owner");
+      const wsId = await seedWorkspace(
+        pool,
+        "transfer-forbidden",
+        "acct-owner",
+      );
       await seedMembership(pool, "acct-owner", wsId, "admin");
       await seedMembership(pool, "acct-admin-2", wsId, "admin");
       await seedMembership(pool, "acct-member", wsId, "member");
@@ -636,5 +642,5 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(404);
       expect(await ownerOf(pool, wsId)).toBe("acct-owner");
     });
-  }
+  },
 );

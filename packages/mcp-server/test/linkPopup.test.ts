@@ -15,11 +15,14 @@ function makeDeps(overrides?: {
 }) {
   const slugs = overrides?.slugs ?? ["team-alpha", "team-beta"];
   const listWorkspaces = vi.fn(
-    typeof slugs === "function" ? slugs : async () => slugs
+    typeof slugs === "function" ? slugs : async () => slugs,
   );
   const elicit =
     overrides?.elicit ??
-    vi.fn(async () => ({ action: "accept", content: { decision: "team-alpha" } }));
+    vi.fn(async () => ({
+      action: "accept",
+      content: { decision: "team-alpha" },
+    }));
   const linkWorkspace = vi.fn(async () => undefined);
   const neverAskAgain = vi.fn();
   return { listWorkspaces, elicit, linkWorkspace, neverAskAgain };
@@ -60,7 +63,9 @@ describe("offerLinkPopup", () => {
   });
 
   it("DECLINE action records NOTHING (accept-only: Codex auto-declines)", async () => {
-    const deps = makeDeps({ elicit: vi.fn(async () => ({ action: "decline" })) });
+    const deps = makeDeps({
+      elicit: vi.fn(async () => ({ action: "decline" })),
+    });
     const result = await run(deps);
 
     expect(result.outcome).toBe("unanswered");
@@ -69,7 +74,9 @@ describe("offerLinkPopup", () => {
   });
 
   it("CANCEL action records nothing (dismiss = ask again next session)", async () => {
-    const deps = makeDeps({ elicit: vi.fn(async () => ({ action: "cancel" })) });
+    const deps = makeDeps({
+      elicit: vi.fn(async () => ({ action: "cancel" })),
+    });
     const result = await run(deps);
 
     expect(result.outcome).toBe("unanswered");
@@ -91,7 +98,10 @@ describe("offerLinkPopup", () => {
 
   it("an accepted but unknown decision value records nothing", async () => {
     const deps = makeDeps({
-      elicit: vi.fn(async () => ({ action: "accept", content: { decision: "not-a-workspace" } })),
+      elicit: vi.fn(async () => ({
+        action: "accept",
+        content: { decision: "not-a-workspace" },
+      })),
     });
     const result = await run(deps);
 
@@ -135,7 +145,11 @@ describe("offerLinkPopup", () => {
     expect(decision.type).toBe("string");
     // The never-ask option is a VALUE inside the form, so clicking the dialog's
     // own Decline/Cancel buttons can never be mistaken for "don't ask again".
-    expect(decision.enum).toEqual(["team-alpha", "team-beta", NEVER_ASK_CHOICE]);
+    expect(decision.enum).toEqual([
+      "team-alpha",
+      "team-beta",
+      NEVER_ASK_CHOICE,
+    ]);
   });
 
   it("a linkWorkspace failure is contained (no throw) and reports unanswered", async () => {

@@ -53,7 +53,7 @@ import type { TenantContext } from "./tenant.js";
 export async function resolveSession(
   tx: pg.PoolClient,
   tenant: TenantContext,
-  sessionId: string
+  sessionId: string,
 ): Promise<SessionWithAgent> {
   if (tenant.workspaceId !== NO_ROUTE_WORKSPACE) {
     // Concrete workspace already resolved (legacy/workspace-scoped token or
@@ -73,7 +73,7 @@ export async function resolveSession(
   const membership = await findMembership(
     tx,
     requireAccountId(tenant),
-    session.workspaceId
+    session.workspaceId,
   );
   if (membership === null) {
     throw new UnknownSessionError(sessionId);

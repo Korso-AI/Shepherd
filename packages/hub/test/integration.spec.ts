@@ -16,14 +16,7 @@
  * workspace B's rows — the core P1 isolation invariant.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -86,7 +79,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -133,7 +126,9 @@ function joinPayloadC() {
 
 describe.skipIf(!dbAvailable)(
   "Integration: claim → conflict → release → re-claim" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let tenant: TenantContext;
@@ -163,22 +158,28 @@ describe.skipIf(!dbAvailable)(
       const joinA = await join(joinPayloadA(), tenant);
       const sessionA = joinA.sessionId;
       const agentNameA = joinA.agentName;
-      const workA = await work({
-        sessionId: sessionA,
-        intent: "refactor auth module",
-        pathGlobs: ["src/auth/**"],
-      }, tenant);
+      const workA = await work(
+        {
+          sessionId: sessionA,
+          intent: "refactor auth module",
+          pathGlobs: ["src/auth/**"],
+        },
+        tenant,
+      );
       expect(workA.workItemId).toBeTruthy();
       // A's own landscape should have no conflicts
       expect(workA.landscape.conflicts).toHaveLength(0);
 
       // B joins and claims a narrower path that overlaps: src/auth/login.ts
       const joinB = await join(joinPayloadB(), tenant);
-      const workB = await work({
-        sessionId: joinB.sessionId,
-        intent: "fix login bug",
-        pathGlobs: ["src/auth/login.ts"],
-      }, tenant);
+      const workB = await work(
+        {
+          sessionId: joinB.sessionId,
+          intent: "fix login bug",
+          pathGlobs: ["src/auth/login.ts"],
+        },
+        tenant,
+      );
 
       // B must see A's session as a conflict (glob overlap: src/auth/** vs src/auth/login.ts)
       expect(workB.landscape.conflicts.length).toBeGreaterThan(0);
@@ -188,28 +189,34 @@ describe.skipIf(!dbAvailable)(
       expect(conflictEntry.pathGlobs).toContain("src/auth/**");
 
       // A releases its claim (using the original session + workItemId)
-      const doneA = await done({
-        sessionId: sessionA,
-        workItemId: workA.workItemId,
-      }, tenant);
+      const doneA = await done(
+        {
+          sessionId: sessionA,
+          workItemId: workA.workItemId,
+        },
+        tenant,
+      );
       expect(doneA.ok).toBe(true);
 
       // B re-works the same path — should now be warned-free for A's old claim
-      const workB2 = await work({
-        sessionId: joinB.sessionId,
-        intent: "fix login bug again",
-        pathGlobs: ["src/auth/login.ts"],
-      }, tenant);
+      const workB2 = await work(
+        {
+          sessionId: joinB.sessionId,
+          intent: "fix login bug again",
+          pathGlobs: ["src/auth/login.ts"],
+        },
+        tenant,
+      );
 
       // A's claim is released; B's own previous claim may still show as
       // activeClaim (its own session is excluded from activeClaims by design).
       // The conflicts list should not include any entry from A's human "alice".
       const aliceConflicts = workB2.landscape.conflicts.filter(
-        (c) => c.human === "alice"
+        (c) => c.human === "alice",
       );
       expect(aliceConflicts).toHaveLength(0);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -218,7 +225,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: announce → delivery (broadcast)" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let tenant: TenantContext;
@@ -245,10 +254,13 @@ describe.skipIf(!dbAvailable)(
       const joinB = await join(joinPayloadB(), tenant);
 
       // A broadcasts an announcement
-      const ann = await announce({
-        sessionId: joinA.sessionId,
-        body: "Heads-up: refactoring auth",
-      }, tenant);
+      const ann = await announce(
+        {
+          sessionId: joinA.sessionId,
+          body: "Heads-up: refactoring auth",
+        },
+        tenant,
+      );
       expect(ann.ok).toBe(true);
       expect(typeof ann.announcementId).toBe("number");
 
@@ -257,7 +269,7 @@ describe.skipIf(!dbAvailable)(
       expect(sync1.landscape.announcements).toHaveLength(1);
       expect(sync1.landscape.announcements[0]!.id).toBe(ann.announcementId);
       expect(sync1.landscape.announcements[0]!.body).toBe(
-        "Heads-up: refactoring auth"
+        "Heads-up: refactoring auth",
       );
       expect(sync1.landscape.announcements[0]!.fromHuman).toBe("alice");
       expect(sync1.landscape.announcements[0]!.targetAgentName).toBeNull();
@@ -270,15 +282,18 @@ describe.skipIf(!dbAvailable)(
     it("sender does not receive their own broadcast in sync", async () => {
       const joinA = await join(joinPayloadA(), tenant);
 
-      await announce({
-        sessionId: joinA.sessionId,
-        body: "Self-announcement should not be delivered back",
-      }, tenant);
+      await announce(
+        {
+          sessionId: joinA.sessionId,
+          body: "Self-announcement should not be delivered back",
+        },
+        tenant,
+      );
 
       const syncA = await sync({ sessionId: joinA.sessionId }, tenant);
       expect(syncA.landscape.announcements).toHaveLength(0);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -287,7 +302,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: targeted announce — only target receives it" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let tenant: TenantContext;
@@ -315,11 +332,14 @@ describe.skipIf(!dbAvailable)(
       const joinC = await join(joinPayloadC(), tenant);
 
       // A targets B by name
-      const ann = await announce({
-        sessionId: joinA.sessionId,
-        body: "Hey Bob, watch out for login.ts",
-        targetAgentName: joinB.agentName,
-      }, tenant);
+      const ann = await announce(
+        {
+          sessionId: joinA.sessionId,
+          body: "Hey Bob, watch out for login.ts",
+          targetAgentName: joinB.agentName,
+        },
+        tenant,
+      );
       expect(ann.ok).toBe(true);
 
       // B's sync includes the targeted announcement
@@ -327,17 +347,17 @@ describe.skipIf(!dbAvailable)(
       expect(syncB.landscape.announcements).toHaveLength(1);
       expect(syncB.landscape.announcements[0]!.id).toBe(ann.announcementId);
       expect(syncB.landscape.announcements[0]!.targetAgentName).toBe(
-        joinB.agentName
+        joinB.agentName,
       );
 
       // C's sync must NOT include the targeted announcement
       const syncC = await sync({ sessionId: joinC.sessionId }, tenant);
       const matchingAnn = syncC.landscape.announcements.filter(
-        (a) => a.id === ann.announcementId
+        (a) => a.id === ann.announcementId,
       );
       expect(matchingAnn).toHaveLength(0);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -346,7 +366,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: TTL expiry" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let tenant: TenantContext;
@@ -370,41 +392,47 @@ describe.skipIf(!dbAvailable)(
 
     it("after expires_at is backdated to the past, B's work on overlapping path has no conflict from A", async () => {
       const joinA = await join(joinPayloadA(), tenant);
-      const workA = await work({
-        sessionId: joinA.sessionId,
-        intent: "big refactor",
-        pathGlobs: ["src/**"],
-        ttlSeconds: 1800,
-      }, tenant);
+      const workA = await work(
+        {
+          sessionId: joinA.sessionId,
+          intent: "big refactor",
+          pathGlobs: ["src/**"],
+          ttlSeconds: 1800,
+        },
+        tenant,
+      );
 
       // Artificially expire A's claim by backdating expires_at to the past
       await pool.query(
         `UPDATE work_items
          SET expires_at = NOW() - INTERVAL '1 second'
          WHERE id = $1`,
-        [workA.workItemId]
+        [workA.workItemId],
       );
 
       const joinB = await join(joinPayloadB(), tenant);
-      const workB = await work({
-        sessionId: joinB.sessionId,
-        intent: "also touching src",
-        pathGlobs: ["src/api.ts"],
-      }, tenant);
+      const workB = await work(
+        {
+          sessionId: joinB.sessionId,
+          intent: "also touching src",
+          pathGlobs: ["src/api.ts"],
+        },
+        tenant,
+      );
 
       // A's claim is expired; B should see no conflicts from alice
       const aliceConflicts = workB.landscape.conflicts.filter(
-        (c) => c.human === "alice"
+        (c) => c.human === "alice",
       );
       expect(aliceConflicts).toHaveLength(0);
 
       // A also doesn't appear in activeClaims
       const aliceActive = workB.landscape.activeClaims.filter(
-        (c) => c.human === "alice"
+        (c) => c.human === "alice",
       );
       expect(aliceActive).toHaveLength(0);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -413,7 +441,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: staleness" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let tenant: TenantContext;
@@ -437,11 +467,14 @@ describe.skipIf(!dbAvailable)(
 
     it("#1: a stale session's claims DISAPPEAR from B's landscape (live session required)", async () => {
       const joinA = await join(joinPayloadA(), tenant);
-      await work({
-        sessionId: joinA.sessionId,
-        intent: "long-running task",
-        pathGlobs: ["src/core/**"],
-      }, tenant);
+      await work(
+        {
+          sessionId: joinA.sessionId,
+          intent: "long-running task",
+          pathGlobs: ["src/core/**"],
+        },
+        tenant,
+      );
 
       // Backdate A's session heartbeat well past STALE_AFTER_SECONDS=120. A is
       // now indistinguishable from a dead agent (the 60s background heartbeat
@@ -451,41 +484,47 @@ describe.skipIf(!dbAvailable)(
         `UPDATE sessions
          SET last_heartbeat_at = NOW() - INTERVAL '200 seconds'
          WHERE id = $1`,
-        [joinA.sessionId]
+        [joinA.sessionId],
       );
 
       const joinB = await join(joinPayloadB(), tenant);
-      const workB = await work({
-        sessionId: joinB.sessionId,
-        intent: "overlapping work",
-        pathGlobs: ["src/core/auth.ts"],
-      }, tenant);
+      const workB = await work(
+        {
+          sessionId: joinB.sessionId,
+          intent: "overlapping work",
+          pathGlobs: ["src/core/auth.ts"],
+        },
+        tenant,
+      );
 
       // A's claim is hidden and raises no advisory conflict against B.
       const aliceActive = workB.landscape.activeClaims.filter(
-        (c) => c.human === "alice"
+        (c) => c.human === "alice",
       );
       expect(aliceActive).toHaveLength(0);
       const aliceConflicts = workB.landscape.conflicts.filter(
-        (c) => c.human === "alice"
+        (c) => c.human === "alice",
       );
       expect(aliceConflicts).toHaveLength(0);
     });
 
     it("a stale session's sync refreshes its heartbeat (claim stays visible throughout)", async () => {
       const joinA = await join(joinPayloadA(), tenant);
-      await work({
-        sessionId: joinA.sessionId,
-        intent: "long-running task",
-        pathGlobs: ["src/core/**"],
-      }, tenant);
+      await work(
+        {
+          sessionId: joinA.sessionId,
+          intent: "long-running task",
+          pathGlobs: ["src/core/**"],
+        },
+        tenant,
+      );
 
       // Backdate A's heartbeat to simulate a long-quiet session.
       await pool.query(
         `UPDATE sessions
          SET last_heartbeat_at = NOW() - INTERVAL '200 seconds'
          WHERE id = $1`,
-        [joinA.sessionId]
+        [joinA.sessionId],
       );
 
       // A calls sync — this refreshes its heartbeat and renews its claims' TTL.
@@ -493,7 +532,7 @@ describe.skipIf(!dbAvailable)(
 
       const { rows } = await pool.query<{ last_heartbeat_at: Date }>(
         `SELECT last_heartbeat_at FROM sessions WHERE id = $1`,
-        [joinA.sessionId]
+        [joinA.sessionId],
       );
       const heartbeatAge =
         (Date.now() - rows[0]!.last_heartbeat_at.getTime()) / 1000;
@@ -501,17 +540,20 @@ describe.skipIf(!dbAvailable)(
 
       // B works on an overlapping path — A's claim is visible (as it was before).
       const joinB = await join(joinPayloadB(), tenant);
-      const workB = await work({
-        sessionId: joinB.sessionId,
-        intent: "overlapping work",
-        pathGlobs: ["src/core/auth.ts"],
-      }, tenant);
+      const workB = await work(
+        {
+          sessionId: joinB.sessionId,
+          intent: "overlapping work",
+          pathGlobs: ["src/core/auth.ts"],
+        },
+        tenant,
+      );
       const aliceActive = workB.landscape.activeClaims.filter(
-        (c) => c.human === "alice"
+        (c) => c.human === "alice",
       );
       expect(aliceActive.length).toBeGreaterThan(0);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -520,7 +562,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: workspace isolation" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let tenantA: TenantContext;
@@ -548,11 +592,14 @@ describe.skipIf(!dbAvailable)(
     it("a claim in workspace team-a never appears in workspace team-b's landscape", async () => {
       // Normal op-layer join for team-a (tenant scopes by workspaceIdA).
       const joinA = await join(joinPayloadA(), tenantA);
-      await work({
-        sessionId: joinA.sessionId,
-        intent: "team-a work",
-        pathGlobs: ["src/**"],
-      }, tenantA);
+      await work(
+        {
+          sessionId: joinA.sessionId,
+          intent: "team-a work",
+          pathGlobs: ["src/**"],
+        },
+        tenantA,
+      );
 
       // Seed a team-b agent + session + work item directly under workspaceIdB.
       await withTransaction(pool, async (tx) => {
@@ -592,7 +639,7 @@ describe.skipIf(!dbAvailable)(
           REPO,
           now,
           120,
-          { excludeSessionId: "00000000-0000-0000-0000-000000000000" }
+          { excludeSessionId: "00000000-0000-0000-0000-000000000000" },
         );
 
         const teamAClaims = teamBClaims.filter((c) => c.human === "alice");
@@ -604,9 +651,16 @@ describe.skipIf(!dbAvailable)(
 
       // Also assert from team-a's side: listActiveClaims for team-a has no team-b row
       const now = new Date();
-      const teamAClaims = await listActiveClaims(pool, workspaceIdA, REPO, now, 120, {
-        excludeSessionId: "00000000-0000-0000-0000-000000000000",
-      });
+      const teamAClaims = await listActiveClaims(
+        pool,
+        workspaceIdA,
+        REPO,
+        now,
+        120,
+        {
+          excludeSessionId: "00000000-0000-0000-0000-000000000000",
+        },
+      );
       const daveClaims = teamAClaims.filter((c) => c.human === "dave");
       expect(daveClaims).toHaveLength(0);
     });
@@ -647,32 +701,32 @@ describe.skipIf(!dbAvailable)(
             intent: "cross-tenant write attempt",
             pathGlobs: ["src/**"],
           },
-          tenantA
-        )
+          tenantA,
+        ),
       ).rejects.toBeInstanceOf(UnknownSessionError);
 
       // The same replay across the other session-bearing ops is rejected too.
       await expect(
-        sync({ sessionId: sessionIdB }, tenantA)
+        sync({ sessionId: sessionIdB }, tenantA),
       ).rejects.toBeInstanceOf(UnknownSessionError);
       await expect(
-        announce({ sessionId: sessionIdB, body: "leak" }, tenantA)
+        announce({ sessionId: sessionIdB, body: "leak" }, tenantA),
       ).rejects.toBeInstanceOf(UnknownSessionError);
 
       // No work_item was written in EITHER workspace by the rejected calls.
       const { rows } = await pool.query<{ count: string }>(
-        `SELECT COUNT(*)::int AS count FROM work_items`
+        `SELECT COUNT(*)::int AS count FROM work_items`,
       );
       expect(Number(rows[0]!.count)).toBe(0);
 
       // And no announcement landed in team-b (the targeted victim) either.
       const annRows = await pool.query<{ count: string }>(
         `SELECT COUNT(*)::int AS count FROM announcements WHERE workspace_id = $1`,
-        [workspaceIdB]
+        [workspaceIdB],
       );
       expect(Number(annRows.rows[0]!.count)).toBe(0);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -681,7 +735,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: HTTP auth + routing (buildServer)" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let app: Awaited<ReturnType<typeof buildServer>>;
@@ -731,7 +787,7 @@ describe.skipIf(!dbAvailable)(
       expect(typeof body.agentName).toBe("string");
       expect(body.agentName.length).toBeGreaterThan(0);
       expect(body.sessionId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
 
@@ -779,7 +835,10 @@ describe.skipIf(!dbAvailable)(
       const joinRes = await app.inject({
         method: "POST",
         url: "/join",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {
           workspace: WS,
           repo: REPO,
@@ -802,7 +861,7 @@ describe.skipIf(!dbAvailable)(
       const body = res.json<{ agents: Array<{ human: string }> }>();
       expect(body.agents.some((a) => a.human === "alice")).toBe(true);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -817,7 +876,9 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)(
   "Integration: hosted :id membership gate" +
-    (!dbAvailable ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)" : ""),
+    (!dbAvailable
+      ? " (SKIPPED: no TEST_DATABASE_URL or DATABASE_URL configured)"
+      : ""),
   () => {
     let pool: pg.Pool;
     let app: Awaited<ReturnType<typeof buildServer>>;
@@ -835,12 +896,12 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO account_profiles (account_id, display_name, github_login)
          VALUES ($1, 'Mallory', 'mallory') ON CONFLICT (account_id) DO NOTHING`,
-        [ACCOUNT]
+        [ACCOUNT],
       );
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role)
          VALUES ($1, $2, 'member') ON CONFLICT (account_id, workspace_id) DO NOTHING`,
-        [ACCOUNT, workspaceIdA]
+        [ACCOUNT, workspaceIdA],
       );
       // Hosted config: BFF_INTERNAL_TOKEN set enables the browser-via-BFF path.
       initContext({
@@ -890,5 +951,5 @@ describe.skipIf(!dbAvailable)(
       const body = res.json<{ error: string }>();
       expect(body.error).toBe("Not found");
     });
-  }
+  },
 );

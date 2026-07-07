@@ -36,7 +36,7 @@ export const LINK_NUDGE_TEXT =
   "[Shepherd] This repo is not linked to a Shepherd workspace and has not been declined. " +
   "Before writing files here, call the shepherd `link` tool with no argument: it auto-links " +
   "if the user belongs to exactly one workspace, or lists workspaces — then ask the user " +
-  "\"Coordinate this repo with Shepherd? Which workspace?\" and call `link <workspace>` with " +
+  '"Coordinate this repo with Shepherd? Which workspace?" and call `link <workspace>` with ' +
   "their answer, or `decline` if they say no. Ask at most once per repo.";
 
 /**
@@ -56,7 +56,7 @@ export const LINK_NUDGE_TEXT =
 export function buildLinkNudge(
   cwd: string,
   toolName?: string,
-  deps: { declinedDir?: string } = {}
+  deps: { declinedDir?: string } = {},
 ): string {
   try {
     if (toolName !== undefined && !WRITE_TOOLS.has(toolName)) return "";

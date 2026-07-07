@@ -155,7 +155,10 @@ const redeemFailures = new Map<string, FailCounter>();
  * the current window. Call BEFORE attempting a redeem so a throttled account is
  * turned away without touching the DB.
  */
-function checkRedeemThrottle(accountId: string, now: number = Date.now()): void {
+function checkRedeemThrottle(
+  accountId: string,
+  now: number = Date.now(),
+): void {
   const entry = redeemFailures.get(accountId);
   if (entry === undefined) return;
   if (now - entry.windowStart >= REDEEM_FAIL_WINDOW_MS) {
@@ -169,7 +172,10 @@ function checkRedeemThrottle(accountId: string, now: number = Date.now()): void 
 }
 
 /** Record one failed (invalid-code) redeem for `accountId`. */
-function recordRedeemFailure(accountId: string, now: number = Date.now()): void {
+function recordRedeemFailure(
+  accountId: string,
+  now: number = Date.now(),
+): void {
   const entry = redeemFailures.get(accountId);
   if (entry === undefined || now - entry.windowStart >= REDEEM_FAIL_WINDOW_MS) {
     redeemFailures.set(accountId, { count: 1, windowStart: now });
@@ -201,7 +207,7 @@ export function __resetRedeemThrottle(): void {
  */
 export async function createInvite(
   input: CreateInviteRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<InviteResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -243,15 +249,21 @@ export async function createInvite(
  */
 export async function inviteByEmail(
   email: string,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<InviteByEmailResponseT> {
   const { pool, config } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
   requireAdmin(tenant);
   const createdBy = requireAccountId(tenant);
 
-  if (!config.RESEND_API_KEY || !config.INVITE_EMAIL_FROM || !config.PUBLIC_WEB_URL) {
-    throw new NotConfiguredError("email invites are not configured on this server");
+  if (
+    !config.RESEND_API_KEY ||
+    !config.INVITE_EMAIL_FROM ||
+    !config.PUBLIC_WEB_URL
+  ) {
+    throw new NotConfiguredError(
+      "email invites are not configured on this server",
+    );
   }
 
   const workspace = await findWorkspaceById(pool, workspaceId);
@@ -259,7 +271,9 @@ export async function inviteByEmail(
     throw new AuthError(404, "workspace not found");
   }
 
-  const expiresAt = new Date(Date.now() + DEFAULT_EXPIRES_IN_DAYS * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(
+    Date.now() + DEFAULT_EXPIRES_IN_DAYS * 24 * 60 * 60 * 1000,
+  );
   const invite = await createInviteRow(pool, {
     workspaceId,
     code: generateCode(),
@@ -274,7 +288,10 @@ export async function inviteByEmail(
   const joinLink = `${config.PUBLIC_WEB_URL}/shepherd/join/${encodeURIComponent(invite.code)}`;
   await sendInviteEmail(
     { to: email, joinLink, workspaceName: workspace.name },
-    { RESEND_API_KEY: config.RESEND_API_KEY, INVITE_EMAIL_FROM: config.INVITE_EMAIL_FROM }
+    {
+      RESEND_API_KEY: config.RESEND_API_KEY,
+      INVITE_EMAIL_FROM: config.INVITE_EMAIL_FROM,
+    },
   );
 
   return { email, sentAt: new Date().toISOString() };
@@ -289,7 +306,7 @@ export async function inviteByEmail(
  * one-time-use and a claimed use excludes it from the pending predicate).
  */
 export async function listEmailInvites(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<ListEmailInvitesResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -316,7 +333,7 @@ export async function listEmailInvites(
  */
 export async function revokeInvite(
   code: string,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<{ revoked: true }> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -337,7 +354,7 @@ export async function revokeInvite(
  */
 export async function redeemInvite(
   code: string,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<RedeemInviteResponseT> {
   const { pool } = getContext();
 
@@ -352,7 +369,10 @@ export async function redeemInvite(
   //    account-scoped agent token resolves to the SAME "" workspaceId a browser
   //    has on a non-:id route, so the sentinel can no longer tell them apart.
   if (tenant.via !== "browser") {
-    throw new AuthError(403, "invite redemption requires a browser account session");
+    throw new AuthError(
+      403,
+      "invite redemption requires a browser account session",
+    );
   }
 
   // 3. Throttle invalid-code enumeration BEFORE touching the DB.
@@ -406,7 +426,7 @@ export async function redeemInvite(
 async function buildRedeemResponse(
   workspaceId: string,
   role: RoleT,
-  accountId: string
+  accountId: string,
 ): Promise<RedeemInviteResponseT> {
   const { pool } = getContext();
   const ws = await findWorkspaceById(pool, workspaceId);

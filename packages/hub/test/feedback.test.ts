@@ -85,7 +85,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -95,19 +95,19 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
 /** Read back the row a submission produced, by id. */
 async function fetchFeedback(
   pool: pg.Pool,
-  id: string
+  id: string,
 ): Promise<{
   workspace_id: string | null;
   account_id: string | null;
@@ -117,7 +117,7 @@ async function fetchFeedback(
 }> {
   const { rows } = await pool.query(
     `SELECT workspace_id, account_id, type, body, context FROM feedback WHERE id = $1`,
-    [id]
+    [id],
   );
   return rows[0]!;
 }
@@ -260,7 +260,9 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(200);
       const parsed = FeedbackResponse.parse(res.json());
 
-      await vi.waitFor(() => expect(sendFeedbackEmail).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(sendFeedbackEmail).toHaveBeenCalledTimes(1),
+      );
       expect(sendFeedbackEmail).toHaveBeenCalledWith(
         {
           id: parsed.id,
@@ -274,7 +276,7 @@ describe.skipIf(!dbAvailable)(
           RESEND_API_KEY: "re_test",
           INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
           FEEDBACK_EMAIL_TO: "dev@example.test",
-        }
+        },
       );
     });
 
@@ -295,7 +297,9 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(200);
       const parsed = FeedbackResponse.parse(res.json());
 
-      await vi.waitFor(() => expect(sendFeedbackEmail).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(sendFeedbackEmail).toHaveBeenCalledTimes(1),
+      );
       expect(sendFeedbackEmail).toHaveBeenCalledWith(
         {
           id: parsed.id,
@@ -313,12 +317,14 @@ describe.skipIf(!dbAvailable)(
           RESEND_API_KEY: "re_test",
           INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
           FEEDBACK_EMAIL_TO: "dev@example.test",
-        }
+        },
       );
     });
 
     it("still succeeds when the email send rejects", async () => {
-      vi.mocked(sendFeedbackEmail).mockRejectedValueOnce(new Error("resend down"));
+      vi.mocked(sendFeedbackEmail).mockRejectedValueOnce(
+        new Error("resend down"),
+      );
       const res = await app.inject({
         method: "POST",
         url: "/feedback",
@@ -329,14 +335,19 @@ describe.skipIf(!dbAvailable)(
       // The email is fire-and-forget and now resolves account/workspace ids via
       // the DB first, so the send lands a few ticks after the response. Wait for
       // it here so it can't leak into (and fail) a later test's assertions.
-      await vi.waitFor(() => expect(sendFeedbackEmail).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(sendFeedbackEmail).toHaveBeenCalledTimes(1),
+      );
     });
 
     it("does not email when Resend is unconfigured", async () => {
       resetContext();
       initContext({
         pool,
-        config: makeTestConfig({ RESEND_API_KEY: undefined, INVITE_EMAIL_FROM: undefined }),
+        config: makeTestConfig({
+          RESEND_API_KEY: undefined,
+          INVITE_EMAIL_FROM: undefined,
+        }),
       });
       try {
         const res = await app.inject({
@@ -381,5 +392,5 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(401);
     });
-  }
+  },
 );

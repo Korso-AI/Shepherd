@@ -74,7 +74,7 @@ describe("parseConfig", () => {
       expect(() =>
         parseConfig({
           HUB_URL: "http://hub.example.com",
-        })
+        }),
       ).toThrow();
     });
   });
@@ -120,7 +120,7 @@ describe("parseConfig", () => {
         HUB_URL: "http://hub.example.com",
         TEAM_TOKEN: "tok-xyz",
         HEARTBEAT_INTERVAL_SECONDS: "0",
-      })
+      }),
     ).toThrow();
   });
 
@@ -163,7 +163,9 @@ describe("parseConfig", () => {
 // operator explicitly opts in. Loopback http and https always pass.
 describe("assertHubUrlAllowed", () => {
   it("allows https to any host", () => {
-    expect(() => assertHubUrlAllowed("https://shepherd.example.com", {})).not.toThrow();
+    expect(() =>
+      assertHubUrlAllowed("https://shepherd.example.com", {}),
+    ).not.toThrow();
   });
 
   it("allows plain http to loopback hosts (local dev)", () => {
@@ -183,10 +185,14 @@ describe("assertHubUrlAllowed", () => {
   });
 
   it("permits non-loopback http when SHEPHERD_ALLOW_INSECURE_HTTP is set (with a stderr warning)", () => {
-    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
     for (const val of ["1", "true", "yes", "YES"]) {
       expect(() =>
-        assertHubUrlAllowed("http://hub.example.com", { SHEPHERD_ALLOW_INSECURE_HTTP: val }),
+        assertHubUrlAllowed("http://hub.example.com", {
+          SHEPHERD_ALLOW_INSECURE_HTTP: val,
+        }),
       ).not.toThrow();
     }
     expect(errSpy).toHaveBeenCalled();
@@ -195,7 +201,9 @@ describe("assertHubUrlAllowed", () => {
 
   it("does not opt in for a non-truthy flag value", () => {
     expect(() =>
-      assertHubUrlAllowed("http://hub.example.com", { SHEPHERD_ALLOW_INSECURE_HTTP: "0" }),
+      assertHubUrlAllowed("http://hub.example.com", {
+        SHEPHERD_ALLOW_INSECURE_HTTP: "0",
+      }),
     ).toThrow();
   });
 });

@@ -38,7 +38,7 @@ const LOCK_KEY_STRING = ADVISORY_LOCK_KEY.toString();
 const MIGRATIONS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
-  "migrations"
+  "migrations",
 );
 
 /**
@@ -83,14 +83,16 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
   const client = await pool.connect();
   try {
     // Acquire session-level advisory lock (blocks until available).
-    await client.query(`SELECT pg_advisory_lock($1::bigint)`, [LOCK_KEY_STRING]);
+    await client.query(`SELECT pg_advisory_lock($1::bigint)`, [
+      LOCK_KEY_STRING,
+    ]);
 
     // Bootstrap bookkeeping table while still inside the lock.
     await ensureBookkeepingTable(client);
 
     // Find which versions have already been applied.
     const { rows } = await client.query<{ version: string }>(
-      "SELECT version FROM schema_migrations"
+      "SELECT version FROM schema_migrations",
     );
     const applied = new Set(rows.map((r) => r.version));
 
@@ -107,7 +109,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
         await client.query(sql);
         await client.query(
           "INSERT INTO schema_migrations (version) VALUES ($1)",
-          [version]
+          [version],
         );
         await client.query("COMMIT");
         console.log(`[migrate] applied: ${version}`);
@@ -136,7 +138,8 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 // ---------------------------------------------------------------------------
 const isMain =
   process.argv[1] != null &&
-  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+  path.resolve(process.argv[1]) ===
+    path.resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
   const connString = process.env["DATABASE_URL"];

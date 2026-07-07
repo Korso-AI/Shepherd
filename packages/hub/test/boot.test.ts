@@ -54,7 +54,7 @@ describe.skipIf(!dbAvailable)("seedSelfHostWorkspace", () => {
 
     const { rows } = await pool.query(
       "SELECT 1 FROM workspaces WHERE slug = $1",
-      ["default"]
+      ["default"],
     );
 
     expect(rows).toHaveLength(1);
@@ -64,7 +64,7 @@ describe.skipIf(!dbAvailable)("seedSelfHostWorkspace", () => {
     await seedSelfHostWorkspace(pool, undefined);
 
     const { rows } = await pool.query(
-      "SELECT 1 FROM workspaces WHERE created_by = 'self-host'"
+      "SELECT 1 FROM workspaces WHERE created_by = 'self-host'",
     );
 
     expect(rows).toHaveLength(0);

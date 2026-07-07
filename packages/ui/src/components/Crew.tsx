@@ -25,13 +25,16 @@ export interface CrewProps {
  */
 export function Crew({ agents, tasks, selectedRepo }: CrewProps): ReactElement {
   const live = agents.filter(
-    (a) => a.presence === "live" && matchesRepo({ repo: a.repo ?? "" }, selectedRepo),
+    (a) =>
+      a.presence === "live" &&
+      matchesRepo({ repo: a.repo ?? "" }, selectedRepo),
   );
 
   // An agent is "active" iff they own an active task — mirrors app.js, which
   // builds an intent-by-agent map from the active tasks.
   const activeAgents = new Set<string>();
-  for (const t of tasks) if (t.status === "active") activeAgents.add(t.agentName);
+  for (const t of tasks)
+    if (t.status === "active") activeAgents.add(t.agentName);
   const isActive = (a: WorkspaceAgentT): boolean => activeAgents.has(a.name);
 
   const ordered = [...live].sort((x, y) => {

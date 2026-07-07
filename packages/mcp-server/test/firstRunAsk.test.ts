@@ -32,7 +32,11 @@ interface CapturedTool {
 function makeFakeServer() {
   const tools: Record<string, CapturedTool> = {};
   const server = {
-    registerTool(name: string, _def: ToolDef, handler: ToolHandler): CapturedTool {
+    registerTool(
+      name: string,
+      _def: ToolDef,
+      handler: ToolHandler,
+    ): CapturedTool {
       const tool: CapturedTool = {
         name,
         handler,
@@ -117,11 +121,19 @@ function setup(opts?: {
 }) {
   const cwd = freshRepo();
   const declinedDir = mkdtempSync(join(tmpdir(), "shepherd-ask-declined-"));
-  const inboxFile = join(mkdtempSync(join(tmpdir(), "shepherd-ask-inbox-")), "inbox.jsonl");
+  const inboxFile = join(
+    mkdtempSync(join(tmpdir(), "shepherd-ask-inbox-")),
+    "inbox.jsonl",
+  );
   const post = vi.fn().mockResolvedValue(JOIN_OK);
   const slugs = opts?.slugs ?? ["team-alpha"];
   const get = vi.fn().mockResolvedValue({
-    workspaces: slugs.map((slug, i) => ({ id: `id-${i}`, slug, name: slug, role: "member" })),
+    workspaces: slugs.map((slug, i) => ({
+      id: `id-${i}`,
+      slug,
+      name: slug,
+      role: "member",
+    })),
   });
   const hubClient = { post, get } as unknown as HubClient;
   const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };
@@ -133,7 +145,8 @@ function setup(opts?: {
       action: "accept",
       content: { decision: "team-alpha" },
     })) as ElicitFn);
-  const capabilities = "capabilities" in (opts ?? {}) ? opts?.capabilities : { elicitation: {} };
+  const capabilities =
+    "capabilities" in (opts ?? {}) ? opts?.capabilities : { elicitation: {} };
 
   const { ready } = registerTools(server as never, {
     hubClient,
@@ -161,7 +174,19 @@ function setup(opts?: {
     await new Promise((r) => setTimeout(r, 0));
   }
 
-  return { tools, tw, elicit, post, get, heartbeat, ready, cwd, declinedDir, inboxFile, fireAndSettle };
+  return {
+    tools,
+    tw,
+    elicit,
+    post,
+    get,
+    heartbeat,
+    ready,
+    cwd,
+    declinedDir,
+    inboxFile,
+    fireAndSettle,
+  };
 }
 
 beforeEach(() => {
@@ -174,7 +199,12 @@ describe("first-run ask wiring", () => {
     expect(unanswered.tw.state.started).toBe(1);
 
     const linked = setup({
-      context: { ...unansweredContext, workspace: "foo", linked: true, linkState: "linked" },
+      context: {
+        ...unansweredContext,
+        workspace: "foo",
+        linked: true,
+        linkState: "linked",
+      },
     });
     expect(linked.tw.state.started).toBe(0);
 
@@ -191,7 +221,10 @@ describe("first-run ask wiring", () => {
 
     // Recorded exactly like `link team-alpha`:
     expect(readMarker(s.cwd)).toEqual({ workspace: "team-alpha" });
-    expect(s.post).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "team-alpha" }));
+    expect(s.post).toHaveBeenCalledWith(
+      "/join",
+      expect.objectContaining({ workspace: "team-alpha" }),
+    );
     expect(s.heartbeat.start).toHaveBeenCalledOnce();
     expect(isDeclined(s.cwd, s.declinedDir)).toBe(false);
 
@@ -233,7 +266,10 @@ describe("first-run ask wiring", () => {
   });
 
   it("client without the elicitation capability → popup never attempted", async () => {
-    const elicit = vi.fn(async () => ({ action: "accept", content: { decision: "team-alpha" } }));
+    const elicit = vi.fn(async () => ({
+      action: "accept",
+      content: { decision: "team-alpha" },
+    }));
     const s = setup({ elicit, capabilities: undefined });
     await s.ready;
     await s.fireAndSettle();
@@ -249,9 +285,12 @@ describe("first-run ask wiring", () => {
     await s.tools["link"].handler({ workspace: "team-alpha" });
     expect(s.tw.state.stopped).toBeGreaterThan(0); // settled → disarmed
 
-    const elicitCallsBefore = (s.elicit as ReturnType<typeof vi.fn>).mock.calls.length;
+    const elicitCallsBefore = (s.elicit as ReturnType<typeof vi.fn>).mock.calls
+      .length;
     await s.fireAndSettle();
-    expect((s.elicit as ReturnType<typeof vi.fn>).mock.calls.length).toBe(elicitCallsBefore);
+    expect((s.elicit as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      elicitCallsBefore,
+    );
   });
 
   it("agent-mediated decline disarms the tripwire", async () => {

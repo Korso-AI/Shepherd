@@ -73,10 +73,20 @@ describe("buildChangeReport", () => {
     const uncommitted = report!.entries.filter((e) => e.kind === "uncommitted");
     expect(committed).toEqual([
       { kind: "committed", sha: "sha1", message: "fix a", paths: ["src/a.ts"] },
-      { kind: "committed", sha: "sha2", message: "fix b", paths: ["src/b.ts", "src/c.ts"] },
+      {
+        kind: "committed",
+        sha: "sha2",
+        message: "fix b",
+        paths: ["src/b.ts", "src/c.ts"],
+      },
     ]);
     expect(uncommitted).toEqual([
-      { kind: "uncommitted", sha: null, message: null, paths: ["src/dirty.ts"] },
+      {
+        kind: "uncommitted",
+        sha: null,
+        message: null,
+        paths: ["src/dirty.ts"],
+      },
     ]);
   });
 
@@ -107,7 +117,10 @@ describe("buildChangeReport", () => {
     vi.mocked(detectBranch).mockReturnValue(null);
     vi.mocked(headSha).mockReturnValue(null);
     vi.mocked(detectBaseBranch).mockReturnValue(null);
-    vi.mocked(unlandedCommits).mockReturnValue({ commits: [], truncated: false });
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: [],
+      truncated: false,
+    });
     vi.mocked(dirtyPaths).mockReturnValue({ paths: [], truncated: false });
 
     const report = await buildChangeReport(CWD, baseConfig);
@@ -127,7 +140,12 @@ describe("buildChangeReport", () => {
 
     expect(report).toBeDefined();
     expect(report!.entries).toEqual([
-      { kind: "uncommitted", sha: null, message: null, paths: ["src/dirty.ts"] },
+      {
+        kind: "uncommitted",
+        sha: null,
+        message: null,
+        paths: ["src/dirty.ts"],
+      },
     ]);
     expect(typeof report!.baseBranch).toBe("string");
     // unlandedCommits must not be consulted when base is unresolvable.
@@ -138,7 +156,10 @@ describe("buildChangeReport", () => {
     vi.mocked(detectBranch).mockReturnValue("feat/x");
     vi.mocked(headSha).mockReturnValue("headsha");
     vi.mocked(detectBaseBranch).mockReturnValue("origin/main");
-    vi.mocked(unlandedCommits).mockReturnValue({ commits: [], truncated: false });
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: [],
+      truncated: false,
+    });
     vi.mocked(dirtyPaths).mockReturnValue({ paths: [], truncated: false });
 
     const report = await buildChangeReport(CWD, baseConfig);
@@ -165,7 +186,10 @@ describe("buildChangeReport", () => {
     vi.mocked(detectBranch).mockReturnValue("feat/x");
     vi.mocked(headSha).mockReturnValue("headsha");
     vi.mocked(detectBaseBranch).mockReturnValue("origin/main");
-    vi.mocked(unlandedCommits).mockReturnValue({ commits: [], truncated: false });
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: [],
+      truncated: false,
+    });
     vi.mocked(dirtyPaths).mockReturnValue({ paths: ["p"], truncated: true });
 
     const report = await buildChangeReport(CWD, baseConfig);
@@ -175,7 +199,10 @@ describe("buildChangeReport", () => {
   it("honours config.BASE_BRANCH over detectBaseBranch", async () => {
     vi.mocked(detectBranch).mockReturnValue("feat/x");
     vi.mocked(headSha).mockReturnValue("headsha");
-    vi.mocked(unlandedCommits).mockReturnValue({ commits: [], truncated: false });
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: [],
+      truncated: false,
+    });
     vi.mocked(dirtyPaths).mockReturnValue({ paths: [], truncated: false });
 
     const cfg = { ...baseConfig, BASE_BRANCH: "develop" } as Config;

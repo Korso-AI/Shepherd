@@ -25,7 +25,9 @@ describe("FeedbackWidget", () => {
 
   it("renders a closed floating Feedback button by default", () => {
     renderWidget(makeMockClient());
-    expect(screen.getByRole("button", { name: /feedback/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /feedback/i }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
@@ -34,9 +36,13 @@ describe("FeedbackWidget", () => {
     await userEvent.click(screen.getByRole("button", { name: /feedback/i }));
 
     expect(screen.getByRole("textbox")).toBeInTheDocument();
-    expect(screen.getByRole("radiogroup", { name: /feedback type/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radiogroup", { name: /feedback type/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /bug/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /suggestion/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /suggestion/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /other/i })).toBeInTheDocument();
   });
 
@@ -68,11 +74,20 @@ describe("FeedbackWidget", () => {
     renderWidget(makeMockClient());
     await userEvent.click(screen.getByRole("button", { name: /feedback/i }));
 
-    expect(screen.getByRole("radio", { name: /bug/i })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: /bug/i })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
 
     await userEvent.click(screen.getByRole("radio", { name: /suggestion/i }));
-    expect(screen.getByRole("radio", { name: /suggestion/i })).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByRole("radio", { name: /bug/i })).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("radio", { name: /suggestion/i })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("radio", { name: /bug/i })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
   });
 
   it("submits with the selected workspace id when one is supplied", async () => {
@@ -145,7 +160,9 @@ describe("FeedbackWidget", () => {
     await userEvent.type(screen.getByRole("textbox"), "still typing this");
     await userEvent.click(screen.getByRole("button", { name: /submit/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/hub unreachable/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /hub unreachable/i,
+    );
     expect(screen.getByRole("textbox")).toHaveValue("still typing this");
   });
 

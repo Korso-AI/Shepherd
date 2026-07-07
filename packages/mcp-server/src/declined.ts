@@ -15,7 +15,13 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -45,10 +51,16 @@ export function defaultDeclinedDir(): string {
  * cwd) so a decline covers the whole repo regardless of the subdir the agent
  * started in. Windows paths are case-folded, matching `inboxFilePath`.
  */
-export function declinedFilePath(repoRoot: string, dir: string = defaultDeclinedDir()): string {
+export function declinedFilePath(
+  repoRoot: string,
+  dir: string = defaultDeclinedDir(),
+): string {
   let normalized = resolve(repoRoot);
   if (process.platform === "win32") normalized = normalized.toLowerCase();
-  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+  const hash = createHash("sha256")
+    .update(normalized)
+    .digest("hex")
+    .slice(0, 16);
   return join(dir, hash);
 }
 
@@ -57,7 +69,10 @@ export function declinedFilePath(repoRoot: string, dir: string = defaultDeclined
  * a missing, unreadable, or garbled file all yield false — coordination degrades
  * to "not declined" rather than blocking on a corrupt local file.
  */
-export function isDeclined(repoRoot: string, dir: string = defaultDeclinedDir()): boolean {
+export function isDeclined(
+  repoRoot: string,
+  dir: string = defaultDeclinedDir(),
+): boolean {
   const file = declinedFilePath(repoRoot, dir);
   let raw: string;
   try {
@@ -79,16 +94,21 @@ export function isDeclined(repoRoot: string, dir: string = defaultDeclinedDir())
  * Record that `repoRoot` was declined. Creates the parent dir if needed.
  * Fail-open: a write error is swallowed — worst case the user is asked again.
  */
-export function setDeclined(repoRoot: string, dir: string = defaultDeclinedDir()): void {
+export function setDeclined(
+  repoRoot: string,
+  dir: string = defaultDeclinedDir(),
+): void {
   const file = declinedFilePath(repoRoot, dir);
   try {
     mkdirSync(dirname(file), { recursive: true });
-    const payload = JSON.stringify({ declinedAt: new Date().toISOString() } satisfies DeclinedFile);
+    const payload = JSON.stringify({
+      declinedAt: new Date().toISOString(),
+    } satisfies DeclinedFile);
     writeFileSync(file, payload + "\n", "utf8");
   } catch (err) {
     // Fail-open: a missed write just means the next launch prompts again.
     console.error(
-      `[shepherd] declined-state write failed: ${err instanceof Error ? err.message : String(err)}`
+      `[shepherd] declined-state write failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }
@@ -97,7 +117,10 @@ export function setDeclined(repoRoot: string, dir: string = defaultDeclinedDir()
  * Clear a decline for `repoRoot`, if any. Idempotent: a missing record (or
  * un-removable file) is a no-op, never an error.
  */
-export function clearDeclined(repoRoot: string, dir: string = defaultDeclinedDir()): void {
+export function clearDeclined(
+  repoRoot: string,
+  dir: string = defaultDeclinedDir(),
+): void {
   const file = declinedFilePath(repoRoot, dir);
   if (!existsSync(file)) return;
   try {
@@ -105,7 +128,7 @@ export function clearDeclined(repoRoot: string, dir: string = defaultDeclinedDir
   } catch (err) {
     // best effort — already gone or unremovable.
     console.error(
-      `[shepherd] declined-state clear failed: ${err instanceof Error ? err.message : String(err)}`
+      `[shepherd] declined-state clear failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

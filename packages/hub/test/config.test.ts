@@ -36,15 +36,26 @@ describe("loadConfig — pure (no Postgres needed)", () => {
     expect(cfg.OPERATOR_EMAIL_DOMAIN).toBeUndefined();
   });
 
-  it("coerces TRUST_PROXY leniently — only \"true\"/\"1\" enable it", () => {
-    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "true" }).TRUST_PROXY).toBe(true);
-    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "1" }).TRUST_PROXY).toBe(true);
-    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "false" }).TRUST_PROXY).toBe(false);
-    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "yes" }).TRUST_PROXY).toBe(false);
+  it('coerces TRUST_PROXY leniently — only "true"/"1" enable it', () => {
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "true" }).TRUST_PROXY).toBe(
+      true,
+    );
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "1" }).TRUST_PROXY).toBe(
+      true,
+    );
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "false" }).TRUST_PROXY).toBe(
+      false,
+    );
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "yes" }).TRUST_PROXY).toBe(
+      false,
+    );
   });
 
   it("reads HUB_ADMIN_LABEL from the environment when set", () => {
-    const cfg = loadConfig({ ...BASE_ENV, HUB_ADMIN_LABEL: "admin@example.test" });
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      HUB_ADMIN_LABEL: "admin@example.test",
+    });
     expect(cfg.HUB_ADMIN_LABEL).toBe("admin@example.test");
   });
 
@@ -118,11 +129,16 @@ describe("loadConfig — dual-mode env schema", () => {
 
   it("throws naming the missing mode when no mode is configured", () => {
     const env = { DATABASE_URL: "postgres://localhost/test" };
-    expect(() => loadConfig(env)).toThrow(/self-host.*hosted|hosted.*self-host/i);
+    expect(() => loadConfig(env)).toThrow(
+      /self-host.*hosted|hosted.*self-host/i,
+    );
   });
 
   it("throws when only TEAM_TOKEN is set (ALLOWED_WORKSPACE missing, no BFF token)", () => {
-    const env = { DATABASE_URL: "postgres://localhost/test", TEAM_TOKEN: "tok-abc" };
+    const env = {
+      DATABASE_URL: "postgres://localhost/test",
+      TEAM_TOKEN: "tok-abc",
+    };
     expect(() => loadConfig(env)).toThrow(/self-host|hosted/i);
   });
 });

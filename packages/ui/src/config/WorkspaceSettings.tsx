@@ -32,7 +32,11 @@ export interface WorkspaceSettingsProps {
   onDeleted?: () => void;
 }
 
-export function WorkspaceSettings({ workspace, onLeft, onDeleted }: WorkspaceSettingsProps) {
+export function WorkspaceSettings({
+  workspace,
+  onLeft,
+  onDeleted,
+}: WorkspaceSettingsProps) {
   const client = useShepherdClient();
   const headingId = useId();
   const [error, setError] = useState<string | null>(null);
@@ -115,7 +119,8 @@ export function WorkspaceSettings({ workspace, onLeft, onDeleted }: WorkspaceSet
         <div className="field leave">
           <label>Leave workspace</label>
           <p className="helper">
-            Remove yourself from this workspace. You&apos;ll need a new invite to rejoin.
+            Remove yourself from this workspace. You&apos;ll need a new invite
+            to rejoin.
           </p>
           <button type="button" onClick={() => void leave()} disabled={leaving}>
             Leave workspace
@@ -126,7 +131,8 @@ export function WorkspaceSettings({ workspace, onLeft, onDeleted }: WorkspaceSet
           <div className="field delete">
             <label>Delete workspace</label>
             <p className="helper">
-              Permanently delete this workspace and all of its data. This cannot be undone.
+              Permanently delete this workspace and all of its data. This cannot
+              be undone.
             </p>
             <button
               type="button"

@@ -15,7 +15,11 @@
  * Returns { ok: true, announcementId, announcements }.
  */
 
-import type { AnnounceRequestT, AnnounceResponseT, MemberSummaryT } from "@shepherd/shared";
+import type {
+  AnnounceRequestT,
+  AnnounceResponseT,
+  MemberSummaryT,
+} from "@shepherd/shared";
 import { getContext } from "../context.js";
 import {
   touchHeartbeat,
@@ -55,21 +59,24 @@ interface ResolvedTarget {
 
 export async function announce(
   input: AnnounceRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<AnnounceResponseT> {
   const { pool, config } = getContext();
 
   // Exactly ONE way of addressing per message. `target` is the unified field;
   // the legacy pair stays supported for older clients but can't be combined
   // with it (or with each other). Reject the ambiguous request before writing.
-  if (input.target != null && (input.targetAgentName != null || input.toAdmin)) {
+  if (
+    input.target != null &&
+    (input.targetAgentName != null || input.toAdmin)
+  ) {
     throw new ValidationError(
-      "target replaces targetAgentName/toAdmin — set only target"
+      "target replaces targetAgentName/toAdmin — set only target",
     );
   }
   if (input.toAdmin && input.targetAgentName != null) {
     throw new ValidationError(
-      "toAdmin and targetAgentName are mutually exclusive"
+      "toAdmin and targetAgentName are mutually exclusive",
     );
   }
 
@@ -102,7 +109,7 @@ export async function announce(
         session.workspaceId,
         session.repo,
         now,
-        config.STALE_AFTER_SECONDS
+        config.STALE_AFTER_SECONDS,
       );
 
       if (input.target != null) {
@@ -121,7 +128,7 @@ export async function announce(
           if (hits.length > 1) {
             throw new ValidationError(
               `'${input.target}' matches ${hits.length} workspace members — ` +
-                `use their GitHub login or email to disambiguate.`
+                `use their GitHub login or email to disambiguate.`,
             );
           }
           const member = hits[0];
@@ -139,7 +146,7 @@ export async function announce(
                 `Agent names need their numeric suffix as shown in the landscape ` +
                 `(e.g. 'alex-rivera-2', not 'alex-rivera'). ${agentHint}${memberHint} ` +
                 `Omit target to broadcast to all agents, or use ` +
-                `'${config.HUB_ADMIN_LABEL}' to reach the dashboard.`
+                `'${config.HUB_ADMIN_LABEL}' to reach the dashboard.`,
             );
           }
           // Member-directed: to_admin=true keeps it OUT of every agent's
@@ -163,7 +170,7 @@ export async function announce(
           `No live agent named '${input.targetAgentName}' in this repo. ` +
             `A directed message needs the exact agent name as shown in the ` +
             `landscape (including its numeric suffix, e.g. 'alex-rivera-2', not ` +
-            `'alex-rivera'). ${hint} Omit targetAgentName to broadcast to everyone.`
+            `'alex-rivera'). ${hint} Omit targetAgentName to broadcast to everyone.`,
         );
       }
     }
@@ -183,7 +190,7 @@ export async function announce(
     await recordAnnouncementDeliveries(
       tx,
       session.id,
-      announcements.map((a) => a.id)
+      announcements.map((a) => a.id),
     );
 
     return { ok: true, announcementId, announcements };

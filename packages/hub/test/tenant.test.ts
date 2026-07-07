@@ -118,7 +118,11 @@ function fakeRequest(opts: {
   headers?: Record<string, string | undefined>;
   url?: string;
   method?: string;
-}): { headers: Record<string, string | undefined>; url: string; method: string } {
+}): {
+  headers: Record<string, string | undefined>;
+  url: string;
+  method: string;
+} {
   return {
     headers: opts.headers ?? {},
     url: opts.url ?? "/work",
@@ -130,11 +134,11 @@ function fakeRequest(opts: {
 async function seedWorkspace(
   pool: pg.Pool,
   slug: string,
-  createdBy = "seed-account"
+  createdBy = "seed-account",
 ): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, $3) RETURNING id`,
-    [slug, slug, createdBy]
+    [slug, slug, createdBy],
   );
   return rows[0]!.id;
 }
@@ -143,11 +147,11 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member"
+  role: "admin" | "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -159,7 +163,7 @@ async function seedApiToken(
     /** null → an ACCOUNT-scoped token (migration 015 dropped the NOT NULL). */
     workspaceId: string | null;
     revoked?: boolean;
-  }
+  },
 ): Promise<string> {
   const tokenHash = hashToken(opts.plaintext);
   const { rows } = await pool.query<{ id: string }>(
@@ -171,7 +175,7 @@ async function seedApiToken(
       tokenHash,
       "test-token",
       opts.revoked ? new Date() : null,
-    ]
+    ],
   );
   return rows[0]!.id;
 }
@@ -236,7 +240,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     const { rows } = await pool.query(
       `SELECT account_id, display_name, github_login, email, avatar_url
        FROM account_profiles WHERE account_id = $1`,
-      [accountId]
+      [accountId],
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -314,7 +318,10 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       headers: {
         "x-internal-token": BFF_INTERNAL_TOKEN,
         "x-account-id": accountId,
-        ...signedOperatorHeaders({ accountId, secret: "not-the-operator-secret" }),
+        ...signedOperatorHeaders({
+          accountId,
+          secret: "not-the-operator-secret",
+        }),
       },
       url: `/admin/analytics`,
       method: "GET",
@@ -333,7 +340,10 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
         "x-account-id": accountId,
         // Correctly signed — but for a lookalike domain, so the exact-domain
         // email check must reject it regardless of the valid signature.
-        ...signedOperatorHeaders({ accountId, email: "op@example.test.evil.com" }),
+        ...signedOperatorHeaders({
+          accountId,
+          email: "op@example.test.evil.com",
+        }),
       },
       url: `/admin/analytics`,
       method: "GET",
@@ -411,7 +421,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 404,
     });
   });
@@ -422,7 +434,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       url: `/workspaces`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 400,
     });
   });
@@ -437,7 +451,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       url: `/work`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -452,7 +468,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     // Wrong internal token is not a match → header is ignored → 401.
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -481,11 +499,15 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     const accountId = "gh:agent-owner";
     await seedMembership(pool, accountId, wsId, "admin");
     const plaintext = "shp_live_token_abc";
-    const tokenId = await seedApiToken(pool, { plaintext, accountId, workspaceId: wsId });
+    const tokenId = await seedApiToken(pool, {
+      plaintext,
+      accountId,
+      workspaceId: wsId,
+    });
 
     const before = await pool.query<{ last_used_at: Date | null }>(
       `SELECT last_used_at FROM api_tokens WHERE id = $1`,
-      [tokenId]
+      [tokenId],
     );
     expect(before.rows[0]!.last_used_at).toBeNull();
 
@@ -503,7 +525,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
 
     const after = await pool.query<{ last_used_at: Date | null }>(
       `SELECT last_used_at FROM api_tokens WHERE id = $1`,
-      [tokenId]
+      [tokenId],
     );
     expect(after.rows[0]!.last_used_at).not.toBeNull();
   });
@@ -558,14 +580,21 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     const wsId = await seedWorkspace(pool, "acme");
     const accountId = "gh:revoked-owner";
     const plaintext = "shp_revoked_token";
-    await seedApiToken(pool, { plaintext, accountId, workspaceId: wsId, revoked: true });
+    await seedApiToken(pool, {
+      plaintext,
+      accountId,
+      workspaceId: wsId,
+      revoked: true,
+    });
 
     const req = fakeRequest({
       headers: { authorization: `Bearer ${plaintext}` },
       url: `/work`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -576,7 +605,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       url: `/work`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -596,7 +627,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       url: `/work`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -606,7 +639,11 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     const accountId = "gh:throttle-owner";
     await seedMembership(pool, accountId, wsId, "member");
     const plaintext = "shp_throttle_token";
-    const tokenId = await seedApiToken(pool, { plaintext, accountId, workspaceId: wsId });
+    const tokenId = await seedApiToken(pool, {
+      plaintext,
+      accountId,
+      workspaceId: wsId,
+    });
 
     const req = () =>
       resolveTenant(
@@ -616,14 +653,14 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
           method: "POST",
         }) as any,
         makeConfig(),
-        pool
+        pool,
       );
 
     // First request touches last_used_at (the throttle's first call always writes).
     await req();
     const first = await pool.query<{ last_used_at: Date | null }>(
       `SELECT last_used_at FROM api_tokens WHERE id = $1`,
-      [tokenId]
+      [tokenId],
     );
     expect(first.rows[0]!.last_used_at).not.toBeNull();
 
@@ -632,7 +669,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     await req();
     const second = await pool.query<{ last_used_at: Date | null }>(
       `SELECT last_used_at FROM api_tokens WHERE id = $1`,
-      [tokenId]
+      [tokenId],
     );
     expect(second.rows[0]!.last_used_at).toEqual(first.rows[0]!.last_used_at);
   });
@@ -664,9 +701,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       url: `/work`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toBeInstanceOf(
-      AuthError
-    );
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toBeInstanceOf(AuthError);
   });
 
   // -------------------------------------------------------------------------
@@ -675,7 +712,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
 
   it("no credential at all → AuthError 401", async () => {
     const req = fakeRequest({ headers: {}, url: `/work`, method: "POST" });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -686,7 +725,9 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       url: `/work`,
       method: "POST",
     });
-    await expect(resolveTenant(req as any, makeConfig(), pool)).rejects.toMatchObject({
+    await expect(
+      resolveTenant(req as any, makeConfig(), pool),
+    ).rejects.toMatchObject({
       status: 401,
     });
   });
@@ -710,7 +751,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
           method: "POST",
         }) as any,
         makeConfig(),
-        pool
+        pool,
       );
 
     // Hammer the same token. Within a single window the bucket must exhaust and
@@ -738,7 +779,10 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
 
 describe("hashToken", () => {
   it("is a stable hex SHA-256 of the plaintext", () => {
-    const expected = crypto.createHash("sha256").update("shp_x", "utf8").digest("hex");
+    const expected = crypto
+      .createHash("sha256")
+      .update("shp_x", "utf8")
+      .digest("hex");
     expect(hashToken("shp_x")).toBe(expected);
     expect(hashToken("shp_x")).toBe(hashToken("shp_x"));
     expect(hashToken("shp_x")).not.toBe(hashToken("shp_y"));
@@ -858,9 +902,12 @@ describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
     void wsId;
     try {
       await resolveTenant(
-        { ...badBearerFrom(attackerIp), headers: { authorization: `Bearer ${TEAM_TOKEN}` } } as never,
+        {
+          ...badBearerFrom(attackerIp),
+          headers: { authorization: `Bearer ${TEAM_TOKEN}` },
+        } as never,
         config,
-        pool
+        pool,
       );
       expect.unreachable("the burned IP must stay throttled");
     } catch (err) {
@@ -883,9 +930,14 @@ describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
     // Far more successes than the failure budget — none should throttle.
     for (let i = 0; i < 35; i++) {
       const ctx = await resolveTenant(
-        { headers: { authorization: `Bearer ${TEAM_TOKEN}` }, url: "/work", method: "POST", ip } as never,
+        {
+          headers: { authorization: `Bearer ${TEAM_TOKEN}` },
+          url: "/work",
+          method: "POST",
+          ip,
+        } as never,
         config,
-        pool
+        pool,
       );
       expect(ctx.via).toBe("team");
     }

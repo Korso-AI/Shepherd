@@ -14,7 +14,7 @@
  * intersection — they only match a pattern against a concrete path).
  */
 
-const WILDCARD_CHARS = ['*', '?', '{', '}', '[', ']'];
+const WILDCARD_CHARS = ["*", "?", "{", "}", "[", "]"];
 
 function hasWildcard(segment: string): boolean {
   return WILDCARD_CHARS.some((c) => segment.includes(c));
@@ -37,22 +37,22 @@ function hasWildcard(segment: string): boolean {
  *   WIDENS overlap, which is the safe (recall-favoring) direction.
  */
 export function normalize(pattern: string): string[] {
-  let p = pattern.toLowerCase().replace(/\\/g, '/');
+  let p = pattern.toLowerCase().replace(/\\/g, "/");
 
   // A bare directory reservation (trailing slash) claims its whole subtree.
-  if (p.endsWith('/')) {
-    p = p.replace(/\/+$/, '') + '/**';
+  if (p.endsWith("/")) {
+    p = p.replace(/\/+$/, "") + "/**";
   }
 
   // Split on '/', dropping empty segments produced by leading/duplicate slashes.
-  const rawSegments = p.split('/').filter((s) => s.length > 0);
+  const rawSegments = p.split("/").filter((s) => s.length > 0);
 
   // Resolve '.' and '..' so e.g. './src/auth', '/src/auth', and 'src/x/../auth'
   // all canonicalize to a comparable form.
   const segments: string[] = [];
   for (const seg of rawSegments) {
-    if (seg === '.') continue;
-    if (seg === '..') {
+    if (seg === ".") continue;
+    if (seg === "..") {
       if (segments.length > 0) segments.pop();
       continue;
     }
@@ -76,7 +76,7 @@ export function normalize(pattern: string): string[] {
  * advisory warnings the cheap "any wildcard => maybe" rule is correct-enough.
  */
 export function segmentsCompatible(a: string, b: string): boolean {
-  if (a === '*' || b === '*') return true;
+  if (a === "*" || b === "*") return true;
 
   const aWild = hasWildcard(a);
   const bWild = hasWildcard(b);
@@ -113,11 +113,11 @@ export function patternsOverlap(a: string[], b: string[]): boolean {
     // One side exhausted: overlap only if the other is entirely `**` segments
     // (each `**` can consume zero segments, so it can match the empty remainder).
     if (aRemaining === 0) {
-      for (let k = j; k < bLen; k++) if (b[k] !== '**') return false;
+      for (let k = j; k < bLen; k++) if (b[k] !== "**") return false;
       return true;
     }
     if (bRemaining === 0) {
-      for (let k = i; k < a.length; k++) if (a[k] !== '**') return false;
+      for (let k = i; k < a.length; k++) if (a[k] !== "**") return false;
       return true;
     }
 
@@ -130,10 +130,10 @@ export function patternsOverlap(a: string[], b: string[]): boolean {
 
     let result: boolean;
     // `**` consumes zero-or-more segments on whichever side it appears.
-    if (aHead === '**') {
+    if (aHead === "**") {
       // zero: skip the ** ; or one+: consume one segment of B and keep the **.
       result = go(i + 1, j) || go(i, j + 1);
-    } else if (bHead === '**') {
+    } else if (bHead === "**") {
       result = go(i, j + 1) || go(i + 1, j);
     } else if (segmentsCompatible(aHead, bHead)) {
       // Plain heads: must be compatible, then recurse on both tails.

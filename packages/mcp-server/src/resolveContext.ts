@@ -129,9 +129,23 @@ export async function resolveContext(
   // to undeclined when we can't resolve a repo root (matching marker behavior).
   const repoRoot = deps.findRepoRoot(cwd);
   const declined = repoRoot !== null ? deps.isDeclined(repoRoot) : false;
-  const linkState: LinkState = linked ? "linked" : declined ? "declined" : "unanswered";
+  const linkState: LinkState = linked
+    ? "linked"
+    : declined
+      ? "declined"
+      : "unanswered";
 
-  return { workspace, repo, branch, human, program, model, linked, declined, linkState };
+  return {
+    workspace,
+    repo,
+    branch,
+    human,
+    program,
+    model,
+    linked,
+    declined,
+    linkState,
+  };
 }
 
 /**
@@ -150,7 +164,11 @@ export async function resolveContext(
  *   4. Generated name — the final fallback when there is no override, no git
  *      identity, and no cache.
  */
-function resolveHuman(config: Config, cwd: string, deps: ResolveContextDeps): string {
+function resolveHuman(
+  config: Config,
+  cwd: string,
+  deps: ResolveContextDeps,
+): string {
   if (config.HUMAN) return config.HUMAN;
 
   const detected = deps.detectHuman(cwd);

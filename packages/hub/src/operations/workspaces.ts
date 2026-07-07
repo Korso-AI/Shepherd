@@ -65,9 +65,10 @@ const MAX_WORKSPACES_PER_ACCOUNT = 10;
  */
 async function deriveUniqueSlug(
   db: Parameters<typeof findWorkspaceBySlug>[0],
-  name: string
+  name: string,
 ): Promise<string> {
-  const base = slugifyWorkspaceName(name) || `workspace-${Date.now().toString(36)}`;
+  const base =
+    slugifyWorkspaceName(name) || `workspace-${Date.now().toString(36)}`;
   let candidate = base;
   let suffix = 2;
   while ((await findWorkspaceBySlug(db, candidate)) !== null) {
@@ -84,7 +85,7 @@ async function deriveUniqueSlug(
  */
 export async function createWorkspace(
   input: CreateWorkspaceRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<WorkspaceSummaryT> {
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
@@ -120,7 +121,7 @@ export async function createWorkspace(
 
 /** List every workspace the signed-in account belongs to, with its own role. */
 export async function listWorkspaces(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<ListWorkspacesResponseT> {
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
@@ -143,7 +144,7 @@ export async function listWorkspaces(
  * others gone. Irreversible — there is no soft-delete or restore.
  */
 export async function deleteWorkspace(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<DeleteWorkspaceResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);

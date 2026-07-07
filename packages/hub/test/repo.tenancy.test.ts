@@ -10,7 +10,15 @@
  * DB-gated: skips entirely when no TEST_DATABASE_URL/DATABASE_URL is set.
  */
 
-import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import pg from "pg";
 
 import {
@@ -90,12 +98,32 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("lists only the workspaces the account is a member of, with its role", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
       // acct-1 is admin of A, member of B; acct-2 admin of B only.
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-1", role: "admin" });
-      await addMembership(pool, { workspaceId: b.id, accountId: "acct-2", role: "admin" });
-      await addMembership(pool, { workspaceId: b.id, accountId: "acct-1", role: "member" });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        role: "admin",
+      });
+      await addMembership(pool, {
+        workspaceId: b.id,
+        accountId: "acct-2",
+        role: "admin",
+      });
+      await addMembership(pool, {
+        workspaceId: b.id,
+        accountId: "acct-1",
+        role: "member",
+      });
 
       const mine = await listWorkspacesForAccount(pool, "acct-1");
       const bySlug = Object.fromEntries(mine.map((w) => [w.slug, w]));
@@ -107,23 +135,52 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(bySlug["a"]!.isOwner).toBe(true);
       expect(bySlug["b"]!.isOwner).toBe(false);
       // The WorkspaceSummary shape (id/slug/name/role).
-      expect(bySlug["a"]).toMatchObject({ id: a.id, slug: "a", name: "A", role: "admin" });
+      expect(bySlug["a"]).toMatchObject({
+        id: a.id,
+        slug: "a",
+        name: "A",
+        role: "admin",
+      });
     });
 
     it("addMembership is idempotent on (workspace_id, account_id) — re-add updates role", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-1", role: "member" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        role: "member",
+      });
       // Re-adding the same pair must not throw on the unique/PK constraint.
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-1", role: "admin" });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        role: "admin",
+      });
       const mine = await listWorkspacesForAccount(pool, "acct-1");
       expect(mine).toHaveLength(1);
       expect(mine[0]!.role).toBe("admin");
     });
 
     it("countWorkspacesCreatedBy counts only workspaces this account created", async () => {
-      await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-1" });
-      await createWorkspace(pool, { slug: "c", name: "C", createdBy: "acct-2" });
+      await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-1",
+      });
+      await createWorkspace(pool, {
+        slug: "c",
+        name: "C",
+        createdBy: "acct-2",
+      });
       expect(await countWorkspacesCreatedBy(pool, "acct-1")).toBe(2);
       expect(await countWorkspacesCreatedBy(pool, "acct-2")).toBe(1);
       expect(await countWorkspacesCreatedBy(pool, "nobody")).toBe(0);
@@ -136,7 +193,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
   describe("api tokens", () => {
     it("inserts a token storing only its hash, and lists it WITHOUT the hash", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const hash = hashToken("shp_secret");
       const summary = await insertApiToken(pool, {
         workspaceId: a.id,
@@ -152,7 +213,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(listed).toHaveLength(1);
       // The listing surface must never carry the hash or plaintext.
       expect(JSON.stringify(listed[0])).not.toContain(hash);
-      expect(listed[0]).toMatchObject({ id: summary.id, name: "ci", revokedAt: null });
+      expect(listed[0]).toMatchObject({
+        id: summary.id,
+        name: "ci",
+        revokedAt: null,
+      });
       // ISO-string timestamps.
       expect(typeof listed[0]!.createdAt).toBe("string");
     });
@@ -179,7 +244,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("still persists a WORKSPACE-LOCKED token and reads back the concrete workspace_id (legacy path)", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const hash = hashToken("shp_workspace_locked");
       const summary = await insertApiToken(pool, {
         workspaceId: a.id,
@@ -196,19 +265,50 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("listApiTokens is scoped to the workspace (no cross-tenant leak)", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
-      await insertApiToken(pool, { workspaceId: a.id, accountId: "acct-1", tokenHash: hashToken("t-a"), name: "a" });
-      await insertApiToken(pool, { workspaceId: b.id, accountId: "acct-2", tokenHash: hashToken("t-b"), name: "b" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
+      await insertApiToken(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        tokenHash: hashToken("t-a"),
+        name: "a",
+      });
+      await insertApiToken(pool, {
+        workspaceId: b.id,
+        accountId: "acct-2",
+        tokenHash: hashToken("t-b"),
+        name: "b",
+      });
       const listedA = await listApiTokens(pool, a.id);
       expect(listedA).toHaveLength(1);
       expect(listedA[0]!.name).toBe("a");
     });
 
     it("revokeApiToken is workspace-scoped: cannot revoke another tenant's token", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
-      const tokB = await insertApiToken(pool, { workspaceId: b.id, accountId: "acct-2", tokenHash: hashToken("t-b"), name: "b" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
+      const tokB = await insertApiToken(pool, {
+        workspaceId: b.id,
+        accountId: "acct-2",
+        tokenHash: hashToken("t-b"),
+        name: "b",
+      });
 
       // Workspace A tries to revoke B's token → no row affected, token stays live.
       const revokedCross = await revokeApiToken(pool, a.id, tokB.id);
@@ -225,33 +325,51 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(afterRevoke).toHaveLength(0);
       const { rows } = await pool.query<{ revoked_at: Date | null }>(
         `SELECT revoked_at FROM api_tokens WHERE id = $1`,
-        [tokB.id]
+        [tokB.id],
       );
       expect(rows[0]!.revoked_at).not.toBeNull();
     });
 
     it("revokeOwnApiToken is account-scoped: a member cannot revoke another member's token in the SAME workspace", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       // Two members of the SAME workspace, each with a token.
-      const tokAlice = await insertApiToken(pool, { workspaceId: a.id, accountId: "acct-alice", tokenHash: hashToken("t-alice"), name: "alice" });
-      const tokBob = await insertApiToken(pool, { workspaceId: a.id, accountId: "acct-bob", tokenHash: hashToken("t-bob"), name: "bob" });
+      const tokAlice = await insertApiToken(pool, {
+        workspaceId: a.id,
+        accountId: "acct-alice",
+        tokenHash: hashToken("t-alice"),
+        name: "alice",
+      });
+      const tokBob = await insertApiToken(pool, {
+        workspaceId: a.id,
+        accountId: "acct-bob",
+        tokenHash: hashToken("t-bob"),
+        name: "bob",
+      });
 
       // Alice tries to revoke Bob's token → account_id guard rejects (no row).
       const cross = await revokeOwnApiToken(pool, "acct-alice", tokBob.id);
       expect(cross).toBe(false);
-      const byName1 = Object.fromEntries((await listApiTokens(pool, a.id)).map((t) => [t.name, t]));
+      const byName1 = Object.fromEntries(
+        (await listApiTokens(pool, a.id)).map((t) => [t.name, t]),
+      );
       expect(byName1["bob"]!.revokedAt).toBeNull();
 
       // Alice CAN revoke her own token.
       const own = await revokeOwnApiToken(pool, "acct-alice", tokAlice.id);
       expect(own).toBe(true);
       // Revoked tokens drop out of the active listing (P3.3): alice's is gone, bob's remains.
-      const byName2 = Object.fromEntries((await listApiTokens(pool, a.id)).map((t) => [t.name, t]));
+      const byName2 = Object.fromEntries(
+        (await listApiTokens(pool, a.id)).map((t) => [t.name, t]),
+      );
       expect(byName2["alice"]).toBeUndefined();
       expect(byName2["bob"]).toBeDefined();
       const aliceRow = await pool.query<{ revoked_at: Date | null }>(
         `SELECT revoked_at FROM api_tokens WHERE id = $1`,
-        [tokAlice.id]
+        [tokAlice.id],
       );
       expect(aliceRow.rows[0]!.revoked_at).not.toBeNull();
 
@@ -279,16 +397,35 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       const { rows } = await pool.query<{ revoked_at: Date | null }>(
         `SELECT revoked_at FROM api_tokens WHERE id = $1`,
-        [tok.id]
+        [tok.id],
       );
       expect(rows[0]!.revoked_at).not.toBeNull();
     });
 
     it("revokeApiTokensForMember revokes that member's live tokens in the workspace and returns the count", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      await insertApiToken(pool, { workspaceId: a.id, accountId: "acct-1", tokenHash: hashToken("t1"), name: "t1" });
-      await insertApiToken(pool, { workspaceId: a.id, accountId: "acct-1", tokenHash: hashToken("t2"), name: "t2" });
-      await insertApiToken(pool, { workspaceId: a.id, accountId: "acct-2", tokenHash: hashToken("t3"), name: "t3" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      await insertApiToken(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        tokenHash: hashToken("t1"),
+        name: "t1",
+      });
+      await insertApiToken(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        tokenHash: hashToken("t2"),
+        name: "t2",
+      });
+      await insertApiToken(pool, {
+        workspaceId: a.id,
+        accountId: "acct-2",
+        tokenHash: hashToken("t3"),
+        name: "t3",
+      });
 
       const count = await revokeApiTokensForMember(pool, a.id, "acct-1");
       expect(count).toBe(2);
@@ -302,7 +439,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // Confirm t1/t2 were actually revoked (not merely hidden).
       const { rows } = await pool.query<{ revoked_at: Date | null }>(
         `SELECT revoked_at FROM api_tokens WHERE workspace_id = $1 AND account_id = 'acct-1'`,
-        [a.id]
+        [a.id],
       );
       expect(rows).toHaveLength(2);
       expect(rows.every((r) => r.revoked_at !== null)).toBe(true);
@@ -315,7 +452,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
   describe("invites", () => {
     it("creates an invite and finds it by code", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const inv = await createInvite(pool, {
         workspaceId: a.id,
         code: "CODE-1",
@@ -336,7 +477,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("incrementInviteUse refuses once max_uses is reached (atomic guard)", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const inv = await createInvite(pool, {
         workspaceId: a.id,
         code: "CODE-2",
@@ -362,7 +507,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("incrementInviteUse refuses an EXPIRED invite atomically (use_count unchanged)", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       // expires_at in the past — the atomic guard must refuse the claim.
       const inv = await createInvite(pool, {
         workspaceId: a.id,
@@ -379,13 +528,17 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // use_count must not have advanced.
       const { rows } = await pool.query<{ use_count: number }>(
         `SELECT use_count FROM invites WHERE code = $1`,
-        [inv.code]
+        [inv.code],
       );
       expect(rows[0]!.use_count).toBe(0);
     });
 
     it("incrementInviteUse claims a not-yet-expired invite (expires_at in the future)", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const inv = await createInvite(pool, {
         workspaceId: a.id,
         code: "CODE-FUT",
@@ -400,8 +553,16 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("revokeInvite is workspace-scoped: cannot revoke another tenant's invite", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
       const invB = await createInvite(pool, {
         workspaceId: b.id,
         code: "CODE-B",
@@ -419,8 +580,16 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("revokeInviteByCode is workspace-scoped: another tenant's code matches zero rows", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
       await createInvite(pool, {
         workspaceId: b.id,
         code: "BYCODE-B",
@@ -442,7 +611,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("a revoked invite is treated as not found by findInviteByCode", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const inv = await createInvite(pool, {
         workspaceId: a.id,
         code: "CODE-R",
@@ -467,16 +640,36 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
         `INSERT INTO account_profiles (account_id, display_name, github_login, avatar_url)
          VALUES ('acct-1', 'Alice', 'alice', 'http://a/avatar.png'),
                 ('acct-2', 'Bob', 'bob', NULL)
-         ON CONFLICT (account_id) DO NOTHING`
+         ON CONFLICT (account_id) DO NOTHING`,
       );
     });
 
     it("listMembers joins account_profiles for display identity and is workspace-scoped", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-1", role: "admin" });
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-2", role: "member" });
-      await addMembership(pool, { workspaceId: b.id, accountId: "acct-2", role: "admin" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        role: "admin",
+      });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-2",
+        role: "member",
+      });
+      await addMembership(pool, {
+        workspaceId: b.id,
+        accountId: "acct-2",
+        role: "admin",
+      });
 
       const members = await listMembers(pool, a.id);
       expect(members).toHaveLength(2);
@@ -491,28 +684,70 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("countAdmins counts admins in the workspace only", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-1", role: "admin" });
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-2", role: "member" });
-      await addMembership(pool, { workspaceId: b.id, accountId: "acct-2", role: "admin" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-1",
+        role: "admin",
+      });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-2",
+        role: "member",
+      });
+      await addMembership(pool, {
+        workspaceId: b.id,
+        accountId: "acct-2",
+        role: "admin",
+      });
       expect(await countAdmins(pool, a.id)).toBe(1);
       expect(await countAdmins(pool, b.id)).toBe(1);
     });
 
     it("setRole promotes/demotes within the workspace (scoped)", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      await addMembership(pool, { workspaceId: a.id, accountId: "acct-2", role: "member" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      await addMembership(pool, {
+        workspaceId: a.id,
+        accountId: "acct-2",
+        role: "member",
+      });
       await setRole(pool, a.id, "acct-2", "admin");
       expect(await countAdmins(pool, a.id)).toBe(1);
-      const found = (await listMembers(pool, a.id)).find((m) => m.accountId === "acct-2");
+      const found = (await listMembers(pool, a.id)).find(
+        (m) => m.accountId === "acct-2",
+      );
       expect(found!.role).toBe("admin");
     });
 
     it("removeMembership is workspace-scoped: cannot remove from another tenant", async () => {
-      const a = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
-      const b = await createWorkspace(pool, { slug: "b", name: "B", createdBy: "acct-2" });
-      await addMembership(pool, { workspaceId: b.id, accountId: "acct-2", role: "admin" });
+      const a = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
+      const b = await createWorkspace(pool, {
+        slug: "b",
+        name: "B",
+        createdBy: "acct-2",
+      });
+      await addMembership(pool, {
+        workspaceId: b.id,
+        accountId: "acct-2",
+        role: "admin",
+      });
 
       // Workspace A tries to remove acct-2 (a B member) → no row affected.
       const cross = await removeMembership(pool, a.id, "acct-2");
@@ -538,7 +773,10 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
   describe("getSessionById", () => {
     /** Mint an agent + session in `workspaceId`; returns the session id. */
-    async function mintSession(workspaceId: string, human: string): Promise<string> {
+    async function mintSession(
+      workspaceId: string,
+      human: string,
+    ): Promise<string> {
       return withTransaction(pool, async (tx) => {
         const agent = await createAgent(tx, {
           workspaceId,
@@ -558,7 +796,11 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     }
 
     it("returns the session (with agent join) by id alone, ignoring workspace", async () => {
-      const ws = await createWorkspace(pool, { slug: "a", name: "A", createdBy: "acct-1" });
+      const ws = await createWorkspace(pool, {
+        slug: "a",
+        name: "A",
+        createdBy: "acct-1",
+      });
       const sessionId = await mintSession(ws.id, "alice");
 
       const session = await getSessionById(pool, sessionId);

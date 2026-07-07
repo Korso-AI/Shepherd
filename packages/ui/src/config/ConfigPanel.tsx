@@ -81,7 +81,10 @@ export function ConfigPanel({
           <button
             key={id}
             type="button"
-            className={"config-nav__item" + (section === id ? " config-nav__item--on" : "")}
+            className={
+              "config-nav__item" +
+              (section === id ? " config-nav__item--on" : "")
+            }
             aria-current={section === id ? "page" : undefined}
             onClick={() => setSection(id)}
           >
@@ -92,7 +95,11 @@ export function ConfigPanel({
 
       <div className="config-panel">
         {section === "workspace" && (
-          <WorkspaceSettings workspace={workspace} onLeft={onLeft} onDeleted={onDeleted} />
+          <WorkspaceSettings
+            workspace={workspace}
+            onLeft={onLeft}
+            onDeleted={onDeleted}
+          />
         )}
 
         {section === "members" && (
@@ -106,7 +113,10 @@ export function ConfigPanel({
               onWorkspaceChanged={onWorkspaceChanged}
             />
             {isAdmin && (
-              <Invites workspaceId={workspace.id} onMembersChanged={onMembersChanged} />
+              <Invites
+                workspaceId={workspace.id}
+                onMembersChanged={onMembersChanged}
+              />
             )}
           </>
         )}

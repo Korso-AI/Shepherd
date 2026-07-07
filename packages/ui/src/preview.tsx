@@ -32,9 +32,33 @@ const EMPTY_LANDSCAPE = {
 const EMPTY_ANNOUNCE = { ok: true as const, announcementIds: [] };
 
 let members: MemberSummaryT[] = [
-  { accountId: "acc_admin", displayName: "Preview Admin", githubLogin: "preview-admin", email: null, avatarUrl: null, role: "admin", isOwner: true },
-  { accountId: "acc_1", displayName: "Alex Rivera", githubLogin: "arivera", email: null, avatarUrl: null, role: "member", isOwner: false },
-  { accountId: "acc_2", displayName: "Sam Okafor", githubLogin: "sokafor", email: null, avatarUrl: null, role: "member", isOwner: false },
+  {
+    accountId: "acc_admin",
+    displayName: "Preview Admin",
+    githubLogin: "preview-admin",
+    email: null,
+    avatarUrl: null,
+    role: "admin",
+    isOwner: true,
+  },
+  {
+    accountId: "acc_1",
+    displayName: "Alex Rivera",
+    githubLogin: "arivera",
+    email: null,
+    avatarUrl: null,
+    role: "member",
+    isOwner: false,
+  },
+  {
+    accountId: "acc_2",
+    displayName: "Sam Okafor",
+    githubLogin: "sokafor",
+    email: null,
+    avatarUrl: null,
+    role: "member",
+    isOwner: false,
+  },
 ];
 
 let tokens: TokenSummaryT[] = [
@@ -57,15 +81,37 @@ let tokens: TokenSummaryT[] = [
 let nextTokenId = 3;
 let lastInvite: InviteResponseT | null = null;
 let nextEmailInviteId = 1;
-let emailInvites: { id: string; email: string; sentAt: string; expiresAt: string | null }[] = [
-  { id: "einv_0", email: "pat@example.com", sentAt: "2026-06-28T00:00:00.000Z", expiresAt: null },
+let emailInvites: {
+  id: string;
+  email: string;
+  sentAt: string;
+  expiresAt: string | null;
+}[] = [
+  {
+    id: "einv_0",
+    email: "pat@example.com",
+    sentAt: "2026-06-28T00:00:00.000Z",
+    expiresAt: null,
+  },
 ];
 
 // A small mutable list so the app-bar workspace switcher (switch / create /
 // join) can be clicked through — create/join append here, listWorkspaces reads it.
 let workspaces: WorkspaceSummaryT[] = [
-  { id: "ws_preview", slug: "design", name: "Design Review", role: "admin", isOwner: true },
-  { id: "ws_acme", slug: "acme", name: "Acme Engineering", role: "member", isOwner: false },
+  {
+    id: "ws_preview",
+    slug: "design",
+    name: "Design Review",
+    role: "admin",
+    isOwner: true,
+  },
+  {
+    id: "ws_acme",
+    slug: "acme",
+    name: "Acme Engineering",
+    role: "member",
+    isOwner: false,
+  },
 ];
 let nextWsId = 1;
 
@@ -98,26 +144,42 @@ const previewClient: ShepherdClient = {
     const id = `tok_${nextTokenId++}`;
     tokens = [
       ...tokens,
-      { id, name: body.name ?? null, createdAt: new Date().toISOString(), lastUsedAt: null, revokedAt: null },
+      {
+        id,
+        name: body.name ?? null,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null,
+        revokedAt: null,
+      },
     ];
     return { token: `shp_previewtoken${id}`, id };
   },
   listTokens: async () => ({ tokens }),
   revokeToken: async (_workspaceId, tokenId) => {
-    tokens = tokens.map((t) => (t.id === tokenId ? { ...t, revokedAt: new Date().toISOString() } : t));
+    tokens = tokens.map((t) =>
+      t.id === tokenId ? { ...t, revokedAt: new Date().toISOString() } : t,
+    );
   },
 
   mintAccountToken: async (body: MintTokenRequestT) => {
     const id = `tok_${nextTokenId++}`;
     tokens = [
       ...tokens,
-      { id, name: body.name ?? null, createdAt: new Date().toISOString(), lastUsedAt: null, revokedAt: null },
+      {
+        id,
+        name: body.name ?? null,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null,
+        revokedAt: null,
+      },
     ];
     return { token: `shp_previewtoken${id}`, id };
   },
   listAccountTokens: async () => ({ tokens }),
   revokeAccountToken: async (tokenId) => {
-    tokens = tokens.map((t) => (t.id === tokenId ? { ...t, revokedAt: new Date().toISOString() } : t));
+    tokens = tokens.map((t) =>
+      t.id === tokenId ? { ...t, revokedAt: new Date().toISOString() } : t,
+    );
   },
 
   createInvite: async (_workspaceId, body: CreateInviteRequestT) => {
@@ -158,17 +220,23 @@ const previewClient: ShepherdClient = {
     members = members.filter((m) => m.accountId !== accountId);
   },
   setMemberRole: async (_workspaceId, accountId, role) => {
-    members = members.map((m) => (m.accountId === accountId ? { ...m, role } : m));
+    members = members.map((m) =>
+      m.accountId === accountId ? { ...m, role } : m,
+    );
     return { ok: true, role };
   },
   transferOwnership: async (_workspaceId, accountId) => {
-    members = members.map((m) => ({ ...m, isOwner: m.accountId === accountId }));
+    members = members.map((m) => ({
+      ...m,
+      isOwner: m.accountId === accountId,
+    }));
     return { ok: true };
   },
   leave: async () => {},
 
   landscape: async () => EMPTY_LANDSCAPE,
-  announceTo: async (_workspaceId, _body: WorkspaceAnnounceRequestT) => EMPTY_ANNOUNCE,
+  announceTo: async (_workspaceId, _body: WorkspaceAnnounceRequestT) =>
+    EMPTY_ANNOUNCE,
 
   getLandscape: async () => EMPTY_LANDSCAPE,
   announce: async (_body: WorkspaceAnnounceRequestT) => EMPTY_ANNOUNCE,

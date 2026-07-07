@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createShepherdClient, ShepherdClientError, describeError } from "./client.js";
+import {
+  createShepherdClient,
+  ShepherdClientError,
+  describeError,
+} from "./client.js";
 import type { ShepherdClient } from "./client.js";
 
 // ---------------------------------------------------------------------------
@@ -52,13 +56,21 @@ function lastCall(): [string, RequestInit] {
 function header(init: RequestInit, name: string): string | undefined {
   const h = init.headers as Record<string, string> | undefined;
   if (!h) return undefined;
-  const key = Object.keys(h).find((k) => k.toLowerCase() === name.toLowerCase());
+  const key = Object.keys(h).find(
+    (k) => k.toLowerCase() === name.toLowerCase(),
+  );
   return key ? h[key] : undefined;
 }
 
 // --- fixtures matching the @shepherd/shared schemas ------------------------
 
-const WORKSPACE_SUMMARY = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const, isOwner: true };
+const WORKSPACE_SUMMARY = {
+  id: "ws_1",
+  slug: "acme",
+  name: "Acme",
+  role: "admin" as const,
+  isOwner: true,
+};
 
 const LANDSCAPE = {
   agents: [],
@@ -89,7 +101,9 @@ describe("createShepherdClient", () => {
 
   describe("announce (self-host)", () => {
     it("POSTs /workspace/announce with the request body", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, announcementIds: [1] }));
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ ok: true, announcementIds: [1] }),
+      );
       const out = await client.announce({ body: "hello" });
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/workspace/announce`);
@@ -104,7 +118,9 @@ describe("createShepherdClient", () => {
 
   describe("listWorkspaces", () => {
     it("GETs /workspaces and returns the validated body", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ workspaces: [WORKSPACE_SUMMARY] }));
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ workspaces: [WORKSPACE_SUMMARY] }),
+      );
       const out = await client.listWorkspaces();
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/workspaces`);
@@ -113,26 +129,43 @@ describe("createShepherdClient", () => {
     });
 
     it("throws 'Invalid response schema' when the body fails validation", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ workspaces: [{ id: "x" }] }));
-      await expect(client.listWorkspaces()).rejects.toThrow("Invalid response schema");
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ workspaces: [{ id: "x" }] }),
+      );
+      await expect(client.listWorkspaces()).rejects.toThrow(
+        "Invalid response schema",
+      );
     });
 
     it("rejects with a ShepherdClientError carrying the status on non-2xx", async () => {
       fetchMock.mockResolvedValueOnce(
-        jsonResponse({ error: "boom" }, { status: 500, statusText: "Server Error" }),
+        jsonResponse(
+          { error: "boom" },
+          { status: 500, statusText: "Server Error" },
+        ),
       );
-      await expect(client.listWorkspaces()).rejects.toBeInstanceOf(ShepherdClientError);
+      await expect(client.listWorkspaces()).rejects.toBeInstanceOf(
+        ShepherdClientError,
+      );
       fetchMock.mockResolvedValueOnce(
-        jsonResponse({ error: "boom" }, { status: 500, statusText: "Server Error" }),
+        jsonResponse(
+          { error: "boom" },
+          { status: 500, statusText: "Server Error" },
+        ),
       );
-      await expect(client.listWorkspaces()).rejects.toMatchObject({ status: 500 });
+      await expect(client.listWorkspaces()).rejects.toMatchObject({
+        status: 500,
+      });
     });
 
     it("fires onUnauthorized then throws a 401 on a 401 response", async () => {
       const onUnauthorized = vi.fn();
       const c = createShepherdClient({ baseUrl: BASE, onUnauthorized });
       fetchMock.mockResolvedValueOnce(
-        jsonResponse({ error: "nope" }, { status: 401, statusText: "Unauthorized" }),
+        jsonResponse(
+          { error: "nope" },
+          { status: 401, statusText: "Unauthorized" },
+        ),
       );
       await expect(c.listWorkspaces()).rejects.toMatchObject({ status: 401 });
       expect(onUnauthorized).toHaveBeenCalledOnce();
@@ -168,7 +201,9 @@ describe("createShepherdClient", () => {
 
   describe("mintToken", () => {
     it("POSTs /workspaces/:id/tokens and returns the MintTokenResponse", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ token: "shp_abc", id: "tok_1" }));
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ token: "shp_abc", id: "tok_1" }),
+      );
       const out = await client.mintToken("ws_1", { name: "ci" });
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/workspaces/ws_1/tokens`);
@@ -208,7 +243,9 @@ describe("createShepherdClient", () => {
 
   describe("mintAccountToken", () => {
     it("POSTs /tokens (no workspace segment) and returns the MintTokenResponse", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ token: "shp_abc", id: "tok_1" }));
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ token: "shp_abc", id: "tok_1" }),
+      );
       const out = await client.mintAccountToken({ name: "ci" });
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/tokens`);
@@ -248,7 +285,12 @@ describe("createShepherdClient", () => {
 
   describe("createInvite", () => {
     it("POSTs /workspaces/:id/invites and returns the InviteResponse", async () => {
-      const invite = { code: "inv_abc", expiresAt: null, maxUses: 5, useCount: 0 };
+      const invite = {
+        code: "inv_abc",
+        expiresAt: null,
+        maxUses: 5,
+        useCount: 0,
+      };
       fetchMock.mockResolvedValueOnce(jsonResponse(invite));
       const out = await client.createInvite("ws_1", { maxUses: 5 });
       const [url, init] = lastCall();
@@ -271,7 +313,9 @@ describe("createShepherdClient", () => {
 
   describe("redeemInvite", () => {
     it("POSTs /invites/:code/redeem and returns the RedeemInviteResponse", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ workspace: WORKSPACE_SUMMARY }));
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ workspace: WORKSPACE_SUMMARY }),
+      );
       const out = await client.redeemInvite("inv_abc");
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/invites/inv_abc/redeem`);
@@ -338,13 +382,18 @@ describe("createShepherdClient", () => {
 
   describe("announceTo", () => {
     it("POSTs /workspaces/:id/announce and returns the WorkspaceAnnounceResponse", async () => {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, announcementIds: [1, 2] }));
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse({ ok: true, announcementIds: [1, 2] }),
+      );
       const out = await client.announceTo("ws_1", { body: "hello", repo: "r" });
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/workspaces/ws_1/announce`);
       expect(init.method).toBe("POST");
       expect(header(init, "Content-Type")).toBe("application/json");
-      expect(JSON.parse(init.body as string)).toEqual({ body: "hello", repo: "r" });
+      expect(JSON.parse(init.body as string)).toEqual({
+        body: "hello",
+        repo: "r",
+      });
       expect(out).toEqual({ ok: true, announcementIds: [1, 2] });
     });
   });
@@ -352,22 +401,34 @@ describe("createShepherdClient", () => {
   describe("submitFeedback", () => {
     it("POSTs /workspaces/:id/feedback when a workspaceId is given", async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, id: "fb_1" }));
-      const out = await client.submitFeedback({ type: "bug", body: "it's broken" }, "ws_1");
+      const out = await client.submitFeedback(
+        { type: "bug", body: "it's broken" },
+        "ws_1",
+      );
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/workspaces/ws_1/feedback`);
       expect(init.method).toBe("POST");
       expect(header(init, "Content-Type")).toBe("application/json");
-      expect(JSON.parse(init.body as string)).toEqual({ type: "bug", body: "it's broken" });
+      expect(JSON.parse(init.body as string)).toEqual({
+        type: "bug",
+        body: "it's broken",
+      });
       expect(out).toEqual({ ok: true, id: "fb_1" });
     });
 
     it("POSTs the flat /feedback when no workspaceId is given", async () => {
       fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, id: "fb_2" }));
-      const out = await client.submitFeedback({ type: "suggestion", body: "add dark mode" });
+      const out = await client.submitFeedback({
+        type: "suggestion",
+        body: "add dark mode",
+      });
       const [url, init] = lastCall();
       expect(url).toBe(`${BASE}/feedback`);
       expect(init.method).toBe("POST");
-      expect(JSON.parse(init.body as string)).toEqual({ type: "suggestion", body: "add dark mode" });
+      expect(JSON.parse(init.body as string)).toEqual({
+        type: "suggestion",
+        body: "add dark mode",
+      });
       expect(out).toEqual({ ok: true, id: "fb_2" });
     });
   });
@@ -458,7 +519,10 @@ describe("getAuthHeader injection", () => {
   it("merges a header-map return", async () => {
     const client = createShepherdClient({
       baseUrl: BASE,
-      getAuthHeader: () => ({ Authorization: "Bearer map_tok", "X-Extra": "1" }),
+      getAuthHeader: () => ({
+        Authorization: "Bearer map_tok",
+        "X-Extra": "1",
+      }),
     });
     await client.listWorkspaces();
     const [, init] = lastCall();
@@ -474,7 +538,10 @@ describe("getAuthHeader injection", () => {
   });
 
   it("sends no auth header when getAuthHeader resolves to undefined", async () => {
-    const client = createShepherdClient({ baseUrl: BASE, getAuthHeader: () => undefined });
+    const client = createShepherdClient({
+      baseUrl: BASE,
+      getAuthHeader: () => undefined,
+    });
     await client.listWorkspaces();
     const [, init] = lastCall();
     expect(header(init, "Authorization")).toBeUndefined();
@@ -493,7 +560,9 @@ describe("transport edge cases", () => {
   });
 
   it("announce accepts a nullable+optional body without rejecting it", async () => {
-    const fm = vi.fn().mockResolvedValueOnce(jsonResponse({ ok: true, announcementIds: [42] }));
+    const fm = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ ok: true, announcementIds: [42] }));
     vi.stubGlobal("fetch", fm);
     const client = createShepherdClient({ baseUrl: BASE });
 
@@ -503,7 +572,9 @@ describe("transport edge cases", () => {
     ).resolves.toEqual({ ok: true, announcementIds: [42] });
 
     const init = fm.mock.calls[0][1] as RequestInit;
-    expect(init.body).toBe(JSON.stringify({ body: "hi", targetAgentName: null, repo: null }));
+    expect(init.body).toBe(
+      JSON.stringify({ body: "hi", targetAgentName: null, repo: null }),
+    );
   });
 
   it("throws a ShepherdClientError with NO status on a network failure", async () => {
@@ -524,9 +595,14 @@ describe("transport edge cases", () => {
   });
 
   it("throws status 500 (with upstream detail) and does NOT call onUnauthorized", async () => {
-    const fm = vi.fn().mockResolvedValueOnce(
-      jsonResponse({ error: "server boom" }, { status: 500, statusText: "Server Error" }),
-    );
+    const fm = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { error: "server boom" },
+          { status: 500, statusText: "Server Error" },
+        ),
+      );
     vi.stubGlobal("fetch", fm);
     const onUnauthorized = vi.fn();
     const client = createShepherdClient({ baseUrl: BASE, onUnauthorized });
@@ -583,7 +659,9 @@ describe("transport edge cases", () => {
       const fm = vi.fn(
         (_url: string, init: RequestInit) =>
           new Promise<Response>((_resolve, reject) => {
-            init.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            init.signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            );
           }),
       );
       vi.stubGlobal("fetch", fm);

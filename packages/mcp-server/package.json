@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "LICENSE",
     "README.md"
   ],
   "engines": {

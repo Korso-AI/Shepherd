@@ -14,7 +14,9 @@ const ConfigSchema = z
     // Hard-required: Hub endpoint.
     HUB_URL: z
       .string({ required_error: "HUB_URL is required" })
-      .url("HUB_URL must be a full URL, e.g. https://your-shepherd-hub.example.com"),
+      .url(
+        "HUB_URL must be a full URL, e.g. https://your-shepherd-hub.example.com",
+      ),
 
     // Auth credentials. Exactly one form is needed (enforced by the refine below):
     //   - SHEPHERD_TOKEN: the hosted Hub credential (carries its own workspace).
@@ -29,31 +31,31 @@ const ConfigSchema = z
     // NOTE: WORKSPACE is IGNORED by the hosted Hub — the SHEPHERD_TOKEN carries the
     // workspace identity. It remains meaningful only for self-host (TEAM_TOKEN) setups.
     WORKSPACE: z.string().min(1).optional(),
-  REPO: z.string().min(1).optional(),
-  BRANCH: z.string().min(1).optional(),
-  BASE_BRANCH: z.string().min(1).optional(),
-  HUMAN: z.string().min(1).optional(),
-  PROGRAM: z.string().min(1).optional(),
-  MODEL: z.string().min(1).optional(),
+    REPO: z.string().min(1).optional(),
+    BRANCH: z.string().min(1).optional(),
+    BASE_BRANCH: z.string().min(1).optional(),
+    HUMAN: z.string().min(1).optional(),
+    PROGRAM: z.string().min(1).optional(),
+    MODEL: z.string().min(1).optional(),
 
-  // Heartbeat cadence in seconds; coerced from string env var.
-  HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+    // Heartbeat cadence in seconds; coerced from string env var.
+    HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 
-  // Opt-in: directory for the local announcement inbox. When set, the background
-  // heartbeat delivers pending announcements into a per-cwd file here, which the
-  // `shepherd-inbox-hook` (configured with the SAME dir) drains into the agent's
-  // context on its next action. Unset → no inbox, announcements flow only via
-  // work/sync/done/announce tool results as before. Both the MCP server and the
-  // hook must agree on this path.
-  SHEPHERD_INBOX_DIR: z.string().min(1).optional(),
+    // Opt-in: directory for the local announcement inbox. When set, the background
+    // heartbeat delivers pending announcements into a per-cwd file here, which the
+    // `shepherd-inbox-hook` (configured with the SAME dir) drains into the agent's
+    // context on its next action. Unset → no inbox, announcements flow only via
+    // work/sync/done/announce tool results as before. Both the MCP server and the
+    // hook must agree on this path.
+    SHEPHERD_INBOX_DIR: z.string().min(1).optional(),
 
-  // Opt-out for the zero-setup hook auto-install (Layer 4). Any of "1", "true",
-  // "yes" (case-insensitive) disables it; everything else (including unset)
-  // leaves the default-on behavior. See hookInstall.ts and the README.
-  SHEPHERD_NO_AUTO_HOOKS: z
-    .string()
-    .optional()
-    .transform((v) => ["1", "true", "yes"].includes((v ?? "").toLowerCase())),
+    // Opt-out for the zero-setup hook auto-install (Layer 4). Any of "1", "true",
+    // "yes" (case-insensitive) disables it; everything else (including unset)
+    // leaves the default-on behavior. See hookInstall.ts and the README.
+    SHEPHERD_NO_AUTO_HOOKS: z
+      .string()
+      .optional()
+      .transform((v) => ["1", "true", "yes"].includes((v ?? "").toLowerCase())),
   })
   .refine((c) => Boolean(c.SHEPHERD_TOKEN || c.TEAM_TOKEN), {
     message: "Either SHEPHERD_TOKEN or TEAM_TOKEN is required",
@@ -97,21 +99,29 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
  * Load config from process.env. On failure prints a clear message to stderr and exits 1.
  * Use this in the production entrypoint.
  */
-export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+export function loadConfig(
+  env: Record<string, string | undefined> = process.env,
+): Config {
   try {
     const config = parseConfig(env);
     assertHubUrlAllowed(config.HUB_URL, env);
     return config;
   } catch (err) {
     if (err instanceof z.ZodError) {
-      const messages = err.issues.map((e) => `  ${e.path.join(".")}: ${e.message}`).join("\n");
-      process.stderr.write(`[shepherd] Configuration error — missing or invalid env vars:\n${messages}\n`);
+      const messages = err.issues
+        .map((e) => `  ${e.path.join(".")}: ${e.message}`)
+        .join("\n");
+      process.stderr.write(
+        `[shepherd] Configuration error — missing or invalid env vars:\n${messages}\n`,
+      );
     } else if (err instanceof Error) {
       // e.g. assertHubUrlAllowed's insecure-http refusal: a self-contained,
       // operator-facing message, printed as-is.
       process.stderr.write(`[shepherd] Configuration error: ${err.message}\n`);
     } else {
-      process.stderr.write(`[shepherd] Unexpected configuration error: ${String(err)}\n`);
+      process.stderr.write(
+        `[shepherd] Unexpected configuration error: ${String(err)}\n`,
+      );
     }
     process.exit(1);
   }

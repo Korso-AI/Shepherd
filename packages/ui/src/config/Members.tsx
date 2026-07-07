@@ -59,7 +59,9 @@ export function Members({
   const [busyId, setBusyId] = useState<string | null>(null);
   // The member queued for an ownership transfer (drives the confirm modal), plus
   // the in-flight + error state of the transfer request.
-  const [transferTarget, setTransferTarget] = useState<MemberSummaryT | null>(null);
+  const [transferTarget, setTransferTarget] = useState<MemberSummaryT | null>(
+    null,
+  );
   const [transferring, setTransferring] = useState(false);
   const [transferError, setTransferError] = useState<string | null>(null);
   // The row (by accountId) whose actions menu is open — at most one at a time.
@@ -73,7 +75,10 @@ export function Members({
   useEffect(() => {
     if (menuFor === null) return;
     function onDocClick(e: MouseEvent) {
-      if (menuHostRef.current && !menuHostRef.current.contains(e.target as Node)) {
+      if (
+        menuHostRef.current &&
+        !menuHostRef.current.contains(e.target as Node)
+      ) {
         setMenuFor(null);
       }
     }
@@ -85,7 +90,9 @@ export function Members({
   // items and Esc out — only on open.
   useEffect(() => {
     if (menuFor === null) return;
-    menuHostRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    menuHostRef.current
+      ?.querySelector<HTMLElement>('[role="menuitem"]')
+      ?.focus();
   }, [menuFor]);
 
   // `keepError` lets a failure path re-sync the roster without wiping the message
@@ -139,7 +146,11 @@ export function Members({
     );
     try {
       await client.setMemberRole(workspaceId, accountId, role);
-      setStatus(role === "admin" ? `Promoted ${display} to admin` : `Made ${display} a member`);
+      setStatus(
+        role === "admin"
+          ? `Promoted ${display} to admin`
+          : `Made ${display} a member`,
+      );
       onMembersChanged?.();
     } catch (err) {
       setError(describeError(err));
@@ -212,7 +223,9 @@ export function Members({
                         aria-haspopup="menu"
                         aria-expanded={menuOpen}
                         aria-label={`Actions for ${display}`}
-                        onClick={() => setMenuFor(menuOpen ? null : m.accountId)}
+                        onClick={() =>
+                          setMenuFor(menuOpen ? null : m.accountId)
+                        }
                         disabled={busyId === m.accountId}
                       >
                         ⋯
@@ -233,7 +246,9 @@ export function Members({
                                   );
                                 }}
                               >
-                                {m.role === "admin" ? "Make member" : "Make admin"}
+                                {m.role === "admin"
+                                  ? "Make member"
+                                  : "Make admin"}
                               </button>
                               <button
                                 type="button"

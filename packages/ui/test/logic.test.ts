@@ -9,10 +9,22 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  formatRelative, formatCountdown, colorForName, initialsFor,
-  distinctRepos, boardRepos, matchesRepo, defaultRepo, statusLabel, formatActiveDuration, dayBucket,
-  parseMention, extractTarget, mentionableAgents,
-  globsCover, groupActiveClaims,
+  formatRelative,
+  formatCountdown,
+  colorForName,
+  initialsFor,
+  distinctRepos,
+  boardRepos,
+  matchesRepo,
+  defaultRepo,
+  statusLabel,
+  formatActiveDuration,
+  dayBucket,
+  parseMention,
+  extractTarget,
+  mentionableAgents,
+  globsCover,
+  groupActiveClaims,
 } from "../src/logic.js";
 
 const NOW_MS = Date.parse("2026-06-24T12:00:00.000Z");
@@ -116,7 +128,10 @@ describe("boardRepos", () => {
       agents: [{ repo: "agent-only-repo" }],
       announcements: [],
     };
-    expect(boardRepos(board)).toEqual(["agent-only-repo", "only-repo-with-tasks"]);
+    expect(boardRepos(board)).toEqual([
+      "agent-only-repo",
+      "only-repo-with-tasks",
+    ]);
   });
 
   it("skips null/empty repos (an agent with no session yet)", () => {
@@ -173,7 +188,10 @@ describe("mentionableAgents", () => {
   });
 
   it("includes every live agent across repos in All-repos mode", () => {
-    expect(mentionableAgents(agents, "__all__")).toEqual(["BlueWolf", "RedDragon"]);
+    expect(mentionableAgents(agents, "__all__")).toEqual([
+      "BlueWolf",
+      "RedDragon",
+    ]);
     expect(mentionableAgents(agents, null)).toEqual(["BlueWolf", "RedDragon"]);
   });
 
@@ -250,10 +268,23 @@ describe("groupActiveClaims", () => {
     agentName: string,
     pathGlobs: string[],
     createdAt: string,
-    extra: Partial<{ model: string; program: string; repo: string; status: string; intent: string }> = {},
+    extra: Partial<{
+      model: string;
+      program: string;
+      repo: string;
+      status: string;
+      intent: string;
+    }> = {},
   ) => ({
-    agentName, pathGlobs, createdAt, intent: "do work", repo: "repo",
-    model: "claude-code", program: "claude-code", status: "active", ...extra,
+    agentName,
+    pathGlobs,
+    createdAt,
+    intent: "do work",
+    repo: "repo",
+    model: "claude-code",
+    program: "claude-code",
+    status: "active",
+    ...extra,
   });
 
   it("returns one group per agent with a lone claim as its sole primary", () => {
@@ -269,8 +300,12 @@ describe("groupActiveClaims", () => {
     const narrow = claim("a", ["src/ingest/x.py", "src/tests/**"], iso(-10));
     const groups = groupActiveClaims([broad, narrow]);
     expect(groups).toHaveLength(1);
-    expect(groups[0].primaries.map((c) => c.pathGlobs)).toEqual([broad.pathGlobs]);
-    expect(groups[0].narrower.map((c) => c.pathGlobs)).toEqual([narrow.pathGlobs]);
+    expect(groups[0].primaries.map((c) => c.pathGlobs)).toEqual([
+      broad.pathGlobs,
+    ]);
+    expect(groups[0].narrower.map((c) => c.pathGlobs)).toEqual([
+      narrow.pathGlobs,
+    ]);
   });
 
   it("keeps two non-overlapping claims both as visible primaries", () => {
@@ -298,7 +333,9 @@ describe("groupActiveClaims", () => {
   });
 
   it("carries representative header fields from the group's newest claim", () => {
-    const groups = groupActiveClaims([claim("a", ["x/**"], iso(0), { model: "opus", repo: "R" })]);
+    const groups = groupActiveClaims([
+      claim("a", ["x/**"], iso(0), { model: "opus", repo: "R" }),
+    ]);
     expect(groups[0].model).toBe("opus");
     expect(groups[0].repo).toBe("R");
   });
@@ -321,7 +358,11 @@ describe("parseMention", () => {
   });
 
   it("allows hyphenated ordinal names like alex-6", () => {
-    expect(parseMention("yo @alex-6", 10)).toEqual({ start: 3, end: 10, query: "alex-6" });
+    expect(parseMention("yo @alex-6", 10)).toEqual({
+      start: 3,
+      end: 10,
+      query: "alex-6",
+    });
   });
 
   it("does NOT trigger on an @ that follows a non-space (e.g. an email)", () => {

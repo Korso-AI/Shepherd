@@ -10,14 +10,7 @@
  * self-host parity guard. truncateAll leaves the seeded workspace in place.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -57,7 +50,7 @@ async function seedWorkspace(pool: pg.Pool, slug = WS_SLUG): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -88,8 +81,8 @@ describe("join – workspace guard (no DB)", () => {
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId: "" }
-      )
+        { workspaceId: "" },
+      ),
     ).rejects.toBeInstanceOf(AuthError);
   });
 });
@@ -137,7 +130,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       // agentName is now `{normalizedHandle}-{ordinal}`, lowest free ordinal.
@@ -145,7 +138,7 @@ describe.skipIf(!dbAvailable)(
 
       // sessionId must be a UUID
       expect(result.sessionId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
 
@@ -159,16 +152,16 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       const agentCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM agents WHERE workspace_id = $1",
-        [workspaceId]
+        [workspaceId],
       );
       const sessionCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM sessions WHERE workspace_id = $1",
-        [workspaceId]
+        [workspaceId],
       );
 
       expect(Number(agentCount.rows[0]!.count)).toBe(1);
@@ -189,7 +182,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
       const second = await join(
         {
@@ -200,7 +193,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       expect(first.agentName).toBe("alex-rivera-1");
@@ -210,14 +203,14 @@ describe.skipIf(!dbAvailable)(
       // Two DISTINCT agent rows for the handle family.
       const agentCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM agents WHERE workspace_id = $1 AND name LIKE 'alex-rivera-%'",
-        [workspaceId]
+        [workspaceId],
       );
       expect(Number(agentCount.rows[0]!.count)).toBe(2);
 
       // The two sessions point at DIFFERENT agents.
       const agentIds = await pool.query<{ agent_id: string }>(
         "SELECT id AS agent_id FROM agents WHERE workspace_id = $1 AND name IN ('alex-rivera-1','alex-rivera-2')",
-        [workspaceId]
+        [workspaceId],
       );
       expect(agentIds.rows).toHaveLength(2);
     });
@@ -232,14 +225,14 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
       expect(first.agentName).toBe("alex-rivera-1");
 
       // Capture the original agent_id behind alex-rivera-1.
       const orig = await pool.query<{ id: string }>(
         "SELECT id FROM agents WHERE workspace_id = $1 AND name = $2",
-        [workspaceId, "alex-rivera-1"]
+        [workspaceId, "alex-rivera-1"],
       );
       const originalAgentId = orig.rows[0]!.id;
 
@@ -249,7 +242,7 @@ describe.skipIf(!dbAvailable)(
         `UPDATE sessions
          SET last_heartbeat_at = NOW() - INTERVAL '200 seconds'
          WHERE id = $1`,
-        [first.sessionId]
+        [first.sessionId],
       );
 
       const second = await join(
@@ -261,7 +254,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       // The lowest free ordinal is again 1 (its only session is stale), so the
@@ -270,14 +263,14 @@ describe.skipIf(!dbAvailable)(
 
       const agentCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM agents WHERE workspace_id = $1 AND name LIKE 'alex-rivera-%'",
-        [workspaceId]
+        [workspaceId],
       );
       expect(Number(agentCount.rows[0]!.count)).toBe(1);
 
       // The new session's agent_id equals the original agent row's id.
       const sess = await pool.query<{ agent_id: string }>(
         "SELECT agent_id FROM sessions WHERE id = $1",
-        [second.sessionId]
+        [second.sessionId],
       );
       expect(sess.rows[0]!.agent_id).toBe(originalAgentId);
     });
@@ -292,7 +285,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
       expect(first.agentName).toBe("alex-rivera-1");
 
@@ -306,7 +299,7 @@ describe.skipIf(!dbAvailable)(
           program: "codex",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       // Must get -2 (NOT a duplicate -1, NOT a random fallback).
@@ -326,7 +319,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
       expect(result.agentName).toBe("founder-1");
     });
@@ -341,13 +334,13 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       // No handle could be derived → PascalCase generated name, no ordinal.
       expect(result.agentName).toMatch(/^[A-Z][a-z]+[A-Z][a-z]+$/);
       expect(result.sessionId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
 
@@ -361,13 +354,13 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           // model omitted
         },
-        tenant
+        tenant,
       );
       expect(result.agentName).toBe("alex-rivera-1");
 
       const { rows } = await pool.query<{ model: string | null }>(
         "SELECT model FROM agents WHERE workspace_id = $1 AND name = $2",
-        [workspaceId, "alex-rivera-1"]
+        [workspaceId, "alex-rivera-1"],
       );
       expect(rows[0]!.model).toBeNull();
     });
@@ -387,15 +380,15 @@ describe.skipIf(!dbAvailable)(
             program: "claude",
             model: "claude-3-5-sonnet",
           },
-          tenant
-        )
+          tenant,
+        ),
       ).rejects.toBeInstanceOf(ValidationError);
 
       const agentCount = await pool.query<{ count: string }>(
-        "SELECT COUNT(*)::text AS count FROM agents"
+        "SELECT COUNT(*)::text AS count FROM agents",
       );
       const sessionCount = await pool.query<{ count: string }>(
-        "SELECT COUNT(*)::text AS count FROM sessions"
+        "SELECT COUNT(*)::text AS count FROM sessions",
       );
       expect(Number(agentCount.rows[0]!.count)).toBe(0);
       expect(Number(sessionCount.rows[0]!.count)).toBe(0);
@@ -415,16 +408,22 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO agents (workspace_id, name, human, program, model)
          VALUES ($1, $2, $3, $4, $5)`,
-        [workspaceId, "alex-rivera-1", "Alex Rivera", "claude", "claude-3-5-sonnet"]
+        [
+          workspaceId,
+          "alex-rivera-1",
+          "Alex Rivera",
+          "claude",
+          "claude-3-5-sonnet",
+        ],
       );
       const liveAgent = await pool.query<{ id: string }>(
         "SELECT id FROM agents WHERE workspace_id = $1 AND name = $2",
-        [workspaceId, "alex-rivera-1"]
+        [workspaceId, "alex-rivera-1"],
       );
       await pool.query(
         `INSERT INTO sessions (workspace_id, agent_id, repo, branch)
          VALUES ($1, $2, $3, $4)`,
-        [workspaceId, liveAgent.rows[0]!.id, "org/repo", "main"]
+        [workspaceId, liveAgent.rows[0]!.id, "org/repo", "main"],
       );
 
       // Also pre-seed a LIVE alex-rivera-2 so the FIRST createAgent at -2
@@ -432,16 +431,22 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO agents (workspace_id, name, human, program, model)
          VALUES ($1, $2, $3, $4, $5)`,
-        [workspaceId, "alex-rivera-2", "Alex Rivera", "codex", "claude-3-5-sonnet"]
+        [
+          workspaceId,
+          "alex-rivera-2",
+          "Alex Rivera",
+          "codex",
+          "claude-3-5-sonnet",
+        ],
       );
       const liveAgent2 = await pool.query<{ id: string }>(
         "SELECT id FROM agents WHERE workspace_id = $1 AND name = $2",
-        [workspaceId, "alex-rivera-2"]
+        [workspaceId, "alex-rivera-2"],
       );
       await pool.query(
         `INSERT INTO sessions (workspace_id, agent_id, repo, branch)
          VALUES ($1, $2, $3, $4)`,
-        [workspaceId, liveAgent2.rows[0]!.id, "org/repo", "main"]
+        [workspaceId, liveAgent2.rows[0]!.id, "org/repo", "main"],
       );
 
       // Now -1 and -2 are both live; the join must allocate -3.
@@ -454,12 +459,12 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        tenant
+        tenant,
       );
 
       expect(result.agentName).toBe("alex-rivera-3");
       expect(result.sessionId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
 
@@ -475,13 +480,13 @@ describe.skipIf(!dbAvailable)(
          ON CONFLICT (account_id) DO UPDATE
            SET display_name = EXCLUDED.display_name,
                github_login = EXCLUDED.github_login`,
-        [accountId, "Alex Rivera", "alexr"]
+        [accountId, "Alex Rivera", "alexr"],
       );
       // A member of the seeded workspace.
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (account_id, workspace_id) DO NOTHING`,
-        [accountId, workspaceId]
+        [accountId, workspaceId],
       );
 
       // Body workspace MATCHES the credential's workspace slug (C1 guard).
@@ -494,14 +499,14 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId, accountId, role: "member" }
+        { workspaceId, accountId, role: "member" },
       );
 
       // The handle derives from the github_login, not the client-supplied human.
       expect(result.agentName).toBe("alexr-1");
       const { rows } = await pool.query<{ human: string }>(
         "SELECT human FROM agents WHERE workspace_id = $1 AND name = $2",
-        [workspaceId, "alexr-1"]
+        [workspaceId, "alexr-1"],
       );
       expect(rows[0]!.human).toBe("alexr");
     });
@@ -518,12 +523,12 @@ describe.skipIf(!dbAvailable)(
            SET display_name = EXCLUDED.display_name,
                github_login = EXCLUDED.github_login,
                email        = EXCLUDED.email`,
-        [accountId, "founder@acme.test"]
+        [accountId, "founder@acme.test"],
       );
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (account_id, workspace_id) DO NOTHING`,
-        [accountId, workspaceId]
+        [accountId, workspaceId],
       );
 
       const result = await join(
@@ -535,13 +540,13 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId, accountId, role: "member" }
+        { workspaceId, accountId, role: "member" },
       );
 
       expect(result.agentName).toBe("founder-1");
       const { rows } = await pool.query<{ human: string }>(
         "SELECT human FROM agents WHERE workspace_id = $1 AND name = $2",
-        [workspaceId, "founder-1"]
+        [workspaceId, "founder-1"],
       );
       // Stored human is the clean local-part, not the full email.
       expect(rows[0]!.human).toBe("founder");
@@ -562,12 +567,12 @@ describe.skipIf(!dbAvailable)(
          ON CONFLICT (account_id) DO UPDATE
            SET display_name = EXCLUDED.display_name,
                github_login = EXCLUDED.github_login`,
-        [accountId, "Alex Rivera", "alexr"]
+        [accountId, "Alex Rivera", "alexr"],
       );
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (account_id, workspace_id) DO NOTHING`,
-        [accountId, workspaceId]
+        [accountId, workspaceId],
       );
 
       // Body names a DIFFERENT workspace than the credential's seeded slug.
@@ -580,7 +585,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId, accountId, role: "member" }
+        { workspaceId, accountId, role: "member" },
       );
 
       await expect(promise).rejects.toBeInstanceOf(AuthError);
@@ -589,11 +594,11 @@ describe.skipIf(!dbAvailable)(
       // No session/agent created.
       const agentCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM agents WHERE workspace_id = $1",
-        [workspaceId]
+        [workspaceId],
       );
       const sessionCount = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM sessions WHERE workspace_id = $1",
-        [workspaceId]
+        [workspaceId],
       );
       expect(Number(agentCount.rows[0]!.count)).toBe(0);
       expect(Number(sessionCount.rows[0]!.count)).toBe(0);
@@ -612,7 +617,10 @@ describe.skipIf(!dbAvailable)(
     async function seedAccountMember(
       accountId: string,
       wsId: string,
-      { displayName, githubLogin }: { displayName: string; githubLogin: string | null }
+      {
+        displayName,
+        githubLogin,
+      }: { displayName: string; githubLogin: string | null },
     ): Promise<void> {
       await pool.query(
         `INSERT INTO account_profiles (account_id, display_name, github_login)
@@ -620,12 +628,12 @@ describe.skipIf(!dbAvailable)(
          ON CONFLICT (account_id) DO UPDATE
            SET display_name = EXCLUDED.display_name,
                github_login = EXCLUDED.github_login`,
-        [accountId, displayName, githubLogin]
+        [accountId, displayName, githubLogin],
       );
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (account_id, workspace_id) DO NOTHING`,
-        [accountId, wsId]
+        [accountId, wsId],
       );
     }
 
@@ -645,7 +653,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId: "", accountId, via: "agent" }
+        { workspaceId: "", accountId, via: "agent" },
       );
 
       // Identity: github_login preferred over the client-supplied human.
@@ -654,7 +662,7 @@ describe.skipIf(!dbAvailable)(
       // The session landed in the marker-slug workspace.
       const { rows } = await pool.query<{ workspace_id: string }>(
         "SELECT workspace_id FROM sessions WHERE id = $1",
-        [result.sessionId]
+        [result.sessionId],
       );
       expect(rows[0]!.workspace_id).toBe(workspaceId);
     });
@@ -667,7 +675,7 @@ describe.skipIf(!dbAvailable)(
         `INSERT INTO account_profiles (account_id, display_name, github_login)
          VALUES ($1, $2, $3)
          ON CONFLICT (account_id) DO NOTHING`,
-        [accountId, "Alex Rivera", "octo-alex"]
+        [accountId, "Alex Rivera", "octo-alex"],
       );
 
       const promise = join(
@@ -679,7 +687,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId: "", accountId, via: "agent" }
+        { workspaceId: "", accountId, via: "agent" },
       );
 
       // A real-but-non-member slug is INDISTINGUISHABLE from an unknown slug:
@@ -688,7 +696,7 @@ describe.skipIf(!dbAvailable)(
       await expect(promise).rejects.toMatchObject({ status: 404 });
 
       const sessionCount = await pool.query<{ count: string }>(
-        "SELECT COUNT(*)::text AS count FROM sessions"
+        "SELECT COUNT(*)::text AS count FROM sessions",
       );
       expect(Number(sessionCount.rows[0]!.count)).toBe(0);
     });
@@ -699,7 +707,7 @@ describe.skipIf(!dbAvailable)(
         `INSERT INTO account_profiles (account_id, display_name, github_login)
          VALUES ($1, $2, $3)
          ON CONFLICT (account_id) DO NOTHING`,
-        [accountId, "Alex Rivera", "octo-alex"]
+        [accountId, "Alex Rivera", "octo-alex"],
       );
 
       const promise = join(
@@ -711,14 +719,14 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId: "", accountId, via: "agent" }
+        { workspaceId: "", accountId, via: "agent" },
       );
 
       await expect(promise).rejects.toBeInstanceOf(AuthError);
       await expect(promise).rejects.toMatchObject({ status: 404 });
 
       const sessionCount = await pool.query<{ count: string }>(
-        "SELECT COUNT(*)::text AS count FROM sessions"
+        "SELECT COUNT(*)::text AS count FROM sessions",
       );
       expect(Number(sessionCount.rows[0]!.count)).toBe(0);
     });
@@ -734,10 +742,14 @@ describe.skipIf(!dbAvailable)(
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, 'member')
          ON CONFLICT (account_id, workspace_id) DO NOTHING`,
-        [accountId, wsB]
+        [accountId, wsB],
       );
 
-      const acctTenant: TenantContext = { workspaceId: "", accountId, via: "agent" };
+      const acctTenant: TenantContext = {
+        workspaceId: "",
+        accountId,
+        via: "agent",
+      };
 
       const inA = await join(
         {
@@ -748,7 +760,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        acctTenant
+        acctTenant,
       );
       const inB = await join(
         {
@@ -759,21 +771,21 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        acctTenant
+        acctTenant,
       );
 
       expect(inB.sessionId).not.toBe(inA.sessionId);
 
       const a = await pool.query<{ workspace_id: string }>(
         "SELECT workspace_id FROM sessions WHERE id = $1",
-        [inA.sessionId]
+        [inA.sessionId],
       );
       const b = await pool.query<{ workspace_id: string }>(
         "SELECT workspace_id FROM sessions WHERE id = $1",
-        [inB.sessionId]
+        [inB.sessionId],
       );
       expect(a.rows[0]!.workspace_id).toBe(workspaceId);
       expect(b.rows[0]!.workspace_id).toBe(wsB);
     });
-  }
+  },
 );

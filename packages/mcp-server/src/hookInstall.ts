@@ -23,7 +23,14 @@
  * protocol-level and universal, no environment sniffing.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, renameSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  copyFileSync,
+  existsSync,
+  renameSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,9 +93,13 @@ const HOOK_MARKER = "shepherd-inbox-hook";
  * disambiguate a bare `.js` on older Node versions. The bundle imports only
  * node built-ins, so it runs from any path with no node_modules.
  */
-export function ensureHookScript(homeDir: string, hookScriptSource?: string): string | null {
+export function ensureHookScript(
+  homeDir: string,
+  hookScriptSource?: string,
+): string | null {
   const source =
-    hookScriptSource ?? join(dirname(fileURLToPath(import.meta.url)), "inboxHook.js");
+    hookScriptSource ??
+    join(dirname(fileURLToPath(import.meta.url)), "inboxHook.js");
   try {
     if (!existsSync(source)) return null;
     const dest = join(homeDir, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
@@ -188,18 +199,18 @@ export async function autoInstallHooks({
     writeFileSync(
       recordFile,
       JSON.stringify({ status, at: new Date().toISOString() }, null, 2) + "\n",
-      "utf8"
+      "utf8",
     );
     if (status === "installed") {
       log(
         `[shepherd] Installed the announcement-delivery hook for ${client} ` +
-          `(disable by removing it, or set SHEPHERD_NO_AUTO_HOOKS=1 to never auto-install).`
+          `(disable by removing it, or set SHEPHERD_NO_AUTO_HOOKS=1 to never auto-install).`,
       );
     }
     return { client, status };
   } catch (err) {
     log(
-      `[shepherd] hook auto-install skipped: ${err instanceof Error ? err.message : String(err)}`
+      `[shepherd] hook auto-install skipped: ${err instanceof Error ? err.message : String(err)}`,
     );
     return { client, status: "skipped" };
   }
@@ -212,7 +223,7 @@ export async function autoInstallHooks({
 function installClaude(
   homeDir: string,
   scriptPath: string | null,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): InstallResult["status"] {
   const settingsFile = join(homeDir, ".claude", "settings.json");
 
@@ -226,14 +237,18 @@ function installClaude(
   if (raw.trim()) {
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
         throw new Error("settings.json is not a JSON object");
       }
       settings = parsed as Record<string, unknown>;
     } catch {
       log(
         `[shepherd] ${settingsFile} could not be parsed — not touching it. ` +
-          `Add the hook manually (see the dashboard's Connect screen).`
+          `Add the hook manually (see the dashboard's Connect screen).`,
       );
       return "skipped";
     }
@@ -243,14 +258,18 @@ function installClaude(
   // anything else means a config shape we don't understand: leave it alone.
   const hooks = (settings["hooks"] ??= {});
   if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) {
-    log(`[shepherd] ${settingsFile} has an unexpected "hooks" shape — not touching it.`);
+    log(
+      `[shepherd] ${settingsFile} has an unexpected "hooks" shape — not touching it.`,
+    );
     return "skipped";
   }
   const hooksObj = hooks as Record<string, unknown>;
   for (const event of ["SessionStart", "PreToolUse"]) {
     const existing = (hooksObj[event] ??= []);
     if (!Array.isArray(existing)) {
-      log(`[shepherd] ${settingsFile} has an unexpected hooks.${event} shape — not touching it.`);
+      log(
+        `[shepherd] ${settingsFile} has an unexpected hooks.${event} shape — not touching it.`,
+      );
       return "skipped";
     }
   }
@@ -278,10 +297,11 @@ function installClaude(
 function installCodex(
   homeDir: string,
   scriptPath: string | null,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): InstallResult["status"] {
   const configFile = join(homeDir, ".codex", "config.toml");
-  const manualHint = "Add the hook manually (see the dashboard's Connect screen).";
+  const manualHint =
+    "Add the hook manually (see the dashboard's Connect screen).";
   const hookBlock = codexHookBlock(scriptPath);
 
   if (!existsSync(configFile)) {
@@ -296,7 +316,9 @@ function installCodex(
   // A non-array [hooks.UserPromptSubmit] table exists: appending our
   // array-of-tables entry would make the file invalid TOML. Bail.
   if (/^\s*\[hooks\.UserPromptSubmit\]\s*$/m.test(toml)) {
-    log(`[shepherd] ${configFile} defines [hooks.UserPromptSubmit] — not touching it. ${manualHint}`);
+    log(
+      `[shepherd] ${configFile} defines [hooks.UserPromptSubmit] — not touching it. ${manualHint}`,
+    );
     return "skipped";
   }
 
@@ -304,7 +326,9 @@ function installCodex(
     const hooksKey = /^\s*hooks\s*=\s*(.+)$/m.exec(toml);
     if (hooksKey && hooksKey[1].trim() !== "true") {
       // The user explicitly set hooks = false (or something else): their call.
-      log(`[shepherd] ${configFile} sets hooks = ${hooksKey[1].trim()} — respecting it. ${manualHint}`);
+      log(
+        `[shepherd] ${configFile} sets hooks = ${hooksKey[1].trim()} — respecting it. ${manualHint}`,
+      );
       return "skipped";
     }
     let updated = toml;
@@ -319,7 +343,11 @@ function installCodex(
 
   // No [features] table anywhere: append both (a trailing table header ends
   // whatever table the file was in — valid TOML).
-  writeFileSync(configFile, `${toml}\n[features]\nhooks = true\n${hookBlock}`, "utf8");
+  writeFileSync(
+    configFile,
+    `${toml}\n[features]\nhooks = true\n${hookBlock}`,
+    "utf8",
+  );
   return "installed";
 }
 
@@ -335,7 +363,7 @@ function installCodex(
 function installCursor(
   homeDir: string,
   scriptPath: string | null,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): InstallResult["status"] {
   const hooksFile = join(homeDir, ".cursor", "hooks.json");
 
@@ -349,14 +377,18 @@ function installCursor(
   if (raw.trim()) {
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed)
+      ) {
         throw new Error("hooks.json is not a JSON object");
       }
       config = parsed as Record<string, unknown>;
     } catch {
       log(
         `[shepherd] ${hooksFile} could not be parsed — not touching it. ` +
-          `Add the hook manually (see the dashboard's Connect screen).`
+          `Add the hook manually (see the dashboard's Connect screen).`,
       );
       return "skipped";
     }
@@ -365,14 +397,16 @@ function installCursor(
   config["version"] ??= 1;
   const hooks = (config["hooks"] ??= {});
   if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) {
-    log(`[shepherd] ${hooksFile} has an unexpected "hooks" shape — not touching it.`);
+    log(
+      `[shepherd] ${hooksFile} has an unexpected "hooks" shape — not touching it.`,
+    );
     return "skipped";
   }
   const hooksObj = hooks as Record<string, unknown>;
   const entries = (hooksObj["beforeSubmitPrompt"] ??= []);
   if (!Array.isArray(entries)) {
     log(
-      `[shepherd] ${hooksFile} has an unexpected hooks.beforeSubmitPrompt shape — not touching it.`
+      `[shepherd] ${hooksFile} has an unexpected hooks.beforeSubmitPrompt shape — not touching it.`,
     );
     return "skipped";
   }
@@ -391,17 +425,20 @@ function installCursor(
 function installPi(
   homeDir: string,
   extensionSource: string | undefined,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): InstallResult["status"] {
   // The bundled extension ships next to this module in dist/. In dev (running
   // from src/) there is no bundle — that resolves to a missing file and skips.
   const source =
-    extensionSource ?? join(dirname(fileURLToPath(import.meta.url)), "inboxExtension.js");
+    extensionSource ??
+    join(dirname(fileURLToPath(import.meta.url)), "inboxExtension.js");
   const dest = join(homeDir, ".pi", "agent", "extensions", "shepherd-inbox.js");
 
   if (existsSync(dest)) return "already-present";
   if (!existsSync(source)) {
-    log(`[shepherd] bundled Pi extension not found at ${source} — skipping auto-install.`);
+    log(
+      `[shepherd] bundled Pi extension not found at ${source} — skipping auto-install.`,
+    );
     return "skipped";
   }
   mkdirSync(dirname(dest), { recursive: true });

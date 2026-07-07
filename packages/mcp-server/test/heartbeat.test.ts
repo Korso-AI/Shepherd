@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createHeartbeat } from "../src/heartbeat.js";
-import { HubUnreachable, HubRequestError, type HubClient } from "../src/hubClient.js";
+import {
+  HubUnreachable,
+  HubRequestError,
+  type HubClient,
+} from "../src/hubClient.js";
 
 const SESSION_ID = "11111111-1111-1111-1111-111111111111";
 const INTERVAL_SECONDS = 30;
@@ -22,18 +26,25 @@ describe("createHeartbeat", () => {
   // ---- happy path ---------------------------------------------------------
   it("POSTs /heartbeat with { sessionId } after each interval", async () => {
     const hubClient = makeHubClient();
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
 
     heartbeat.start(SESSION_ID);
     expect(hubClient.post).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
     expect(hubClient.post).toHaveBeenCalledTimes(1);
-    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", { sessionId: SESSION_ID });
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+    });
 
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
     expect(hubClient.post).toHaveBeenCalledTimes(2);
-    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", { sessionId: SESSION_ID });
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+    });
 
     heartbeat.stop();
   });
@@ -47,7 +58,12 @@ describe("createHeartbeat", () => {
       head: "abc123",
       truncated: false,
       entries: [
-        { kind: "committed" as const, sha: "abc123", message: "wip", paths: ["src/a.ts"] },
+        {
+          kind: "committed" as const,
+          sha: "abc123",
+          message: "wip",
+          paths: ["src/a.ts"],
+        },
       ],
     };
     const buildReport = vi.fn().mockResolvedValue(report);
@@ -79,7 +95,9 @@ describe("createHeartbeat", () => {
     heartbeat.start(SESSION_ID);
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
 
-    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", { sessionId: SESSION_ID });
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+    });
     heartbeat.stop();
   });
 
@@ -95,7 +113,9 @@ describe("createHeartbeat", () => {
     heartbeat.start(SESSION_ID);
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
 
-    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", { sessionId: SESSION_ID });
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+    });
     heartbeat.stop();
   });
 
@@ -131,27 +151,40 @@ describe("createHeartbeat", () => {
 
   it("does NOT add the flag when no sink is provided", async () => {
     const hubClient = makeHubClient();
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
 
     heartbeat.start(SESSION_ID);
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
 
-    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", { sessionId: SESSION_ID });
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+    });
     heartbeat.stop();
   });
 
   it("writes to the sink FIRST, then acks the delivered ids to the hub", async () => {
     const hubClient = makeHubClient();
-    hubClient.post.mockResolvedValue({ ok: true, announcements: [sampleAnnouncement] });
+    hubClient.post.mockResolvedValue({
+      ok: true,
+      announcements: [sampleAnnouncement],
+    });
     const order: string[] = [];
     const announcementSink = vi.fn(() => {
       order.push("sink");
     });
     // Record when the ack post happens relative to the sink write.
-    hubClient.post.mockImplementation(async (_path: string, body: Record<string, unknown>) => {
-      if (body.ackAnnouncementIds) order.push("ack");
-      return { ok: true, announcements: body.deliverAnnouncements ? [sampleAnnouncement] : [] };
-    });
+    hubClient.post.mockImplementation(
+      async (_path: string, body: Record<string, unknown>) => {
+        if (body.ackAnnouncementIds) order.push("ack");
+        return {
+          ok: true,
+          announcements: body.deliverAnnouncements ? [sampleAnnouncement] : [],
+        };
+      },
+    );
 
     const heartbeat = createHeartbeat({
       hubClient,
@@ -168,7 +201,7 @@ describe("createHeartbeat", () => {
     expect(order).toEqual(["sink", "ack"]);
     // The ack carries exactly the delivered ids.
     const ackCall = hubClient.post.mock.calls.find(
-      (c) => (c[1] as Record<string, unknown>).ackAnnouncementIds
+      (c) => (c[1] as Record<string, unknown>).ackAnnouncementIds,
     );
     expect(ackCall![1]).toEqual({
       sessionId: SESSION_ID,
@@ -198,7 +231,10 @@ describe("createHeartbeat", () => {
 
   it("does NOT ack (and keeps ticking) when the sink throws — leaves messages pending", async () => {
     const hubClient = makeHubClient();
-    hubClient.post.mockResolvedValue({ ok: true, announcements: [sampleAnnouncement] });
+    hubClient.post.mockResolvedValue({
+      ok: true,
+      announcements: [sampleAnnouncement],
+    });
     const announcementSink = vi.fn(() => {
       throw new Error("sink blew up");
     });
@@ -211,12 +247,12 @@ describe("createHeartbeat", () => {
 
     heartbeat.start(SESSION_ID);
     await expect(
-      vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000)
+      vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000),
     ).resolves.not.toThrow();
 
     // No ack was sent (the only post was the fetch beat).
     const ackCalls = hubClient.post.mock.calls.filter(
-      (c) => (c[1] as Record<string, unknown>).ackAnnouncementIds
+      (c) => (c[1] as Record<string, unknown>).ackAnnouncementIds,
     );
     expect(ackCalls).toHaveLength(0);
 
@@ -232,12 +268,15 @@ describe("createHeartbeat", () => {
     hubClient.post.mockRejectedValue(new HubUnreachable("down"));
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
     heartbeat.start(SESSION_ID);
 
     // Should not throw out of the interval callback.
     await expect(
-      vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000)
+      vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000),
     ).resolves.not.toThrow();
     expect(hubClient.post).toHaveBeenCalledTimes(1);
 
@@ -257,7 +296,10 @@ describe("createHeartbeat", () => {
       .mockResolvedValue({ ok: true });
     vi.spyOn(console, "error").mockImplementation(() => {});
 
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
     heartbeat.start(SESSION_ID);
 
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
@@ -271,7 +313,10 @@ describe("createHeartbeat", () => {
   // ---- lifecycle ----------------------------------------------------------
   it("stop() halts further posts", async () => {
     const hubClient = makeHubClient();
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
 
     heartbeat.start(SESSION_ID);
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
@@ -284,7 +329,10 @@ describe("createHeartbeat", () => {
 
   it("stop() is safe to call twice and when never started", () => {
     const hubClient = makeHubClient();
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
 
     expect(() => heartbeat.stop()).not.toThrow();
     heartbeat.start(SESSION_ID);
@@ -301,7 +349,10 @@ describe("createHeartbeat", () => {
       .spyOn(globalThis, "setInterval")
       .mockReturnValue({ unref } as unknown as ReturnType<typeof setInterval>);
 
-    const heartbeat = createHeartbeat({ hubClient, intervalSeconds: INTERVAL_SECONDS });
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+    });
     heartbeat.start(SESSION_ID);
 
     expect(setIntervalSpy).toHaveBeenCalledTimes(1);

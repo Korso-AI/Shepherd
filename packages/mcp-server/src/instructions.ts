@@ -34,7 +34,10 @@ function sanitizeWorkspace(workspace: string): string {
   return workspace.replace(/\s+/g, " ").slice(0, 64);
 }
 
-export function buildInstructions(state: LinkState, workspace?: string): string {
+export function buildInstructions(
+  state: LinkState,
+  workspace?: string,
+): string {
   switch (state) {
     case "linked":
       return (

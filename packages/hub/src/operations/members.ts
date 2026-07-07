@@ -67,7 +67,7 @@ import {
 async function requireOwnerAccount(
   db: Parameters<typeof findWorkspaceById>[0],
   workspaceId: string,
-  callerAccountId: string
+  callerAccountId: string,
 ): Promise<string> {
   const ws = await findWorkspaceById(db, workspaceId);
   if (ws === null) {
@@ -86,7 +86,7 @@ async function requireOwnerAccount(
  * roster). Strictly workspace-scoped via requireWorkspaceId.
  */
 export async function listWorkspaceMembers(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<ListMembersResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -103,7 +103,7 @@ export async function listWorkspaceMembers(
  */
 export async function removeMember(
   targetAccountId: string,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<{ removed: true; tokensRevoked: number }> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -128,7 +128,7 @@ export async function removeMember(
   // hand off. They must transfer ownership first, then be removed / leave.
   if (targetAccountId === ws.createdBy) {
     throw new ConflictError(
-      "The workspace owner cannot be removed; transfer ownership first."
+      "The workspace owner cannot be removed; transfer ownership first.",
     );
   }
 
@@ -142,7 +142,7 @@ export async function removeMember(
   // Last-admin guard: refuse to strip the workspace of its final admin.
   if (target.role === "admin" && (await countAdmins(pool, workspaceId)) <= 1) {
     throw new ConflictError(
-      "Cannot remove the last admin; promote or transfer another admin first."
+      "Cannot remove the last admin; promote or transfer another admin first.",
     );
   }
 
@@ -161,7 +161,7 @@ export async function removeMember(
  * a last admin cannot leave (409) — a workspace must always retain an admin.
  */
 export async function leaveWorkspace(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<{ left: true; tokensRevoked: number }> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -177,7 +177,7 @@ export async function leaveWorkspace(
   // Last-admin guard: the final admin must promote/transfer before leaving.
   if (own.role === "admin" && (await countAdmins(pool, workspaceId)) <= 1) {
     throw new ConflictError(
-      "You are the last admin; promote or transfer admin before leaving."
+      "You are the last admin; promote or transfer admin before leaving.",
     );
   }
 
@@ -201,7 +201,7 @@ export async function leaveWorkspace(
 export async function setMemberRole(
   targetAccountId: string,
   role: RoleT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<SetMemberRoleResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -227,7 +227,7 @@ export async function setMemberRole(
   // owner unable to demote themselves, the workspace always retains ≥1 admin).
   if (role === "member" && (await countAdmins(pool, workspaceId)) <= 1) {
     throw new ConflictError(
-      "Cannot demote the last admin; promote or transfer another admin first."
+      "Cannot demote the last admin; promote or transfer another admin first.",
     );
   }
 
@@ -244,7 +244,7 @@ export async function setMemberRole(
  */
 export async function transferOwnership(
   targetAccountId: string,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<TransferOwnershipResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);

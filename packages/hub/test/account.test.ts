@@ -17,14 +17,7 @@
  * hand, truncate + rate-limiter reset between tests.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -79,7 +72,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -89,12 +82,12 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -103,7 +96,7 @@ async function seedProfile(pool: pg.Pool, accountId: string): Promise<void> {
   await pool.query(
     `INSERT INTO account_profiles (account_id, display_name)
      VALUES ($1, $1) ON CONFLICT (account_id) DO NOTHING`,
-    [accountId]
+    [accountId],
   );
 }
 
@@ -112,12 +105,12 @@ async function seedAgentToken(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  plaintext: string
+  plaintext: string,
 ): Promise<string> {
   await pool.query(
     `INSERT INTO api_tokens (account_id, workspace_id, token_hash, name)
      VALUES ($1, $2, $3, 'test-token')`,
-    [accountId, workspaceId, hashToken(plaintext)]
+    [accountId, workspaceId, hashToken(plaintext)],
   );
   return plaintext;
 }
@@ -126,33 +119,42 @@ async function seedAgentToken(
 async function seedAccountScopedToken(
   pool: pg.Pool,
   accountId: string,
-  plaintext: string
+  plaintext: string,
 ): Promise<string> {
   await pool.query(
     `INSERT INTO api_tokens (account_id, workspace_id, token_hash, name)
      VALUES ($1, NULL, $2, 'account-scoped-test')`,
-    [accountId, hashToken(plaintext)]
+    [accountId, hashToken(plaintext)],
   );
   return plaintext;
 }
 
-async function countLiveTokens(pool: pg.Pool, accountId: string): Promise<number> {
+async function countLiveTokens(
+  pool: pg.Pool,
+  accountId: string,
+): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
     `SELECT count(*) AS n FROM api_tokens WHERE account_id = $1 AND revoked_at IS NULL`,
-    [accountId]
+    [accountId],
   );
   return Number(rows[0]!.n);
 }
 
-async function profileExists(pool: pg.Pool, accountId: string): Promise<boolean> {
+async function profileExists(
+  pool: pg.Pool,
+  accountId: string,
+): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT 1 FROM account_profiles WHERE account_id = $1`,
-    [accountId]
+    [accountId],
   );
   return rows.length > 0;
 }
 
-async function workspaceExists(pool: pg.Pool, workspaceId: string): Promise<boolean> {
+async function workspaceExists(
+  pool: pg.Pool,
+  workspaceId: string,
+): Promise<boolean> {
   const { rows } = await pool.query(`SELECT 1 FROM workspaces WHERE id = $1`, [
     workspaceId,
   ]);
@@ -162,11 +164,11 @@ async function workspaceExists(pool: pg.Pool, workspaceId: string): Promise<bool
 async function membershipExists(
   pool: pg.Pool,
   accountId: string,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<boolean> {
   const { rows } = await pool.query(
     `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-    [accountId, workspaceId]
+    [accountId, workspaceId],
   );
   return rows.length > 0;
 }
@@ -217,7 +219,7 @@ describe.skipIf(!dbAvailable)(
         pool,
         "acct-agent",
         wsId,
-        "shp_delete_account_attempt"
+        "shp_delete_account_attempt",
       );
 
       const res = await app.inject({
@@ -248,7 +250,9 @@ describe.skipIf(!dbAvailable)(
         headers: bffHeaders("acct-solo"),
       });
       expect(res.statusCode).toBe(200);
-      expect(DeleteAccountResponse.parse(res.json())).toEqual({ deleted: true });
+      expect(DeleteAccountResponse.parse(res.json())).toEqual({
+        deleted: true,
+      });
 
       // The sole-member workspace is gone entirely (cascade), not orphaned.
       expect(await workspaceExists(pool, wsId)).toBe(false);
@@ -331,5 +335,5 @@ describe.skipIf(!dbAvailable)(
       expect(await membershipExists(pool, "acct-admin2", wsId)).toBe(true);
       expect(await profileExists(pool, "acct-admin1")).toBe(false);
     });
-  }
+  },
 );

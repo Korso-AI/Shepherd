@@ -6,6 +6,33 @@ actions against the hub. "Auth-agnostic" means the core holds no notion of who
 the user is or how they authenticated — it renders coordination state and issues
 operator actions, leaving authentication to the layer in front of it.
 
+## Install (npm)
+
+Requires **Node 20+** and peer dependencies `react` / `react-dom` (^18 or ^19).
+
+```tsx
+import {
+  ShepherdRoot,
+  createShepherdClient,
+  ShepherdClientProvider,
+} from "@korso/shepherd-ui";
+import "@korso/shepherd-ui/styles.css";
+
+const client = createShepherdClient({
+  baseUrl: "https://your-hub.example.com",
+  getAuthHeader: () => ({ Authorization: "Bearer …" }), // host-owned
+  onUnauthorized: () => { /* host-owned */ },
+});
+
+// Embed the full hosted shell:
+<ShepherdRoot client={client} onLogout={() => { /* host-owned */ }} />
+
+// Or compose lower-level pieces via ShepherdClientProvider + <Dashboard/>.
+```
+
+The library never reads tokens from storage — the host injects auth via
+`getAuthHeader` and handles 401s via `onUnauthorized`.
+
 ## Two build outputs
 
 One source tree, two Vite builds (`npm run build` runs both):
@@ -54,6 +81,6 @@ is fully served by the hub in this repo.
 
 ## License
 
-AGPL-3.0-only — see the repository [`LICENSE`](../../LICENSE) file and the
-licensing section of the [root README](../../README.md#license) (the AGPL's
-network-service clause applies; commercial licensing is available from Korso).
+AGPL-3.0-only — see the [repository LICENSE](https://github.com/Korso-AI/Shepherd/blob/main/LICENSE)
+and the [licensing section of the root README](https://github.com/Korso-AI/Shepherd#license)
+(the AGPL's network-service clause applies; commercial licensing is available from Korso).

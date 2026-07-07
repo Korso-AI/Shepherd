@@ -16,12 +16,12 @@ or you deploy one first: see
 
 ## Your hub
 
-| | |
-|---|---|
-| **HUB_URL** | `https://your-shepherd-hub.example.com` |
+|                |                                                                      |
+| -------------- | -------------------------------------------------------------------- |
+| **HUB_URL**    | `https://your-shepherd-hub.example.com`                              |
 | **TEAM_TOKEN** | shared team secret — see "Get the token" below. **Never commit it.** |
 
-That's all you *must* supply. (On a **hosted** hub you set `SHEPHERD_TOKEN` — a
+That's all you _must_ supply. (On a **hosted** hub you set `SHEPHERD_TOKEN` — a
 minted `shp_…` token from the dashboard — instead of `TEAM_TOKEN`; it carries
 its own workspace, so `WORKSPACE` is ignored.) The workspace defaults to
 `default`, and your identity is auto-detected from git — see
@@ -29,7 +29,7 @@ its own workspace, so `WORKSPACE` is ignored.) The workspace defaults to
 
 ## 1. Prerequisites
 
-You need **Node 18+**. That's it — the server is published to npm as
+You need **Node 20+**. That's it — the server is published to npm as
 [`@korso/shepherd`](https://www.npmjs.com/package/@korso/shepherd) and runs via
 `npx`, so there's nothing to clone or build. (Building from source is only needed
 for development — see the end.)
@@ -49,13 +49,13 @@ For a self-hosted deployment, store the team token in your own secret store. The
 Shepherd is a **standard stdio MCP server**, so it works with any MCP-capable
 agent — Claude Code, Codex, Pi, and others. The launch command
 (`npx -y --package=@korso/shepherd shepherd-mcp`) and the two required env vars are **identical
-everywhere**; only *where you paste them* differs. Find your client below.
+everywhere**; only _where you paste them_ differs. Find your client below.
 
 The two values you paste in every case:
 
-| | |
-|---|---|
-| `HUB_URL` | `https://your-shepherd-hub.example.com` |
+|              |                                                                                                |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `HUB_URL`    | `https://your-shepherd-hub.example.com`                                                        |
 | `TEAM_TOKEN` | the token from §2 (**hosted hub:** set `SHEPHERD_TOKEN` — your minted `shp_…` token — instead) |
 
 > 💡 Set `PROGRAM` to your tool (`claude-code`, `codex`, `pi`, …) so you show up
@@ -63,7 +63,7 @@ The two values you paste in every case:
 > `claude-code` — but worth one extra line if you're not on Claude. Every other
 > identity field is auto-detected from git (see [§4](#4-optional-overrides)).
 
-> ℹ️ **Installed per client, not once.** `npx` caches the *package* machine-wide,
+> ℹ️ **Installed per client, not once.** `npx` caches the _package_ machine-wide,
 > so the code is fetched once. But each tool only launches the MCP servers listed
 > in **its own** config — registering in Claude does nothing for Codex or Pi. If
 > you use more than one tool, add the entry to each. Same command, same two vars,
@@ -80,7 +80,7 @@ The two values you paste in every case:
 **Recommended — `claude mcp add` (user scope).** One command registers it for
 every project on your machine. Written as a **single line** so it pastes cleanly
 into PowerShell, cmd, bash, and zsh alike (on PowerShell the bash `\`
-line-continuation does *not* work — keep it one line):
+line-continuation does _not_ work — keep it one line):
 
 ```powershell
 claude mcp add shepherd -s user -e HUB_URL=https://your-shepherd-hub.example.com -e TEAM_TOKEN=<paste-token-here> -- npx -y --package=@korso/shepherd shepherd-mcp
@@ -215,15 +215,15 @@ startup in this order: **env var → git detection → fallback**. You only set 
 if you want to override what's detected. The most common one to set is `MODEL`,
 since it's the only field that is never auto-detected.
 
-| Variable | If you omit it | Set it when… |
-|---|---|---|
-| `WORKSPACE` | defaults to `default`; a repo's committed `.shepherd` marker wins over it, and it's **ignored entirely with `SHEPHERD_TOKEN`** (the token carries the workspace) | (self-host) a maintainer points you at a different workspace; **must match the hub's `ALLOWED_WORKSPACE` exactly** or every call degrades to "proceeding uncoordinated" |
-| `REPO` | detected from `git remote origin` as `owner/repo`, else the repo folder name, else `unknown-repo` | the auto-detected slug is wrong/ugly |
-| `BRANCH` | detected via `git rev-parse --abbrev-ref HEAD`, else `HEAD` | you want a label other than the live branch |
-| `BASE_BRANCH` | detected as `origin/HEAD`, else `origin/main` / `origin/master` | your trunk has a non-standard name (used for the "what changed" heads-up) |
-| `HUMAN` | detected from git `user.name`, else the local-part of `user.email`, else a generated name | git identity is missing/shared, **or you run several agents at once and want distinct names** |
-| `PROGRAM` | defaults to `claude-code` | you're on a different tool (e.g. `codex`) |
-| `MODEL` | omitted (never detected) | you want your model shown in the presence feed |
+| Variable      | If you omit it                                                                                                                                                   | Set it when…                                                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WORKSPACE`   | defaults to `default`; a repo's committed `.shepherd` marker wins over it, and it's **ignored entirely with `SHEPHERD_TOKEN`** (the token carries the workspace) | (self-host) a maintainer points you at a different workspace; **must match the hub's `ALLOWED_WORKSPACE` exactly** or every call degrades to "proceeding uncoordinated" |
+| `REPO`        | detected from `git remote origin` as `owner/repo`, else the repo folder name, else `unknown-repo`                                                                | the auto-detected slug is wrong/ugly                                                                                                                                    |
+| `BRANCH`      | detected via `git rev-parse --abbrev-ref HEAD`, else `HEAD`                                                                                                      | you want a label other than the live branch                                                                                                                             |
+| `BASE_BRANCH` | detected as `origin/HEAD`, else `origin/main` / `origin/master`                                                                                                  | your trunk has a non-standard name (used for the "what changed" heads-up)                                                                                               |
+| `HUMAN`       | detected from git `user.name`, else the local-part of `user.email`, else a generated name                                                                        | git identity is missing/shared, **or you run several agents at once and want distinct names**                                                                           |
+| `PROGRAM`     | defaults to `claude-code`                                                                                                                                        | you're on a different tool (e.g. `codex`)                                                                                                                               |
+| `MODEL`       | omitted (never detected)                                                                                                                                         | you want your model shown in the presence feed                                                                                                                          |
 
 Example with overrides — add an `-e KEY=value` for each (single line; drop the
 ones you don't need):
@@ -263,15 +263,15 @@ No stderr + the process blocking on stdin = healthy (Ctrl+C to exit).
 
 ## Gotchas
 
-| Symptom | Fix |
-|---|---|
-| `shepherd` tools never appear in your client | Config is in a path your client doesn't load. **Claude Code:** usually `~/.claude/mcp.json` — run `claude mcp list`, and if it's missing register with `claude mcp add` (§3). **Codex:** the TOML table must be `mcp_servers` with an underscore, in `~/.codex/config.toml`. **Pi:** `~/.pi/agent/mcp.json`. Restart after fixing. |
-| `Configuration error — missing … env vars` | You're missing `HUB_URL`, or set neither `SHEPHERD_TOKEN` nor `TEAM_TOKEN` — those are the only required vars. |
-| Tools return a "not linked" advisory | The repo has no committed `.shepherd` marker, so the server is dormant here. Ask the agent to run `link` — it takes effect immediately (see "link a repo" below). |
-| Tools report "session not ready … proceeding uncoordinated" every time | The join failed. Almost always a stale token, or (self-host) a `WORKSPACE`/marker value that doesn't match the hub (leave `WORKSPACE` unset to use `default`). |
-| `npm error 404 … @korso/shepherd` | Package name typo, or the package isn't published yet — confirm with `npm view @korso/shepherd version` |
-| `401 Unauthorized` behaviour | Wrong/old `TEAM_TOKEN` — retrieve the current token from your deployment maintainer or secret store |
-| Your agent shows up under a surprising name/repo | Identity is auto-detected from git. Set `HUMAN`/`REPO`/`MODEL` explicitly (§4) to override. |
+| Symptom                                                                | Fix                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shepherd` tools never appear in your client                           | Config is in a path your client doesn't load. **Claude Code:** usually `~/.claude/mcp.json` — run `claude mcp list`, and if it's missing register with `claude mcp add` (§3). **Codex:** the TOML table must be `mcp_servers` with an underscore, in `~/.codex/config.toml`. **Pi:** `~/.pi/agent/mcp.json`. Restart after fixing. |
+| `Configuration error — missing … env vars`                             | You're missing `HUB_URL`, or set neither `SHEPHERD_TOKEN` nor `TEAM_TOKEN` — those are the only required vars.                                                                                                                                                                                                                     |
+| Tools return a "not linked" advisory                                   | The repo has no committed `.shepherd` marker, so the server is dormant here. Ask the agent to run `link` — it takes effect immediately (see "link a repo" below).                                                                                                                                                                  |
+| Tools report "session not ready … proceeding uncoordinated" every time | The join failed. Almost always a stale token, or (self-host) a `WORKSPACE`/marker value that doesn't match the hub (leave `WORKSPACE` unset to use `default`).                                                                                                                                                                     |
+| `npm error 404 … @korso/shepherd`                                      | Package name typo, or the package isn't published yet — confirm with `npm view @korso/shepherd version`                                                                                                                                                                                                                            |
+| `401 Unauthorized` behaviour                                           | Wrong/old `TEAM_TOKEN` — retrieve the current token from your deployment maintainer or secret store                                                                                                                                                                                                                                |
+| Your agent shows up under a surprising name/repo                       | Identity is auto-detected from git. Set `HUMAN`/`REPO`/`MODEL` explicitly (§4) to override.                                                                                                                                                                                                                                        |
 
 ## Behavior notes (so nothing surprises you)
 

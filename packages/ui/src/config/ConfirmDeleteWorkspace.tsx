@@ -73,8 +73,8 @@ export function ConfirmDeleteWorkspace({
         <h3 id={headingId}>Delete workspace</h3>
         <p id={descId} className="shepherd-modal__body">
           This permanently deletes <b>{workspaceName}</b> and all of its data:
-          agents, sessions, tasks, announcements, change history, tokens, invites,
-          and members. This cannot be undone.
+          agents, sessions, tasks, announcements, change history, tokens,
+          invites, and members. This cannot be undone.
         </p>
 
         <label htmlFor={`${headingId}-input`} className="shepherd-modal__label">

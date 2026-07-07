@@ -131,7 +131,9 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
     <section className="shepherd-invites" aria-labelledby={headingId}>
       <div className="card-head">
         <h3 id={headingId}>Invite people</h3>
-        <p className="card-sub">Share a code, or send a one-time join link by email.</p>
+        <p className="card-sub">
+          Share a code, or send a one-time join link by email.
+        </p>
       </div>
 
       <div className="card-body">
@@ -139,7 +141,9 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
 
         <div className="field invites">
           <label>Invite by code</label>
-          <p className="helper">Anyone with the code can join this workspace.</p>
+          <p className="helper">
+            Anyone with the code can join this workspace.
+          </p>
           {/* The freshly-created code sits ABOVE the button, so the newest
               invite is what you see first — the button below mints another. */}
           {invite && (
@@ -185,14 +189,20 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
               )}
             </div>
           )}
-          <button type="button" onClick={() => void createInvite()} disabled={busy}>
+          <button
+            type="button"
+            onClick={() => void createInvite()}
+            disabled={busy}
+          >
             Create invite
           </button>
         </div>
 
         <div className="field email-invite">
           <label htmlFor="invite-email">Invite by email</label>
-          <p className="helper">Send a one-time-use join link directly to someone&apos;s inbox.</p>
+          <p className="helper">
+            Send a one-time-use join link directly to someone&apos;s inbox.
+          </p>
           <div className="field__row">
             <input
               id="invite-email"
@@ -201,7 +211,11 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
               value={emailAddress}
               onChange={(e) => setEmailAddress(e.target.value)}
             />
-            <button type="button" onClick={() => void sendEmailInvite()} disabled={emailBusy}>
+            <button
+              type="button"
+              onClick={() => void sendEmailInvite()}
+              disabled={emailBusy}
+            >
               Send invite
             </button>
           </div>
@@ -211,7 +225,9 @@ export function Invites({ workspaceId, onMembersChanged }: InvitesProps) {
               disappears once its one-time link is redeemed (or it expires). */}
           {emailInvites.length > 0 && (
             <div className="email-invite__pending">
-              <p className="helper">Pending — they&apos;ll drop off this list when they join.</p>
+              <p className="helper">
+                Pending — they&apos;ll drop off this list when they join.
+              </p>
               <ul aria-label="Pending email invites">
                 {emailInvites.map((inv) => (
                   <li key={inv.id}>

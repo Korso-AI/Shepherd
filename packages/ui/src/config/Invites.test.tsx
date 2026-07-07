@@ -23,7 +23,10 @@ describe("Invites", () => {
   function renderInvites(props?: Partial<{ onMembersChanged: () => void }>) {
     return render(
       <ShepherdClientProvider client={client}>
-        <Invites workspaceId={WS_ID} onMembersChanged={props?.onMembersChanged} />
+        <Invites
+          workspaceId={WS_ID}
+          onMembersChanged={props?.onMembersChanged}
+        />
       </ShepherdClientProvider>,
     );
   }
@@ -37,12 +40,19 @@ describe("Invites", () => {
     });
     renderInvites();
 
-    await userEvent.click(screen.getByRole("button", { name: /create invite/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /create invite/i }),
+    );
 
     await waitFor(() =>
-      expect(client.createInvite).toHaveBeenCalledWith(WS_ID, expect.any(Object)),
+      expect(client.createInvite).toHaveBeenCalledWith(
+        WS_ID,
+        expect.any(Object),
+      ),
     );
-    await waitFor(() => expect(screen.getByText("INV-NEW")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("INV-NEW")).toBeInTheDocument(),
+    );
     expect(screen.getByText(/\/join\/INV-NEW/)).toBeInTheDocument();
   });
 
@@ -55,12 +65,20 @@ describe("Invites", () => {
     });
     renderInvites();
 
-    await userEvent.click(screen.getByRole("button", { name: /create invite/i }));
-    await waitFor(() => expect(screen.getByText("INV-NEW")).toBeInTheDocument());
+    await userEvent.click(
+      screen.getByRole("button", { name: /create invite/i }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText("INV-NEW")).toBeInTheDocument(),
+    );
 
-    await userEvent.click(screen.getByRole("button", { name: /revoke invite/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /revoke invite/i }),
+    );
 
-    await waitFor(() => expect(client.revokeInvite).toHaveBeenCalledWith(WS_ID, "INV-NEW"));
+    await waitFor(() =>
+      expect(client.revokeInvite).toHaveBeenCalledWith(WS_ID, "INV-NEW"),
+    );
   });
 
   it("shows the invite's use count alongside the code", async () => {
@@ -72,7 +90,9 @@ describe("Invites", () => {
     });
     renderInvites();
 
-    await userEvent.click(screen.getByRole("button", { name: /create invite/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /create invite/i }),
+    );
 
     expect(await screen.findByText(/2 \/ 5 uses/)).toBeInTheDocument();
   });
@@ -86,7 +106,9 @@ describe("Invites", () => {
     });
     renderInvites();
 
-    await userEvent.click(screen.getByRole("button", { name: /create invite/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /create invite/i }),
+    );
 
     expect(await screen.findByText(/^3 uses$/)).toBeInTheDocument();
     expect(screen.queryByText(/\/ null uses/)).not.toBeInTheDocument();
@@ -101,10 +123,15 @@ describe("Invites", () => {
     });
     renderInvites();
 
-    await userEvent.click(screen.getByRole("button", { name: /create invite/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /create invite/i }),
+    );
 
     const link = await screen.findByRole("link");
-    expect(link).toHaveAttribute("href", expect.stringContaining("/shepherd/join/INV%20NEW%2F42"));
+    expect(link).toHaveAttribute(
+      "href",
+      expect.stringContaining("/shepherd/join/INV%20NEW%2F42"),
+    );
   });
 
   it("notifies the parent via onMembersChanged after creating an invite", async () => {
@@ -117,7 +144,9 @@ describe("Invites", () => {
     const onMembersChanged = vi.fn();
     renderInvites({ onMembersChanged });
 
-    await userEvent.click(screen.getByRole("button", { name: /create invite/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /create invite/i }),
+    );
 
     await waitFor(() => expect(client.createInvite).toHaveBeenCalled());
     expect(onMembersChanged).toHaveBeenCalledTimes(1);
@@ -151,13 +180,21 @@ describe("Invites", () => {
     const onMembersChanged = vi.fn();
     renderInvites({ onMembersChanged });
 
-    await userEvent.type(screen.getByLabelText(/invite by email/i), "newcomer@example.com");
+    await userEvent.type(
+      screen.getByLabelText(/invite by email/i),
+      "newcomer@example.com",
+    );
     await userEvent.click(screen.getByRole("button", { name: /send invite/i }));
 
     await waitFor(() =>
-      expect(client.inviteByEmail).toHaveBeenCalledWith(WS_ID, "newcomer@example.com"),
+      expect(client.inviteByEmail).toHaveBeenCalledWith(
+        WS_ID,
+        "newcomer@example.com",
+      ),
     );
-    expect(await screen.findByText(/invite sent to newcomer@example\.com/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/invite sent to newcomer@example\.com/i),
+    ).toBeInTheDocument();
     expect(onMembersChanged).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText(/invite by email/i)).toHaveValue("");
   });
@@ -165,14 +202,23 @@ describe("Invites", () => {
   it("shows an error status when the email invite fails, without clearing the field", async () => {
     client.inviteByEmail = vi
       .fn()
-      .mockRejectedValue(new Error("HTTP 501: email invites are not configured on this server"));
+      .mockRejectedValue(
+        new Error("HTTP 501: email invites are not configured on this server"),
+      );
     renderInvites();
 
-    await userEvent.type(screen.getByLabelText(/invite by email/i), "newcomer@example.com");
+    await userEvent.type(
+      screen.getByLabelText(/invite by email/i),
+      "newcomer@example.com",
+    );
     await userEvent.click(screen.getByRole("button", { name: /send invite/i }));
 
-    expect(await screen.findByText(/not configured on this server/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/invite by email/i)).toHaveValue("newcomer@example.com");
+    expect(
+      await screen.findByText(/not configured on this server/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/invite by email/i)).toHaveValue(
+      "newcomer@example.com",
+    );
   });
 
   it("gates sendEmailInvite against double-submit", async () => {
@@ -184,7 +230,10 @@ describe("Invites", () => {
     );
     renderInvites();
 
-    await userEvent.type(screen.getByLabelText(/invite by email/i), "newcomer@example.com");
+    await userEvent.type(
+      screen.getByLabelText(/invite by email/i),
+      "newcomer@example.com",
+    );
     const btn = screen.getByRole("button", { name: /send invite/i });
     await userEvent.click(btn);
 
@@ -192,15 +241,28 @@ describe("Invites", () => {
     await userEvent.click(btn);
     expect(client.inviteByEmail).toHaveBeenCalledTimes(1);
 
-    resolve({ email: "newcomer@example.com", sentAt: "2026-06-30T00:00:00.000Z" });
+    resolve({
+      email: "newcomer@example.com",
+      sentAt: "2026-06-30T00:00:00.000Z",
+    });
     await waitFor(() => expect(btn).not.toBeDisabled());
   });
 
   it("lists the pending email invites on mount", async () => {
     client.listEmailInvites = vi.fn().mockResolvedValue({
       invites: [
-        { id: "einv_1", email: "one@example.com", sentAt: "2026-06-30T00:00:00.000Z", expiresAt: null },
-        { id: "einv_2", email: "two@example.com", sentAt: "2026-06-29T00:00:00.000Z", expiresAt: null },
+        {
+          id: "einv_1",
+          email: "one@example.com",
+          sentAt: "2026-06-30T00:00:00.000Z",
+          expiresAt: null,
+        },
+        {
+          id: "einv_2",
+          email: "two@example.com",
+          sentAt: "2026-06-29T00:00:00.000Z",
+          expiresAt: null,
+        },
       ],
     });
     renderInvites();
@@ -213,7 +275,9 @@ describe("Invites", () => {
   it("hides the pending list entirely when there are none", async () => {
     renderInvites(); // mock default: { invites: [] }
     await waitFor(() => expect(client.listEmailInvites).toHaveBeenCalled());
-    expect(screen.queryByRole("list", { name: /pending email invites/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("list", { name: /pending email invites/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("refreshes the pending list after sending an email invite", async () => {
@@ -222,13 +286,23 @@ describe("Invites", () => {
       .mockResolvedValueOnce({ invites: [] })
       .mockResolvedValue({
         invites: [
-          { id: "einv_1", email: "newcomer@example.com", sentAt: "2026-06-30T00:00:00.000Z", expiresAt: null },
+          {
+            id: "einv_1",
+            email: "newcomer@example.com",
+            sentAt: "2026-06-30T00:00:00.000Z",
+            expiresAt: null,
+          },
         ],
       });
     renderInvites();
-    await waitFor(() => expect(client.listEmailInvites).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(client.listEmailInvites).toHaveBeenCalledTimes(1),
+    );
 
-    await userEvent.type(screen.getByLabelText(/invite by email/i), "newcomer@example.com");
+    await userEvent.type(
+      screen.getByLabelText(/invite by email/i),
+      "newcomer@example.com",
+    );
     await userEvent.click(screen.getByRole("button", { name: /send invite/i }));
 
     expect(await screen.findByText("newcomer@example.com")).toBeInTheDocument();
@@ -241,7 +315,11 @@ describe("Invites", () => {
 
     await waitFor(() => expect(client.listEmailInvites).toHaveBeenCalled());
     // Inviting still works; the roster is just absent.
-    expect(screen.getByRole("button", { name: /send invite/i })).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: /pending email invites/i })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /send invite/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("list", { name: /pending email invites/i }),
+    ).not.toBeInTheDocument();
   });
 });

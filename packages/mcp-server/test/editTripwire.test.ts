@@ -57,7 +57,7 @@ describe("createEditTripwire", () => {
     const run = statusQueue(
       "", // baseline: clean tree
       " M src/a.ts\n", // tick 1: new dirty path → fire
-      " M src/a.ts\n M src/b.ts\n" // would be a second trigger — must not fire
+      " M src/a.ts\n M src/b.ts\n", // would be a second trigger — must not fire
     );
     const { tripwire, onEdits } = make(run);
     tripwire.start();
@@ -75,7 +75,7 @@ describe("createEditTripwire", () => {
 
   it("ignores paths already dirty at baseline (pre-existing user edits)", async () => {
     const { tripwire, onEdits } = make(
-      statusQueue(" M src/preexisting.ts\n?? notes.md\n")
+      statusQueue(" M src/preexisting.ts\n?? notes.md\n"),
     );
     tripwire.start();
     await armed();
@@ -162,7 +162,7 @@ describe("createEditTripwire", () => {
 
   it("a rename shows as one new status line and fires like any other edit", async () => {
     const { tripwire, onEdits } = make(
-      statusQueue("", "R  src/old.ts -> src/new.ts\n")
+      statusQueue("", "R  src/old.ts -> src/new.ts\n"),
     );
     tripwire.start();
     await armed();

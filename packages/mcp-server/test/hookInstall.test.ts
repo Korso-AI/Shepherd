@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { detectClient, autoInstallHooks } from "../src/hookInstall.js";
@@ -43,17 +49,25 @@ describe("detectClient", () => {
 describe("autoInstallHooks — claude", () => {
   it("creates ~/.claude/settings.json with SessionStart + PreToolUse on a fresh machine", async () => {
     const home = freshHome();
-    const result = await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
-    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    const settings = JSON.parse(
+      readFileSync(join(home, ".claude", "settings.json"), "utf8"),
+    );
     const flat = JSON.stringify(settings);
     expect(settings.hooks.SessionStart).toHaveLength(1);
     expect(settings.hooks.PreToolUse).toHaveLength(1);
     expect(settings.hooks.PreToolUse[0].matcher).toBe("*");
     expect(flat).toContain("shepherd-inbox-hook");
     // The attempt is recorded so it never re-runs.
-    expect(existsSync(join(home, ".shepherd", "hooks", "claude.json"))).toBe(true);
+    expect(existsSync(join(home, ".shepherd", "hooks", "claude.json"))).toBe(
+      true,
+    );
   });
 
   it("merges ADDITIVELY into existing settings — nothing lost, nothing reordered away", async () => {
@@ -62,15 +76,30 @@ describe("autoInstallHooks — claude", () => {
     const existing = {
       model: "opus",
       hooks: {
-        PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "my-linter" }] }],
+        PreToolUse: [
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "my-linter" }],
+          },
+        ],
       },
     };
-    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify(existing), "utf8");
+    writeFileSync(
+      join(home, ".claude", "settings.json"),
+      JSON.stringify(existing),
+      "utf8",
+    );
 
-    const result = await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
-    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    const settings = JSON.parse(
+      readFileSync(join(home, ".claude", "settings.json"), "utf8"),
+    );
     expect(settings.model).toBe("opus"); // untouched
     expect(settings.hooks.PreToolUse[0].hooks[0].command).toBe("my-linter"); // first, untouched
     expect(settings.hooks.PreToolUse).toHaveLength(2); // ours appended
@@ -80,13 +109,23 @@ describe("autoInstallHooks — claude", () => {
   it("NEVER touches an unparseable settings.json (skip + notice)", async () => {
     const home = freshHome();
     mkdirSync(join(home, ".claude"), { recursive: true });
-    writeFileSync(join(home, ".claude", "settings.json"), "{ definitely not json", "utf8");
+    writeFileSync(
+      join(home, ".claude", "settings.json"),
+      "{ definitely not json",
+      "utf8",
+    );
     const log = quiet();
 
-    const result = await autoInstallHooks({ clientName: "claude-code", homeDir: home, log });
+    const result = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log,
+    });
 
     expect(result.status).toBe("skipped");
-    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe("{ definitely not json");
+    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
+      "{ definitely not json",
+    );
     expect(log).toHaveBeenCalled();
   });
 
@@ -96,29 +135,52 @@ describe("autoInstallHooks — claude", () => {
     const manual = JSON.stringify({
       hooks: {
         SessionStart: [
-          { hooks: [{ type: "command", command: "npx -y --package=@korso/shepherd shepherd-inbox-hook" }] },
+          {
+            hooks: [
+              {
+                type: "command",
+                command: "npx -y --package=@korso/shepherd shepherd-inbox-hook",
+              },
+            ],
+          },
         ],
       },
     });
     writeFileSync(join(home, ".claude", "settings.json"), manual, "utf8");
 
-    const result = await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("already-present");
-    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(manual);
+    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
+      manual,
+    );
   });
 
   it("runs AT MOST once per machine+client: the record short-circuits later boots", async () => {
     const home = freshHome();
-    await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
+    await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log: quiet(),
+    });
 
     // Simulate the user deliberately removing the hook afterwards.
     writeFileSync(join(home, ".claude", "settings.json"), "{}", "utf8");
 
-    const again = await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
+    const again = await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log: quiet(),
+    });
     expect(again.status).toBe("already-attempted");
     // Respect the user's removal: not reinstalled.
-    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe("{}");
+    expect(readFileSync(join(home, ".claude", "settings.json"), "utf8")).toBe(
+      "{}",
+    );
   });
 });
 
@@ -127,7 +189,11 @@ describe("autoInstallHooks — codex", () => {
 
   it("creates ~/.codex/config.toml with the feature flag and the hook on a fresh machine", async () => {
     const h = home();
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
     const toml = readFileSync(join(h, ".codex", "config.toml"), "utf8");
@@ -140,10 +206,15 @@ describe("autoInstallHooks — codex", () => {
   it("appends to an existing config without [features], preserving its content", async () => {
     const h = home();
     mkdirSync(join(h, ".codex"), { recursive: true });
-    const existing = 'model = "o4"\n\n[mcp_servers.shepherd]\ncommand = "npx"\n';
+    const existing =
+      'model = "o4"\n\n[mcp_servers.shepherd]\ncommand = "npx"\n';
     writeFileSync(join(h, ".codex", "config.toml"), existing, "utf8");
 
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
     const toml = readFileSync(join(h, ".codex", "config.toml"), "utf8");
@@ -155,9 +226,17 @@ describe("autoInstallHooks — codex", () => {
   it("with [features] already having hooks = true, appends ONLY the hook block", async () => {
     const h = home();
     mkdirSync(join(h, ".codex"), { recursive: true });
-    writeFileSync(join(h, ".codex", "config.toml"), "[features]\nhooks = true\n", "utf8");
+    writeFileSync(
+      join(h, ".codex", "config.toml"),
+      "[features]\nhooks = true\n",
+      "utf8",
+    );
 
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
     const toml = readFileSync(join(h, ".codex", "config.toml"), "utf8");
@@ -169,9 +248,17 @@ describe("autoInstallHooks — codex", () => {
   it("with [features] but no hooks key, inserts hooks = true into that table", async () => {
     const h = home();
     mkdirSync(join(h, ".codex"), { recursive: true });
-    writeFileSync(join(h, ".codex", "config.toml"), "[features]\nweb_search = true\n", "utf8");
+    writeFileSync(
+      join(h, ".codex", "config.toml"),
+      "[features]\nweb_search = true\n",
+      "utf8",
+    );
 
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
     const toml = readFileSync(join(h, ".codex", "config.toml"), "utf8");
@@ -187,22 +274,35 @@ describe("autoInstallHooks — codex", () => {
     writeFileSync(join(h, ".codex", "config.toml"), existing, "utf8");
     const log = quiet();
 
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log,
+    });
 
     expect(result.status).toBe("skipped");
-    expect(readFileSync(join(h, ".codex", "config.toml"), "utf8")).toBe(existing);
+    expect(readFileSync(join(h, ".codex", "config.toml"), "utf8")).toBe(
+      existing,
+    );
   });
 
   it("skips when a non-array [hooks.UserPromptSubmit] table exists (append would corrupt)", async () => {
     const h = home();
     mkdirSync(join(h, ".codex"), { recursive: true });
-    const existing = '[features]\nhooks = true\n\n[hooks.UserPromptSubmit]\ncommand = "mine"\n';
+    const existing =
+      '[features]\nhooks = true\n\n[hooks.UserPromptSubmit]\ncommand = "mine"\n';
     writeFileSync(join(h, ".codex", "config.toml"), existing, "utf8");
 
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("skipped");
-    expect(readFileSync(join(h, ".codex", "config.toml"), "utf8")).toBe(existing);
+    expect(readFileSync(join(h, ".codex", "config.toml"), "utf8")).toBe(
+      existing,
+    );
   });
 
   it("detects a manual install (command already present) and leaves the file alone", async () => {
@@ -212,10 +312,16 @@ describe("autoInstallHooks — codex", () => {
       '[features]\nhooks = true\n\n[[hooks.UserPromptSubmit]]\ncommand = ["npx", "-y", "--package=@korso/shepherd", "shepherd-inbox-hook"]\n';
     writeFileSync(join(h, ".codex", "config.toml"), existing, "utf8");
 
-    const result = await autoInstallHooks({ clientName: "codex-mcp-client", homeDir: h, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "codex-mcp-client",
+      homeDir: h,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("already-present");
-    expect(readFileSync(join(h, ".codex", "config.toml"), "utf8")).toBe(existing);
+    expect(readFileSync(join(h, ".codex", "config.toml"), "utf8")).toBe(
+      existing,
+    );
   });
 });
 
@@ -287,23 +393,37 @@ describe("autoInstallHooks — gates", () => {
 
   it("unknown clients get nothing", async () => {
     const home = freshHome();
-    const result = await autoInstallHooks({ clientName: "mystery-ide", homeDir: home, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "mystery-ide",
+      homeDir: home,
+      log: quiet(),
+    });
     expect(result.status).toBe("unsupported");
     expect(existsSync(join(home, ".shepherd"))).toBe(false);
   });
 
   it("cursor: creates ~/.cursor/hooks.json with ONLY beforeSubmitPrompt (the verified event)", async () => {
     const home = freshHome();
-    const result = await autoInstallHooks({ clientName: "cursor-vscode", homeDir: home, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "cursor-vscode",
+      homeDir: home,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
-    const config = JSON.parse(readFileSync(join(home, ".cursor", "hooks.json"), "utf8"));
+    const config = JSON.parse(
+      readFileSync(join(home, ".cursor", "hooks.json"), "utf8"),
+    );
     expect(config.version).toBe(1);
     expect(config.hooks.beforeSubmitPrompt).toHaveLength(1);
-    expect(config.hooks.beforeSubmitPrompt[0].command).toContain("shepherd-inbox-hook");
+    expect(config.hooks.beforeSubmitPrompt[0].command).toContain(
+      "shepherd-inbox-hook",
+    );
     // The drain CONSUMES announcements, so no unverified event may be wired.
     expect(Object.keys(config.hooks)).toEqual(["beforeSubmitPrompt"]);
-    expect(existsSync(join(home, ".shepherd", "hooks", "cursor.json"))).toBe(true);
+    expect(existsSync(join(home, ".shepherd", "hooks", "cursor.json"))).toBe(
+      true,
+    );
   });
 
   it("cursor: merges ADDITIVELY into an existing hooks.json", async () => {
@@ -316,12 +436,22 @@ describe("autoInstallHooks — gates", () => {
         beforeSubmitPrompt: [{ command: "my-logger" }],
       },
     };
-    writeFileSync(join(home, ".cursor", "hooks.json"), JSON.stringify(existing), "utf8");
+    writeFileSync(
+      join(home, ".cursor", "hooks.json"),
+      JSON.stringify(existing),
+      "utf8",
+    );
 
-    const result = await autoInstallHooks({ clientName: "cursor-vscode", homeDir: home, log: quiet() });
+    const result = await autoInstallHooks({
+      clientName: "cursor-vscode",
+      homeDir: home,
+      log: quiet(),
+    });
 
     expect(result.status).toBe("installed");
-    const config = JSON.parse(readFileSync(join(home, ".cursor", "hooks.json"), "utf8"));
+    const config = JSON.parse(
+      readFileSync(join(home, ".cursor", "hooks.json"), "utf8"),
+    );
     expect(config.hooks.beforeShellExecution[0].command).toBe("my-guard"); // untouched
     expect(config.hooks.beforeSubmitPrompt[0].command).toBe("my-logger"); // first, untouched
     expect(config.hooks.beforeSubmitPrompt).toHaveLength(2); // ours appended
@@ -333,9 +463,15 @@ describe("autoInstallHooks — gates", () => {
     writeFileSync(join(home, ".cursor", "hooks.json"), "not json {", "utf8");
     const log = quiet();
 
-    const skipped = await autoInstallHooks({ clientName: "cursor-vscode", homeDir: home, log });
+    const skipped = await autoInstallHooks({
+      clientName: "cursor-vscode",
+      homeDir: home,
+      log,
+    });
     expect(skipped.status).toBe("skipped");
-    expect(readFileSync(join(home, ".cursor", "hooks.json"), "utf8")).toBe("not json {");
+    expect(readFileSync(join(home, ".cursor", "hooks.json"), "utf8")).toBe(
+      "not json {",
+    );
     expect(log).toHaveBeenCalled();
 
     // A manual install (marker present) in a second home is left byte-identical.
@@ -350,9 +486,15 @@ describe("autoInstallHooks — gates", () => {
       },
     });
     writeFileSync(join(home2, ".cursor", "hooks.json"), manual, "utf8");
-    const present = await autoInstallHooks({ clientName: "cursor-vscode", homeDir: home2, log: quiet() });
+    const present = await autoInstallHooks({
+      clientName: "cursor-vscode",
+      homeDir: home2,
+      log: quiet(),
+    });
     expect(present.status).toBe("already-present");
-    expect(readFileSync(join(home2, ".cursor", "hooks.json"), "utf8")).toBe(manual);
+    expect(readFileSync(join(home2, ".cursor", "hooks.json"), "utf8")).toBe(
+      manual,
+    );
   });
 
   it("never throws, even when the home dir is unwritable garbage", async () => {
@@ -387,7 +529,9 @@ describe("autoInstallHooks — locally cached hook script", () => {
     expect(result.status).toBe("installed");
     const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
     expect(readFileSync(cached, "utf8")).toBe("// bundled hook v1\n");
-    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    const settings = JSON.parse(
+      readFileSync(join(home, ".claude", "settings.json"), "utf8"),
+    );
     const command = settings.hooks.PreToolUse[0].hooks[0].command as string;
     expect(command).toBe(`node "${cached}"`);
     expect(command).not.toContain("npx");
@@ -397,7 +541,12 @@ describe("autoInstallHooks — locally cached hook script", () => {
     const home = freshHome();
     const source = join(home, "bundled-inboxHook.js");
     writeFileSync(source, "// v1\n");
-    await autoInstallHooks({ clientName: "claude-code", homeDir: home, hookScriptSource: source, log: quiet() });
+    await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      hookScriptSource: source,
+      log: quiet(),
+    });
 
     writeFileSync(source, "// v2\n");
     const second = await autoInstallHooks({
@@ -415,8 +564,14 @@ describe("autoInstallHooks — locally cached hook script", () => {
   it("falls back to the pinned npx command when there is no bundle to cache (dev/src runs)", async () => {
     const home = freshHome();
     // No hookScriptSource and no dist/ neighbor in src-mode tests → fallback.
-    await autoInstallHooks({ clientName: "claude-code", homeDir: home, log: quiet() });
-    const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
+    await autoInstallHooks({
+      clientName: "claude-code",
+      homeDir: home,
+      log: quiet(),
+    });
+    const settings = JSON.parse(
+      readFileSync(join(home, ".claude", "settings.json"), "utf8"),
+    );
     const command = settings.hooks.PreToolUse[0].hooks[0].command as string;
     expect(command).toMatch(/^npx -y --package=@korso\/shepherd@\d/);
   });
@@ -425,7 +580,12 @@ describe("autoInstallHooks — locally cached hook script", () => {
     const home = freshHome();
     const source = join(home, "bundled-inboxHook.js");
     writeFileSync(source, "// bundled\n");
-    await autoInstallHooks({ clientName: "codex", homeDir: home, hookScriptSource: source, log: quiet() });
+    await autoInstallHooks({
+      clientName: "codex",
+      homeDir: home,
+      hookScriptSource: source,
+      log: quiet(),
+    });
 
     const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
     const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");

@@ -10,7 +10,9 @@ import { ActiveList } from "../../src/components/ActiveList.js";
  */
 const NOW = Date.parse("2026-06-28T12:00:00.000Z");
 
-function task(over: Partial<WorkspaceTaskT> & { agentName: string }): WorkspaceTaskT {
+function task(
+  over: Partial<WorkspaceTaskT> & { agentName: string },
+): WorkspaceTaskT {
   return {
     agentName: over.agentName,
     program: over.program ?? "claude",
@@ -28,7 +30,13 @@ describe("ActiveList", () => {
   it("renders a plain card for one agent with a single claim", () => {
     render(
       <ActiveList
-        tasks={[task({ agentName: "Abe", intent: "refactor auth", pathGlobs: ["src/auth/**"] })]}
+        tasks={[
+          task({
+            agentName: "Abe",
+            intent: "refactor auth",
+            pathGlobs: ["src/auth/**"],
+          }),
+        ]}
         nowMs={NOW}
         selectedRepo={"korso/a"}
       />,
@@ -47,7 +55,12 @@ describe("ActiveList", () => {
       <ActiveList
         tasks={[
           task({ agentName: "Abe", intent: "active-here", repo: "korso/a" }),
-          task({ agentName: "Bo", intent: "done-task", status: "done", repo: "korso/a" }),
+          task({
+            agentName: "Bo",
+            intent: "done-task",
+            status: "done",
+            repo: "korso/a",
+          }),
           task({ agentName: "Cy", intent: "other-repo", repo: "korso/b" }),
         ]}
         nowMs={NOW}
@@ -73,7 +86,13 @@ describe("ActiveList", () => {
       pathGlobs: ["src/auth/login.ts"],
       createdAt: "2026-06-28T11:30:00.000Z",
     });
-    render(<ActiveList tasks={[broad, narrow]} nowMs={NOW} selectedRepo={"korso/a"} />);
+    render(
+      <ActiveList
+        tasks={[broad, narrow]}
+        nowMs={NOW}
+        selectedRepo={"korso/a"}
+      />,
+    );
 
     // grouped header shows total active count
     expect(screen.getByText(/2 active/)).toBeInTheDocument();
@@ -84,7 +103,9 @@ describe("ActiveList", () => {
     // The narrower claim's intent lives inside the fold body; expand it.
     const details = fold.closest("details");
     expect(details).not.toBeNull();
-    await user.click(within(details as HTMLElement).getByText(/narrower claim/));
+    await user.click(
+      within(details as HTMLElement).getByText(/narrower claim/),
+    );
     expect(screen.getByText("tune the auth slice")).toBeInTheDocument();
     expect(screen.getByText(/covered by a claim above/)).toBeInTheDocument();
   });
@@ -104,7 +125,12 @@ describe("ActiveList", () => {
 
     rerender(
       <ActiveList
-        tasks={[task({ agentName: "Solo", pathGlobs: ["a/x.ts", "b/y.ts", "c/z.ts"] })]}
+        tasks={[
+          task({
+            agentName: "Solo",
+            pathGlobs: ["a/x.ts", "b/y.ts", "c/z.ts"],
+          }),
+        ]}
         nowMs={NOW}
         selectedRepo={"korso/a"}
       />,

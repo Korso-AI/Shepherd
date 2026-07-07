@@ -77,12 +77,14 @@ function generateRawToken(): string {
  */
 export async function mintToken(
   input: MintTokenRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<MintTokenResponseT> {
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
   const workspaceId =
-    tenant.workspaceId === NO_ROUTE_WORKSPACE ? null : requireWorkspaceId(tenant);
+    tenant.workspaceId === NO_ROUTE_WORKSPACE
+      ? null
+      : requireWorkspaceId(tenant);
 
   const rawToken = generateRawToken();
   const summary = await insertApiToken(pool, {
@@ -102,7 +104,7 @@ export async function mintToken(
  * `/workspaces/:id/tokens` path it is that workspace's tokens.
  */
 export async function listTokens(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<ListTokensResponseT> {
   const { pool } = getContext();
   if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
@@ -123,7 +125,7 @@ export async function listTokens(
  */
 export async function revokeToken(
   tokenId: string,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<{ revoked: true }> {
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);

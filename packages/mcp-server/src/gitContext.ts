@@ -181,14 +181,25 @@ export function detectHuman(cwd: string = process.cwd()): string | null {
  * Resolves origin/HEAD if set, else probes origin/main then origin/master, else null.
  */
 export function detectBaseBranch(cwd: string = process.cwd()): string | null {
-  const symref = runGit(cwd, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
+  const symref = runGit(cwd, [
+    "symbolic-ref",
+    "--quiet",
+    "refs/remotes/origin/HEAD",
+  ]);
   if (symref) {
     // e.g. "refs/remotes/origin/main" -> "origin/main"
     const stripped = symref.replace(/^refs\/remotes\//, "");
     if (stripped) return stripped;
   }
   for (const candidate of ["origin/main", "origin/master"]) {
-    if (runGitExitOk(cwd, ["rev-parse", "--verify", "--quiet", `refs/remotes/${candidate}`])) {
+    if (
+      runGitExitOk(cwd, [
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        `refs/remotes/${candidate}`,
+      ])
+    ) {
       return candidate;
     }
   }
@@ -283,7 +294,12 @@ export function unlandedCommits(
  */
 export function dirtyPaths(cwd: string = process.cwd()): DirtyPathsResult {
   // -z gives NUL-terminated records, immune to spaces/quoting in paths.
-  const out = runGit(cwd, ["status", "--porcelain", "-z", "--untracked-files=all"]);
+  const out = runGit(cwd, [
+    "status",
+    "--porcelain",
+    "-z",
+    "--untracked-files=all",
+  ]);
   if (out === null) {
     return { paths: [], truncated: false };
   }
@@ -365,7 +381,10 @@ export function changedLineRanges(
   // Defensive cap: each path costs up to 2 serial blocking git spawns, so a very
   // large path list would be a long spawn burst. Line detail is information-only,
   // so silently process at most the first MAX_LINE_RANGE_PATHS and ignore the rest.
-  const capped = paths.length > MAX_LINE_RANGE_PATHS ? paths.slice(0, MAX_LINE_RANGE_PATHS) : paths;
+  const capped =
+    paths.length > MAX_LINE_RANGE_PATHS
+      ? paths.slice(0, MAX_LINE_RANGE_PATHS)
+      : paths;
   for (const p of capped) {
     // Normal commit: diff against its first parent.
     let diff = runGit(cwd, ["diff", "--unified=0", `${sha}~1`, sha, "--", p]);

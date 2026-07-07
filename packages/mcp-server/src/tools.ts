@@ -17,7 +17,11 @@ import {
 } from "@shepherd/shared";
 import { writeMarker, removeMarker, findRepoRoot } from "./marker.js";
 import { setDeclined, clearDeclined } from "./declined.js";
-import { HubUnreachable, HubRequestError, type HubClient } from "./hubClient.js";
+import {
+  HubUnreachable,
+  HubRequestError,
+  type HubClient,
+} from "./hubClient.js";
 import { DEFAULT_WORKSPACE, type Config } from "./config.js";
 import { type JoinContext } from "./resolveContext.js";
 import { type Heartbeat } from "./heartbeat.js";
@@ -83,7 +87,8 @@ type ActivateFailureReason = JoinFailureReason | "workspaceRejected";
  * Outcome of a hot-activation attempt (`activate()`): either a live session was
  * established, or a typed failure the caller renders as its own advisory.
  */
-type ActivateResult = { ok: true } | { ok: false; reason: ActivateFailureReason };
+type ActivateResult =
+  { ok: true } | { ok: false; reason: ActivateFailureReason };
 
 /**
  * Map a thrown hub error to an {@link ActivateFailureReason}. A 403/404 is the
@@ -93,7 +98,10 @@ type ActivateResult = { ok: true } | { ok: false; reason: ActivateFailureReason 
  * signal into a generic outage.
  */
 function classifyActivateFailure(err: unknown): ActivateFailureReason {
-  if (err instanceof HubRequestError && (err.status === 403 || err.status === 404)) {
+  if (
+    err instanceof HubRequestError &&
+    (err.status === 403 || err.status === 404)
+  ) {
     return "workspaceRejected";
   }
   return classifyJoinFailure(err);
@@ -131,7 +139,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("CONFLICTS (files overlapping with your claim):");
     for (const c of landscape.conflicts) {
       lines.push(
-        `  [${oneLine(c.agentName)} / ${oneLine(c.human)}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
+        `  [${oneLine(c.agentName)} / ${oneLine(c.human)}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`,
       );
     }
   } else {
@@ -142,7 +150,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("ACTIVE CLAIMS (other agents currently working):");
     for (const c of landscape.activeClaims) {
       lines.push(
-        `  [${oneLine(c.agentName)} / ${oneLine(c.human)}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
+        `  [${oneLine(c.agentName)} / ${oneLine(c.human)}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`,
       );
     }
   } else {
@@ -157,7 +165,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("YOUR ACTIVE CLAIMS:");
     for (const c of yourClaims) {
       lines.push(
-        `  "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))} (workItemId: ${c.workItemId})`
+        `  "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))} (workItemId: ${c.workItemId})`,
       );
     }
   } else {
@@ -167,8 +175,12 @@ function formatLandscape(landscape: LandscapeT): string {
   if (landscape.announcements.length > 0) {
     lines.push("ANNOUNCEMENTS:");
     for (const a of landscape.announcements) {
-      const target = a.targetAgentName ? ` → ${oneLine(a.targetAgentName)}` : " (broadcast)";
-      lines.push(`  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`);
+      const target = a.targetAgentName
+        ? ` → ${oneLine(a.targetAgentName)}`
+        : " (broadcast)";
+      lines.push(
+        `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+      );
     }
     lines.push(REPLY_ROUTING_HINT);
   } else {
@@ -188,8 +200,12 @@ function formatAnnouncements(announcements: AnnouncementT[]): string {
   const lines = ["Messages for you:"];
   for (const a of announcements) {
     // Names are teammate-controlled free-text; sanitize like the body.
-    const target = a.targetAgentName ? ` → ${oneLine(a.targetAgentName)}` : " (broadcast)";
-    lines.push(`  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`);
+    const target = a.targetAgentName
+      ? ` → ${oneLine(a.targetAgentName)}`
+      : " (broadcast)";
+    lines.push(
+      `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+    );
   }
   lines.push(REPLY_ROUTING_HINT);
   return lines.join("\n");
@@ -218,7 +234,9 @@ function relativeAge(iso: string): string {
 }
 
 function presence(rec: ChangeRecordT): string {
-  return rec.authorIsLive ? "active now" : `offline, last seen ${relativeAge(rec.authorLastActiveAt)}`;
+  return rec.authorIsLive
+    ? "active now"
+    : `offline, last seen ${relativeAge(rec.authorLastActiveAt)}`;
 }
 
 /**
@@ -232,7 +250,10 @@ function presence(rec: ChangeRecordT): string {
  *
  * `cwd` is used for the per-record git relevance checks (all fail-open).
  */
-export function formatChangeRecords(records: ChangeRecordT[], cwd: string = process.cwd()): string {
+export function formatChangeRecords(
+  records: ChangeRecordT[],
+  cwd: string = process.cwd(),
+): string {
   if (!records || records.length === 0) return "";
 
   // Global budget on line-detail git work across the WHOLE render. Each path
@@ -267,7 +288,7 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
       const intent = oneLine(rec.message ?? "(work in progress)");
       // agentName/human are teammate-controlled free-text — sanitize like intent.
       lines.push(
-        `  ${oneLine(rec.agentName)} / ${oneLine(rec.human)} (${presence(rec)}) — committed (${state}): "${intent}"`
+        `  ${oneLine(rec.agentName)} / ${oneLine(rec.human)} (${presence(rec)}) — committed (${state}): "${intent}"`,
       );
       lines.push(`    files: ${oneLine(rec.paths.join(", "))}`);
 
@@ -278,7 +299,9 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
         lineRangeBudget -= budgetedPaths.length;
         const ranges = changedLineRanges(cwd, sha, budgetedPaths);
         for (const p of Object.keys(ranges)) {
-          const spans = ranges[p].map((r) => (r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`));
+          const spans = ranges[p].map((r) =>
+            r.start === r.end ? `${r.start}` : `${r.start}-${r.end}`,
+          );
           if (spans.length > 0) {
             lines.push(`    ${p}: lines ${spans.join(", ")} (for context)`);
           }
@@ -289,7 +312,7 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
       // decaying — never line detail.
       const claim = oneLine(rec.message ?? "uncommitted edits in progress");
       lines.push(
-        `  ${oneLine(rec.agentName)} / ${oneLine(rec.human)} (${presence(rec)}) — ${claim} (uncommitted, may change)`
+        `  ${oneLine(rec.agentName)} / ${oneLine(rec.human)} (${presence(rec)}) — ${claim} (uncommitted, may change)`,
       );
       lines.push(`    files: ${oneLine(rec.paths.join(", "))}`);
     }
@@ -314,7 +337,9 @@ function hubErrorDetail(err: unknown): string {
     : String(err);
 }
 
-function degradedResult(err: unknown): { content: Array<{ type: "text"; text: string }> } {
+function degradedResult(err: unknown): {
+  content: Array<{ type: "text"; text: string }>;
+} {
   const detail = hubErrorDetail(err);
   return {
     content: [
@@ -334,9 +359,9 @@ function degradedResult(err: unknown): { content: Array<{ type: "text"; text: st
  * body: log the rejection to stderr (stdout is the MCP protocol channel) and
  * return a benign "proceeding uncoordinated" advisory instead.
  */
-function malformedResponseResult(
-  endpoint: string,
-): { content: Array<{ type: "text"; text: string }> } {
+function malformedResponseResult(endpoint: string): {
+  content: Array<{ type: "text"; text: string }>;
+} {
   console.error(
     `[shepherd] ${endpoint} returned a response that failed contract validation — proceeding uncoordinated.`,
   );
@@ -387,11 +412,14 @@ export function registerTools(
      * the real git poller and `server.server.elicitInput`.
      */
     firstRunAsk?: {
-      createTripwire?: (opts: { cwd: string; onEdits: () => void }) => EditTripwire;
+      createTripwire?: (opts: {
+        cwd: string;
+        onEdits: () => void;
+      }) => EditTripwire;
       elicit?: ElicitFn;
       getClientCapabilities?: () => { elicitation?: unknown } | undefined;
     };
-  }
+  },
 ): { ready: Promise<void>; leave: () => Promise<void> } {
   const { hubClient, config, context, heartbeat, inboxFile } = deps;
   const markerCwd = deps.cwd ?? process.cwd();
@@ -561,7 +589,7 @@ export function registerTools(
           joinFailure = "validation";
           // stderr only — stdout is the stdio MCP protocol channel.
           console.error(
-            "[shepherd] join failed (validation): hub returned a malformed join response (no usable sessionId)"
+            "[shepherd] join failed (validation): hub returned a malformed join response (no usable sessionId)",
           );
           return { ok: false, reason: "validation" };
         }
@@ -596,13 +624,13 @@ export function registerTools(
           hostedWorkspaceRejected = true;
           console.error(
             `[shepherd] This repo is linked to workspace "${workspaceSlug}" but your ` +
-              "configured token is for a different workspace — coordination disabled."
+              "configured token is for a different workspace — coordination disabled.",
           );
         } else {
           console.error(
             `[shepherd] join failed (${reason}): ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
         }
         return { ok: false, reason };
@@ -624,12 +652,12 @@ export function registerTools(
       context.declined
         ? "[shepherd] This repo was declined — staying uncoordinated. Run `link` to change your mind."
         : "[shepherd] This repo isn't linked to a Shepherd workspace — staying " +
-            "uncoordinated. Run `link` to choose one."
+            "uncoordinated. Run `link` to choose one.",
     );
   } else if (selfHostMismatch) {
     console.error(
       `[shepherd] This repo is linked to workspace "${context.workspace}" but your ` +
-        "configured token is for a different workspace — coordination disabled."
+        "configured token is for a different workspace — coordination disabled.",
     );
   }
 
@@ -660,7 +688,9 @@ export function registerTools(
    * hub was unreachable at startup. Advisory, never an error: the agent should
    * keep working uncoordinated.
    */
-  function sessionNotReady(): { content: Array<{ type: "text"; text: string }> } {
+  function sessionNotReady(): {
+    content: Array<{ type: "text"; text: string }>;
+  } {
     return {
       content: [
         {
@@ -693,7 +723,9 @@ export function registerTools(
    * marker's workspace can't be the active credential's workspace (self-host
    * marker ≠ configured workspace, or a hosted /join rejected as out-of-scope).
    */
-  function workspaceMismatch(): { content: Array<{ type: "text"; text: string }> } {
+  function workspaceMismatch(): {
+    content: Array<{ type: "text"; text: string }>;
+  } {
     return {
       content: [
         {
@@ -712,9 +744,9 @@ export function registerTools(
    * advisory result to short-circuit with, or null when the caller may continue
    * (a live session exists). NOT applied to link/unlink.
    */
-  async function coordinationGate(): Promise<
-    { content: Array<{ type: "text"; text: string }> } | null
-  > {
+  async function coordinationGate(): Promise<{
+    content: Array<{ type: "text"; text: string }>;
+  } | null> {
     await awaitJoin();
     // Not opted in at all → not-linked advisory (no join was attempted). Keyed
     // off the mutable `linked` flag so a hot activate() is seen at once.
@@ -762,7 +794,10 @@ export function registerTools(
   function withChangeRecords(landscape: LandscapeT, body: string): string {
     let section = "";
     try {
-      section = formatChangeRecords(landscape.changeRecords ?? [], process.cwd());
+      section = formatChangeRecords(
+        landscape.changeRecords ?? [],
+        process.cwd(),
+      );
     } catch {
       section = "";
     }
@@ -791,17 +826,23 @@ export function registerTools(
       if (gated) return gated;
       try {
         const changeReport = await changeReportForBody();
-        const body = { sessionId, ...args, ...(changeReport ? { changeReport } : {}) };
+        const body = {
+          sessionId,
+          ...args,
+          ...(changeReport ? { changeReport } : {}),
+        };
         // Validate against the shared contract before trusting the body — a
         // compromised hub's oversized/newline content must not reach the agent.
-        const parsed = WorkResponse.safeParse(await hubClient.post("/work", body));
+        const parsed = WorkResponse.safeParse(
+          await hubClient.post("/work", body),
+        );
         if (!parsed.success) return malformedResponseResult("/work");
         const result = parsed.data;
         // Fold in any announcements the heartbeat already staged locally so they
         // surface in this turn's ANNOUNCEMENTS section alongside hub-fresh ones.
         result.landscape.announcements = mergeAnnouncements(
           result.landscape.announcements,
-          drainLocalInbox()
+          drainLocalInbox(),
         );
         const text = withIdentity(
           withChangeRecords(
@@ -809,8 +850,8 @@ export function registerTools(
             `Work claimed (workItemId: ${result.workItemId})\n\n` +
               formatLandscape(result.landscape) +
               `\n\nYou hold this claim until you call done (workItemId: ${result.workItemId}) ` +
-              `or it expires (~60 min). Calling work or sync renews it.`
-          )
+              `or it expires (~60 min). Calling work or sync renews it.`,
+          ),
         );
         return { content: [{ type: "text", text }] };
       } catch (err) {
@@ -819,7 +860,7 @@ export function registerTools(
         }
         throw err;
       }
-    }
+    },
   );
 
   // ---- done ----------------------------------------------------------------
@@ -838,18 +879,18 @@ export function registerTools(
       try {
         const body = { sessionId, ...args };
         // Validate against the shared contract before trusting the body.
-        const parsed = DoneResponse.safeParse(await hubClient.post("/done", body));
+        const parsed = DoneResponse.safeParse(
+          await hubClient.post("/done", body),
+        );
         if (!parsed.success) return malformedResponseResult("/done");
         const result = parsed.data;
         const base =
           "Work item released. Call work again before your next edit in a new area.";
         const msgs = formatAnnouncements(
-          mergeAnnouncements(result.announcements, drainLocalInbox())
+          mergeAnnouncements(result.announcements, drainLocalInbox()),
         );
         return {
-          content: [
-            { type: "text", text: msgs ? `${base}\n\n${msgs}` : base },
-          ],
+          content: [{ type: "text", text: msgs ? `${base}\n\n${msgs}` : base }],
         };
       } catch (err) {
         if (err instanceof HubUnreachable || err instanceof HubRequestError) {
@@ -857,7 +898,7 @@ export function registerTools(
         }
         throw err;
       }
-    }
+    },
   );
 
   // ---- announce ------------------------------------------------------------
@@ -885,17 +926,17 @@ export function registerTools(
       try {
         const body = { sessionId, ...args };
         // Validate against the shared contract before trusting the body.
-        const parsed = AnnounceResponse.safeParse(await hubClient.post("/announce", body));
+        const parsed = AnnounceResponse.safeParse(
+          await hubClient.post("/announce", body),
+        );
         if (!parsed.success) return malformedResponseResult("/announce");
         const result = parsed.data;
         const base = `Announcement sent (id: ${result.announcementId}).`;
         const msgs = formatAnnouncements(
-          mergeAnnouncements(result.announcements, drainLocalInbox())
+          mergeAnnouncements(result.announcements, drainLocalInbox()),
         );
         return {
-          content: [
-            { type: "text", text: msgs ? `${base}\n\n${msgs}` : base },
-          ],
+          content: [{ type: "text", text: msgs ? `${base}\n\n${msgs}` : base }],
         };
       } catch (err) {
         if (err instanceof HubUnreachable || err instanceof HubRequestError) {
@@ -903,7 +944,7 @@ export function registerTools(
         }
         throw err;
       }
-    }
+    },
   );
 
   // ---- sync ----------------------------------------------------------------
@@ -924,15 +965,20 @@ export function registerTools(
         const changeReport = await changeReportForBody();
         const body = { sessionId, ...(changeReport ? { changeReport } : {}) };
         // Validate against the shared contract before trusting the body.
-        const parsed = SyncResponse.safeParse(await hubClient.post("/sync", body));
+        const parsed = SyncResponse.safeParse(
+          await hubClient.post("/sync", body),
+        );
         if (!parsed.success) return malformedResponseResult("/sync");
         const result = parsed.data;
         result.landscape.announcements = mergeAnnouncements(
           result.landscape.announcements,
-          drainLocalInbox()
+          drainLocalInbox(),
         );
         const text = withIdentity(
-          withChangeRecords(result.landscape, formatLandscape(result.landscape))
+          withChangeRecords(
+            result.landscape,
+            formatLandscape(result.landscape),
+          ),
         );
         return { content: [{ type: "text", text }] };
       } catch (err) {
@@ -941,7 +987,7 @@ export function registerTools(
         }
         throw err;
       }
-    }
+    },
   );
 
   // ---- link / unlink / decline (marker + declined management) ---------------
@@ -960,7 +1006,9 @@ export function registerTools(
   //     call is made; the slug is validated against that single value.
 
   /** A textual advisory result, mirroring the other tools' content shape. */
-  function advisory(text: string): { content: Array<{ type: "text"; text: string }> } {
+  function advisory(text: string): {
+    content: Array<{ type: "text"; text: string }>;
+  } {
     return { content: [{ type: "text", text }] };
   }
 
@@ -1001,7 +1049,9 @@ export function registerTools(
     tripwire?.stop(); // the link question is settled — never ask this session
     const result = await activate(slug);
     if (result.ok) {
-      return advisory(`Linked this repo to \`${slug}\` — coordinating in \`${slug}\` now.`);
+      return advisory(
+        `Linked this repo to \`${slug}\` — coordinating in \`${slug}\` now.`,
+      );
     }
     return advisory(
       `Linked this repo to \`${slug}\`, but coordination couldn't start just now ` +
@@ -1026,7 +1076,9 @@ export function registerTools(
           .string()
           .min(1)
           .optional()
-          .describe("The workspace slug to link this repo to. Omit to auto-pick or list choices."),
+          .describe(
+            "The workspace slug to link this repo to. Omit to auto-pick or list choices.",
+          ),
       }).shape,
     },
     async (args: { workspace?: string }) => {
@@ -1176,7 +1228,7 @@ export function registerTools(
       await hubClient.post("/leave", { sessionId });
     } catch (err) {
       console.error(
-        `[shepherd] leave failed: ${err instanceof Error ? err.message : String(err)}`
+        `[shepherd] leave failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -1184,7 +1236,14 @@ export function registerTools(
   // Layer 0 surface: every hideable tool is registered by now, so apply the
   // startup state — a declined repo boots with only `link` in its tool list.
   // Pre-connect disable is silent (the SDK guards list_changed on connection).
-  gatedTools.push(workTool, doneTool, announceTool, syncTool, unlinkTool, declineTool);
+  gatedTools.push(
+    workTool,
+    doneTool,
+    announceTool,
+    syncTool,
+    unlinkTool,
+    declineTool,
+  );
   surfaceVisible = true;
   syncToolSurface();
 
@@ -1213,7 +1272,7 @@ export function registerTools(
         ((params) =>
           server.server.elicitInput(
             params as Parameters<typeof server.server.elicitInput>[0],
-            { timeout: 10 * 60_000 }
+            { timeout: 10 * 60_000 },
           ));
 
       const { outcome, workspace } = await offerLinkPopup({
@@ -1233,18 +1292,21 @@ export function registerTools(
         appendAnnouncements(inboxFile, [postLinkGuidance(workspace ?? "")]);
       }
       if (outcome !== "unanswered") {
-        console.error(`[shepherd] first-run ask answered by the user: ${outcome}`);
+        console.error(
+          `[shepherd] first-run ask answered by the user: ${outcome}`,
+        );
       }
     } catch (err) {
       // Fail-open: a broken ask must never disturb the session.
       console.error(
-        `[shepherd] first-run ask failed: ${err instanceof Error ? err.message : String(err)}`
+        `[shepherd] first-run ask failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
   if (!context.linked && !context.declined) {
-    const createTripwire_ = deps.firstRunAsk?.createTripwire ?? createEditTripwire;
+    const createTripwire_ =
+      deps.firstRunAsk?.createTripwire ?? createEditTripwire;
     tripwire = createTripwire_({
       cwd: markerCwd,
       onEdits: () => {

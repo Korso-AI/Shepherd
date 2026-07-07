@@ -58,9 +58,10 @@ export function ConfirmTransferOwnership({
       >
         <h3 id={headingId}>Transfer ownership</h3>
         <p id={descId} className="shepherd-modal__body">
-          Make <b>{memberName}</b> the owner of this workspace. They&apos;ll be able to
-          change members&apos; roles and transfer ownership. You&apos;ll stay an admin,
-          but you can no longer manage roles unless ownership is transferred back.
+          Make <b>{memberName}</b> the owner of this workspace. They&apos;ll be
+          able to change members&apos; roles and transfer ownership. You&apos;ll
+          stay an admin, but you can no longer manage roles unless ownership is
+          transferred back.
         </p>
 
         {error && <p role="alert">{error}</p>}

@@ -44,7 +44,11 @@ const NEAR_BOTTOM_PX = 80;
  * @param props - The feed, the repo filter, and the server clock.
  * @returns The scrollable chat element.
  */
-export function Chat({ announcements, selectedRepo, nowMs }: ChatProps): ReactNode {
+export function Chat({
+  announcements,
+  selectedRepo,
+  nowMs,
+}: ChatProps): ReactNode {
   const chatRef = useRef<HTMLDivElement>(null);
   // Capture "were we near the bottom?" BEFORE React commits the new DOM, so the
   // layout effect can decide whether to re-pin. A ref (not state) because it's a
@@ -53,7 +57,8 @@ export function Chat({ announcements, selectedRepo, nowMs }: ChatProps): ReactNo
 
   const c = chatRef.current;
   if (c) {
-    stickRef.current = c.scrollHeight - c.scrollTop - c.clientHeight < NEAR_BOTTOM_PX;
+    stickRef.current =
+      c.scrollHeight - c.scrollTop - c.clientHeight < NEAR_BOTTOM_PX;
   }
 
   // The API returns newest-first; a chat reads oldest -> newest, top -> bottom.
@@ -101,7 +106,9 @@ export function Chat({ announcements, selectedRepo, nowMs }: ChatProps): ReactNo
                   >
                     {a.fromAgentName}
                   </span>
-                  {a.fromHuman ? <span className="msg__human">{a.fromHuman}</span> : null}
+                  {a.fromHuman ? (
+                    <span className="msg__human">{a.fromHuman}</span>
+                  ) : null}
                   {a.targetAgentName !== null ? (
                     <span className="msg__to">{`→ @${a.targetAgentName}`}</span>
                   ) : a.targetMemberName !== null ? (
@@ -111,7 +118,9 @@ export function Chat({ announcements, selectedRepo, nowMs }: ChatProps): ReactNo
                   ) : a.toAdmin ? (
                     <span className="msg__to">→ admin</span>
                   ) : null}
-                  <span className="msg__time">{formatRelative(a.createdAt, nowMs)}</span>
+                  <span className="msg__time">
+                    {formatRelative(a.createdAt, nowMs)}
+                  </span>
                 </div>
                 <div className="msg__text">{a.body}</div>
               </div>

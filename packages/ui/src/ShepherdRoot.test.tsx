@@ -11,7 +11,13 @@ import { makeMockClient } from "./test/mockClient.js";
 // lands after listWorkspaces() resolves, so we inject a workspace and wait
 // for the load.
 describe("ShepherdRoot", () => {
-  const WS = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const, isOwner: true };
+  const WS = {
+    id: "ws_1",
+    slug: "acme",
+    name: "Acme",
+    role: "admin" as const,
+    isOwner: true,
+  };
 
   beforeEach(() => {
     // Dashboard persists the active tab to localStorage; clear it so each test
@@ -32,7 +38,9 @@ describe("ShepherdRoot", () => {
 
   it("mounts and shows the flat Tasks | Chat | Settings tab strip", async () => {
     renderRoot();
-    expect(await screen.findByRole("tab", { name: "Tasks" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("tab", { name: "Tasks" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
   });
@@ -55,7 +63,9 @@ describe("ShepherdRoot", () => {
       "true",
     );
     // The Settings panel is the sidebar layout, defaulting to the Workspace section.
-    expect(screen.getByRole("heading", { name: "Workspace" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Workspace" }),
+    ).toBeInTheDocument();
   });
 
   it("renders the hosted sign out action on the Settings → Account section", async () => {
@@ -76,7 +86,9 @@ describe("ShepherdRoot", () => {
     await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: "Account" }));
 
-    expect(screen.queryByRole("button", { name: /sign out/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /sign out/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("applies a roving tabindex (selected tab = 0, others = -1)", async () => {

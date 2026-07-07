@@ -14,7 +14,12 @@ import type { WorkspaceSummaryT } from "@shepherd/shared";
 // hands the joined workspace to the host via onJoined so it can navigate.
 // ---------------------------------------------------------------------------
 
-const WS: WorkspaceSummaryT = { id: "ws_1", slug: "acme", name: "Acme", role: "member" };
+const WS: WorkspaceSummaryT = {
+  id: "ws_1",
+  slug: "acme",
+  name: "Acme",
+  role: "member",
+};
 
 describe("JoinWorkspace", () => {
   let client: ReturnType<typeof makeMockClient>;
@@ -70,7 +75,10 @@ describe("JoinWorkspace", () => {
 
   it("surfaces a redeem failure as an alert with the hub's message and offers a retry", async () => {
     client.redeemInvite.mockRejectedValueOnce(
-      new ShepherdClientError("HTTP 410: Invite expired or no longer valid", 410),
+      new ShepherdClientError(
+        "HTTP 410: Invite expired or no longer valid",
+        410,
+      ),
     );
     const onJoined = renderJoin();
 

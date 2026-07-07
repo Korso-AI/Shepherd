@@ -116,12 +116,14 @@ const AUTH_MESSAGES: Record<number, string> = {
 // degrades to an inline placeholder served with 200/text-html, never a crash.
 // ---------------------------------------------------------------------------
 
-const UI_APP_DIR = fileURLToPath(new URL("../../ui/dist/selfhost/", import.meta.url));
+const UI_APP_DIR = fileURLToPath(
+  new URL("../../ui/dist/selfhost/", import.meta.url),
+);
 
 /** Shown (200, text/html) when dist/selfhost is absent — the UI hasn't been built. */
 const UI_NOT_BUILT_HTML =
   "<!doctype html><meta charset=utf-8><title>Shepherd</title>" +
-  "<body style=\"font-family:system-ui;padding:2rem\">" +
+  '<body style="font-family:system-ui;padding:2rem">' +
   "<h1>Shepherd UI not built</h1>" +
   "<p>Run <code>npm run build -w @korso/shepherd-ui</code>, then restart the hub.</p>";
 
@@ -209,7 +211,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     trustProxy: options.trustProxy ?? false,
     logger: {
       level: "info",
-      redact: ['req.headers.authorization', 'req.headers["x-internal-token"]'],
+      redact: ["req.headers.authorization", 'req.headers["x-internal-token"]'],
     },
   });
 
@@ -285,7 +287,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
         return;
       }
       defaultJsonParser(request, body, done);
-    }
+    },
   );
 
   // -------------------------------------------------------------------------
@@ -305,8 +307,10 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
   const ui = loadUiBundle();
 
-  const serveHtml = async (_req: unknown, reply: import("fastify").FastifyReply) =>
-    reply.type("text/html; charset=utf-8").send(ui.indexHtml);
+  const serveHtml = async (
+    _req: unknown,
+    reply: import("fastify").FastifyReply,
+  ) => reply.type("text/html; charset=utf-8").send(ui.indexHtml);
   app.get("/", serveHtml);
   app.get("/index.html", serveHtml);
 
@@ -625,14 +629,17 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
   // Change a member's role — OWNER-ONLY (enforced in setMemberRole). Promotes a
   // member to admin or demotes an admin to member; the owner's own role is fixed.
-  app.patch("/workspaces/:id/members/:accountId/role", async (request, _reply) => {
-    const { accountId } = request.params as { accountId: string };
-    const parsed = SetMemberRoleRequest.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      throw parsed.error;
-    }
-    return setMemberRole(accountId, parsed.data.role, request.tenant);
-  });
+  app.patch(
+    "/workspaces/:id/members/:accountId/role",
+    async (request, _reply) => {
+      const { accountId } = request.params as { accountId: string };
+      const parsed = SetMemberRoleRequest.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        throw parsed.error;
+      }
+      return setMemberRole(accountId, parsed.data.role, request.tenant);
+    },
+  );
 
   // Transfer ownership to another member — OWNER-ONLY (enforced in
   // transferOwnership). The target becomes owner (+ admin); the former owner
@@ -741,7 +748,9 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     // message for every reason (never reveal whether a code ever existed) — the
     // redeem route's anti-enumeration property depends on this indistinguishability.
     if (err instanceof InviteError) {
-      return reply.status(err.status).send({ error: "Invite expired or no longer valid" });
+      return reply
+        .status(err.status)
+        .send({ error: "Invite expired or no longer valid" });
     }
 
     // Domain: a well-formed, authorized action that would break an invariant
@@ -791,10 +800,20 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
 
     // All other errors → 500 with a generic message.
     // Log full detail server-side; NEVER echo request headers in the response.
-    const safeErr = err as { message?: unknown; stack?: unknown; name?: unknown };
+    const safeErr = err as {
+      message?: unknown;
+      stack?: unknown;
+      name?: unknown;
+    };
     app.log.error(
-      { err: { message: safeErr.message, stack: safeErr.stack, name: safeErr.name } },
-      "Unhandled server error"
+      {
+        err: {
+          message: safeErr.message,
+          stack: safeErr.stack,
+          name: safeErr.name,
+        },
+      },
+      "Unhandled server error",
     );
 
     return reply.status(500).send({ error: "Internal server error" });

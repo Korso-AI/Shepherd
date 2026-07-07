@@ -54,13 +54,16 @@ import { requireAccountId, type TenantContext } from "../tenant.js";
  * that still has other members.
  */
 export async function deleteAccount(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<DeleteAccountResponseT> {
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
 
   if (tenant.via !== "browser") {
-    throw new AuthError(403, "account deletion requires a browser account session");
+    throw new AuthError(
+      403,
+      "account deletion requires a browser account session",
+    );
   }
 
   await withTransaction(pool, async (tx) => {
@@ -81,7 +84,7 @@ export async function deleteAccount(
         // anything (the throw rolls the whole transaction back).
         throw new ConflictError(
           `You're the last admin of "${ws.name}", which still has other members. ` +
-            `Promote another admin or delete that workspace first.`
+            `Promote another admin or delete that workspace first.`,
         );
       }
       await removeMembership(tx, ws.id, accountId);

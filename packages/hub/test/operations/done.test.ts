@@ -61,7 +61,7 @@ async function seedAgentAndSession(
     program?: string;
     model?: string;
     suffix?: string;
-  } = {}
+  } = {},
 ): Promise<{ agentId: string; agentName: string; sessionId: string }> {
   const ws = opts.workspaceId ?? workspaceId;
   const repo = opts.repo ?? "my-repo";
@@ -77,7 +77,13 @@ async function seedAgentAndSession(
   const name = `agent-${suffix}`;
 
   return withTransaction(pool, async (tx) => {
-    const agent = await createAgent(tx, { workspaceId: ws, name, human, program, model });
+    const agent = await createAgent(tx, {
+      workspaceId: ws,
+      name,
+      human,
+      program,
+      model,
+    });
     const session = await createSession(tx, {
       workspaceId: ws,
       agentId: agent.id,
@@ -98,7 +104,7 @@ async function seedWorkItem(
     intent?: string;
     pathGlobs?: string[];
     ttlSeconds?: number;
-  } = {}
+  } = {},
 ): Promise<string> {
   const now = new Date();
   const ttlSeconds = opts.ttlSeconds ?? 300;
@@ -111,7 +117,7 @@ async function seedWorkItem(
       pathGlobs: opts.pathGlobs ?? ["src/**/*.ts"],
       ttlSeconds,
       expiresAt: secsFromNow(now, ttlSeconds),
-    })
+    }),
   );
 }
 
@@ -127,7 +133,7 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
     await runTestMigrations(pool);
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      ["test-ws", "test-ws"]
+      ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
     tenant = { workspaceId };
@@ -155,20 +161,37 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
 
       // Confirm the claim is visible to the peer before done().
       const now = new Date();
-      const before = await listActiveClaims(pool, workspaceId, "my-repo", now, TEST_CONFIG.STALE_AFTER_SECONDS, {
-        excludeSessionId: peer.sessionId,
-      });
+      const before = await listActiveClaims(
+        pool,
+        workspaceId,
+        "my-repo",
+        now,
+        TEST_CONFIG.STALE_AFTER_SECONDS,
+        {
+          excludeSessionId: peer.sessionId,
+        },
+      );
       expect(before).toHaveLength(1);
       expect(before[0]!.workItemId).toBe(workItemId);
 
       // Release via done().
-      const result = await done({ sessionId: owner.sessionId, workItemId }, tenant);
+      const result = await done(
+        { sessionId: owner.sessionId, workItemId },
+        tenant,
+      );
       expect(result).toEqual({ ok: true, announcements: [] });
 
       // Confirm the claim is no longer visible to the peer.
-      const after = await listActiveClaims(pool, workspaceId, "my-repo", now, TEST_CONFIG.STALE_AFTER_SECONDS, {
-        excludeSessionId: peer.sessionId,
-      });
+      const after = await listActiveClaims(
+        pool,
+        workspaceId,
+        "my-repo",
+        now,
+        TEST_CONFIG.STALE_AFTER_SECONDS,
+        {
+          excludeSessionId: peer.sessionId,
+        },
+      );
       expect(after).toHaveLength(0);
     });
   });
@@ -181,10 +204,16 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
       const owner = await seedAgentAndSession(pool, { suffix: "double" });
       const workItemId = await seedWorkItem(pool, owner.sessionId);
 
-      const first = await done({ sessionId: owner.sessionId, workItemId }, tenant);
+      const first = await done(
+        { sessionId: owner.sessionId, workItemId },
+        tenant,
+      );
       expect(first).toEqual({ ok: true, announcements: [] });
 
-      const second = await done({ sessionId: owner.sessionId, workItemId }, tenant);
+      const second = await done(
+        { sessionId: owner.sessionId, workItemId },
+        tenant,
+      );
       expect(second).toEqual({ ok: true, announcements: [] });
     });
   });
@@ -201,14 +230,24 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
       const workItemId = await seedWorkItem(pool, sessionY.sessionId);
 
       // Session X tries to release Y's work item — should silently succeed.
-      const result = await done({ sessionId: sessionX.sessionId, workItemId }, tenant);
+      const result = await done(
+        { sessionId: sessionX.sessionId, workItemId },
+        tenant,
+      );
       expect(result).toEqual({ ok: true, announcements: [] });
 
       // Y's claim must still be visible to the peer (WHERE clause protected it).
       const now = new Date();
-      const claims = await listActiveClaims(pool, workspaceId, "my-repo", now, TEST_CONFIG.STALE_AFTER_SECONDS, {
-        excludeSessionId: peer.sessionId,
-      });
+      const claims = await listActiveClaims(
+        pool,
+        workspaceId,
+        "my-repo",
+        now,
+        TEST_CONFIG.STALE_AFTER_SECONDS,
+        {
+          excludeSessionId: peer.sessionId,
+        },
+      );
       expect(claims).toHaveLength(1);
       expect(claims[0]!.workItemId).toBe(workItemId);
     });
@@ -231,18 +270,24 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
           fromSessionId: sender.sessionId,
           targetAgentName: null,
           body: "heads up",
-        })
+        }),
       );
 
       // done() delivers it in its response.
-      const result = await done({ sessionId: owner.sessionId, workItemId }, tenant);
+      const result = await done(
+        { sessionId: owner.sessionId, workItemId },
+        tenant,
+      );
       expect(result.ok).toBe(true);
       expect(result.announcements).toHaveLength(1);
       expect(result.announcements[0]!.id).toBe(announcementId);
       expect(result.announcements[0]!.body).toBe("heads up");
 
       // Marked delivered: a second done does not re-deliver it.
-      const second = await done({ sessionId: owner.sessionId, workItemId }, tenant);
+      const second = await done(
+        { sessionId: owner.sessionId, workItemId },
+        tenant,
+      );
       expect(second.announcements).toHaveLength(0);
     });
   });
@@ -254,10 +299,13 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
     it("throws UnknownSessionError for a nonexistent session", async () => {
       const { UnknownSessionError } = await import("../../src/errors.js");
       await expect(
-        done({
-          sessionId: "00000000-0000-0000-0000-000000000000",
-          workItemId: "00000000-0000-0000-0000-000000000001",
-        }, tenant)
+        done(
+          {
+            sessionId: "00000000-0000-0000-0000-000000000000",
+            workItemId: "00000000-0000-0000-0000-000000000001",
+          },
+          tenant,
+        ),
       ).rejects.toBeInstanceOf(UnknownSessionError);
     });
   });

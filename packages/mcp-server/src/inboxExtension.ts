@@ -15,7 +15,12 @@
  * FAIL-OPEN: any error yields no injection; it never throws into Pi.
  */
 
-import { inboxFilePath, drainInbox, formatInboxAnnouncements, defaultInboxDir } from "./inbox.js";
+import {
+  inboxFilePath,
+  drainInbox,
+  formatInboxAnnouncements,
+  defaultInboxDir,
+} from "./inbox.js";
 import { buildLinkNudge } from "./linkNudge.js";
 
 /** Minimal structural types — avoids a hard dependency on Pi's type package. */
@@ -30,8 +35,11 @@ interface PiExtensionAPI {
     event: "before_agent_start",
     handler: (
       event: unknown,
-      ctx: PiExtensionContext
-    ) => Promise<PiBeforeAgentStartResult | undefined> | PiBeforeAgentStartResult | undefined
+      ctx: PiExtensionContext,
+    ) =>
+      | Promise<PiBeforeAgentStartResult | undefined>
+      | PiBeforeAgentStartResult
+      | undefined,
   ): void;
 }
 
@@ -43,11 +51,16 @@ export default function shepherdInbox(pi: PiExtensionAPI): void {
       const announcements = drainInbox(inboxFilePath(dir, cwd));
       // Same two payloads as the hook bin: the unlinked-repo nudge (tool-less
       // here — Pi's before_agent_start is per user turn), then announcements.
-      const content = [buildLinkNudge(cwd), formatInboxAnnouncements(announcements)]
+      const content = [
+        buildLinkNudge(cwd),
+        formatInboxAnnouncements(announcements),
+      ]
         .filter(Boolean)
         .join("\n\n");
       if (!content) return undefined;
-      return { message: { customType: "shepherd-inbox", content, display: true } };
+      return {
+        message: { customType: "shepherd-inbox", content, display: true },
+      };
     } catch {
       // Fail-open: never break a Pi turn on an inbox read error.
       return undefined;

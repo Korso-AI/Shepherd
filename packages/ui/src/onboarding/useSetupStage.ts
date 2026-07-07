@@ -135,7 +135,12 @@ export function useSetupStage(opts: UseSetupStageOptions): SetupStageApi {
     if (workspaceId) writeStored(setupSkipKey(workspaceId), "1");
     // `skipped` also flips in state so the dismissal holds this session even
     // where localStorage writes silently fail (private/quota modes).
-    setFlags((f) => ({ ...f, forcedOpen: false, engaged: false, skipped: true }));
+    setFlags((f) => ({
+      ...f,
+      forcedOpen: false,
+      engaged: false,
+      skipped: true,
+    }));
   }, [workspaceId]);
 
   const noteWorkspaceCreated = useCallback(() => {

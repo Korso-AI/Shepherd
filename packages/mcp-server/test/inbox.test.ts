@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,7 +20,11 @@ import {
 } from "../src/inbox.js";
 import type { AnnouncementT } from "@shepherd/shared";
 
-function ann(id: number, body: string, target: string | null = null): AnnouncementT {
+function ann(
+  id: number,
+  body: string,
+  target: string | null = null,
+): AnnouncementT {
   return {
     id,
     fromAgentName: "RedDragon",
@@ -45,25 +55,34 @@ describe("mergeAnnouncements", () => {
   });
 
   it("dedupes by id and sorts ascending", () => {
-    const merged = mergeAnnouncements([ann(3, "c"), ann(1, "a")], [ann(1, "a-dup"), ann(2, "b")]);
+    const merged = mergeAnnouncements(
+      [ann(3, "c"), ann(1, "a")],
+      [ann(1, "a-dup"), ann(2, "b")],
+    );
     expect(merged.map((m) => m.id)).toEqual([1, 2, 3]);
     // First occurrence wins for a duplicate id.
     expect(merged.find((m) => m.id === 1)!.body).toBe("a");
   });
 
   it("tolerates undefined lists", () => {
-    expect(mergeAnnouncements(undefined, [ann(1, "a")], undefined)).toHaveLength(1);
+    expect(
+      mergeAnnouncements(undefined, [ann(1, "a")], undefined),
+    ).toHaveLength(1);
     expect(mergeAnnouncements()).toEqual([]);
   });
 });
 
 describe("inboxFilePath", () => {
   it("is deterministic for the same (dir, cwd)", () => {
-    expect(inboxFilePath("/inbox", "/repo/a")).toBe(inboxFilePath("/inbox", "/repo/a"));
+    expect(inboxFilePath("/inbox", "/repo/a")).toBe(
+      inboxFilePath("/inbox", "/repo/a"),
+    );
   });
 
   it("differs for different cwds", () => {
-    expect(inboxFilePath("/inbox", "/repo/a")).not.toBe(inboxFilePath("/inbox", "/repo/b"));
+    expect(inboxFilePath("/inbox", "/repo/a")).not.toBe(
+      inboxFilePath("/inbox", "/repo/b"),
+    );
   });
 
   it("lives under the given dir and ends in .jsonl", () => {
@@ -106,7 +125,10 @@ describe("appendAnnouncements + drainInbox", () => {
   });
 
   it("skips malformed lines rather than throwing", () => {
-    writeFileSync(file, 'not json\n{"id":3,"fromAgentName":"X","fromHuman":"y","body":"ok","targetAgentName":null,"createdAt":"2026-06-25T12:00:00.000Z"}\n');
+    writeFileSync(
+      file,
+      'not json\n{"id":3,"fromAgentName":"X","fromHuman":"y","body":"ok","targetAgentName":null,"createdAt":"2026-06-25T12:00:00.000Z"}\n',
+    );
     const drained = drainInbox(file);
     expect(drained).toHaveLength(1);
     expect(drained[0]!.body).toBe("ok");
@@ -126,7 +148,9 @@ describe("appendAnnouncements + drainInbox", () => {
     // A path whose parent is an existing *file* cannot be made a directory.
     const blocker = join(dir, "blocker");
     writeFileSync(blocker, "x");
-    expect(() => appendAnnouncements(join(blocker, "nope.jsonl"), [ann(1, "x")])).not.toThrow();
+    expect(() =>
+      appendAnnouncements(join(blocker, "nope.jsonl"), [ann(1, "x")]),
+    ).not.toThrow();
   });
 
   it("creates the inbox directory if it does not exist", () => {
@@ -162,7 +186,9 @@ describe("buildHookOutput", () => {
   });
 
   it("returns '' when stdin has no cwd", () => {
-    expect(buildHookOutput(JSON.stringify({ hook_event_name: "PreToolUse" }), dir)).toBe("");
+    expect(
+      buildHookOutput(JSON.stringify({ hook_event_name: "PreToolUse" }), dir),
+    ).toBe("");
   });
 
   it("returns '' when the inbox is empty", () => {
@@ -175,14 +201,18 @@ describe("buildHookOutput", () => {
 
     const out = JSON.parse(buildHookOutput(stdin(), dir));
     expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
-    expect(out.hookSpecificOutput.additionalContext).toContain("deploy is live");
+    expect(out.hookSpecificOutput.additionalContext).toContain(
+      "deploy is live",
+    );
   });
 
   it("echoes a different configured hook event (e.g. UserPromptSubmit)", () => {
     const file = inboxFilePath(dir, cwd);
     appendAnnouncements(file, [ann(1, "msg")]);
 
-    const out = JSON.parse(buildHookOutput(stdin({ hook_event_name: "UserPromptSubmit" }), dir));
+    const out = JSON.parse(
+      buildHookOutput(stdin({ hook_event_name: "UserPromptSubmit" }), dir),
+    );
     expect(out.hookSpecificOutput.hookEventName).toBe("UserPromptSubmit");
   });
 
@@ -198,14 +228,18 @@ describe("buildHookOutput", () => {
   // fn to stay independent of the real filesystem/marker state; the predicate
   // itself is covered in linkNudge.test.ts.
   it("emits the nudge alone when the inbox is empty", () => {
-    const out = JSON.parse(buildHookOutput(stdin(), dir, undefined, () => "NUDGE"));
+    const out = JSON.parse(
+      buildHookOutput(stdin(), dir, undefined, () => "NUDGE"),
+    );
     expect(out.hookSpecificOutput.additionalContext).toBe("NUDGE");
     expect(out.hookSpecificOutput.hookEventName).toBe("PreToolUse");
   });
 
   it("emits nudge and announcements together, nudge first", () => {
     appendAnnouncements(inboxFilePath(dir, cwd), [ann(1, "deploy is live")]);
-    const out = JSON.parse(buildHookOutput(stdin(), dir, undefined, () => "NUDGE"));
+    const out = JSON.parse(
+      buildHookOutput(stdin(), dir, undefined, () => "NUDGE"),
+    );
     const ctx: string = out.hookSpecificOutput.additionalContext;
     expect(ctx.indexOf("NUDGE")).toBe(0);
     expect(ctx).toContain("deploy is live");
@@ -226,7 +260,9 @@ describe("buildHookOutput", () => {
   });
 
   it("emits the nudge even when no inbox dir is configured", () => {
-    const out = JSON.parse(buildHookOutput(stdin(), undefined, undefined, () => "NUDGE"));
+    const out = JSON.parse(
+      buildHookOutput(stdin(), undefined, undefined, () => "NUDGE"),
+    );
     expect(out.hookSpecificOutput.additionalContext).toBe("NUDGE");
   });
 
@@ -254,9 +290,13 @@ describe("buildHookOutput", () => {
   it("cursor: strips the BOM, keys the inbox off workspace_roots, replies top-level", () => {
     // The MCP server (launched by Cursor with the workspace as cwd) writes
     // using the NATIVE path spelling; the hook must land on the same file.
-    appendAnnouncements(inboxFilePath(dir, "c:/Users/x/proj"), [ann(1, "deploy is live")]);
+    appendAnnouncements(inboxFilePath(dir, "c:/Users/x/proj"), [
+      ann(1, "deploy is live"),
+    ]);
 
-    const out = JSON.parse(buildHookOutput(cursorStdin(), dir, undefined, () => ""));
+    const out = JSON.parse(
+      buildHookOutput(cursorStdin(), dir, undefined, () => ""),
+    );
     expect(out.continue).toBe(true);
     expect(out.additionalContext).toContain("deploy is live");
     expect(out.hookSpecificOutput).toBeUndefined();
@@ -280,14 +320,19 @@ describe("buildHookOutput", () => {
       (c) => {
         seen.push(c);
         return "NUDGE";
-      }
+      },
     );
     expect(seen).toEqual(["/home/x/proj"]);
   });
 
   it("cursor: returns '' when workspace_roots is empty (nothing to key on)", () => {
     expect(
-      buildHookOutput(cursorStdin({ workspace_roots: [] }), dir, undefined, () => "NUDGE")
+      buildHookOutput(
+        cursorStdin({ workspace_roots: [] }),
+        dir,
+        undefined,
+        () => "NUDGE",
+      ),
     ).toBe("");
   });
 
@@ -299,8 +344,8 @@ describe("buildHookOutput", () => {
         JSON.stringify({ cwd, hook_event_name: "PreToolUse" }),
         dir,
         undefined,
-        () => "NUDGE"
-      )
+        () => "NUDGE",
+      ),
     );
     expect(out.hookSpecificOutput.additionalContext).toBe("NUDGE");
   });
@@ -323,7 +368,9 @@ describe("formatInboxAnnouncements", () => {
   });
 
   it("routes replies back through announce (senders can't see the chat)", () => {
-    const text = formatInboxAnnouncements([ann(1, "can you check the auth change?")]);
+    const text = formatInboxAnnouncements([
+      ann(1, "can you check the auth change?"),
+    ]);
     expect(text).toContain(REPLY_ROUTING_HINT);
     expect(text.toLowerCase()).toContain("can't see this chat");
     expect(text).toContain("`announce`");

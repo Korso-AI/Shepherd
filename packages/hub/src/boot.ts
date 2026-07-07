@@ -15,7 +15,7 @@ import type pg from "pg";
  */
 export async function seedSelfHostWorkspace(
   pool: pg.Pool,
-  allowedWorkspace: string | undefined
+  allowedWorkspace: string | undefined,
 ): Promise<void> {
   if (allowedWorkspace === undefined) {
     return;
@@ -25,6 +25,6 @@ export async function seedSelfHostWorkspace(
     `INSERT INTO workspaces (slug, name, created_by)
      VALUES ($1, $1, 'self-host')
      ON CONFLICT (slug) DO NOTHING`,
-    [allowedWorkspace]
+    [allowedWorkspace],
   );
 }

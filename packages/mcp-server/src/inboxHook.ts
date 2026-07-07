@@ -42,7 +42,8 @@ async function readStdin(): Promise<string> {
 async function main(): Promise<void> {
   try {
     const raw = await readStdin();
-    const inboxDir = process.argv[2] || process.env["SHEPHERD_INBOX_DIR"] || defaultInboxDir();
+    const inboxDir =
+      process.argv[2] || process.env["SHEPHERD_INBOX_DIR"] || defaultInboxDir();
     const out = buildHookOutput(raw, inboxDir);
     if (out) process.stdout.write(out);
   } catch {

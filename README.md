@@ -49,13 +49,13 @@ the right name in the presence feed.
 each tool only launches servers listed in its own config — so add the entry to each
 tool you use. The launch command is always `npx -y --package=@korso/shepherd shepherd-mcp`.
 
-| Client | Where to register it |
-|---|---|
+| Client          | Where to register it                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Claude Code** | `claude mcp add shepherd -s user -e HUB_URL=… -e TEAM_TOKEN=… -- npx -y --package=@korso/shepherd shepherd-mcp` (or a project `.mcp.json`). **Not** `~/.claude/mcp.json` — it's silently ignored. |
-| **Codex** | `codex mcp add …`, or a `[mcp_servers.shepherd]` table (underscore!) in `~/.codex/config.toml` (TOML, not JSON). |
-| **Pi** | a JSON `mcpServers` block in `~/.pi/agent/mcp.json` (global) or `.pi/mcp.json` (project). |
-| **Cursor** | a JSON `mcpServers` block in `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project); verify under Settings → MCP. |
-| **Any other** | a stdio `mcpServers` entry — `command: npx`, `args: ["-y", "--package=@korso/shepherd", "shepherd-mcp"]`, plus the env vars. |
+| **Codex**       | `codex mcp add …`, or a `[mcp_servers.shepherd]` table (underscore!) in `~/.codex/config.toml` (TOML, not JSON).                                                                                  |
+| **Pi**          | a JSON `mcpServers` block in `~/.pi/agent/mcp.json` (global) or `.pi/mcp.json` (project).                                                                                                         |
+| **Cursor**      | a JSON `mcpServers` block in `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project); verify under Settings → MCP.                                                                          |
+| **Any other**   | a stdio `mcpServers` entry — `command: npx`, `args: ["-y", "--package=@korso/shepherd", "shepherd-mcp"]`, plus the env vars.                                                                      |
 
 ## Monorepo layout
 
@@ -106,7 +106,7 @@ built before `npm test`, since the hub's static-route tests serve it.
 npm install        # install all workspaces
 npm run build      # tsc -b across the project graph
 npm test           # vitest run
-npm run check      # build + test — the same gate CI runs
+npm run check      # lint + build + test — the same gate CI runs
 npm run dev:hub    # run the hub in watch mode
 npm run dev:mcp    # run the MCP server
 npm run migrate    # run hub database migrations
@@ -210,7 +210,7 @@ The token and session mechanics that back this today:
   need not hold the write token, is deferred.)
 - **Operations authorize on the `sessionId` in the request body, not on identity.**
   A `sessionId` is an unguessable v4 UUID returned by `join` and cached by each
-  agent's MCP server. Anyone who holds the token *and* learns another agent's
+  agent's MCP server. Anyone who holds the token _and_ learns another agent's
   `sessionId` can act as that agent — `done` its claims, `announce` as it
   (recorded under the victim's session), renew its leases, or read its pending
   announcements. For that reason the MCP server never echoes the `sessionId` back
@@ -358,7 +358,7 @@ gcloud run deploy shepherd-hub \
   --min-instances=1 \
   --add-cloudsql-instances=<conn-name> \
   --set-secrets=TEAM_TOKEN=your-team-token-secret:latest,DATABASE_URL=your-database-url-secret:latest \
-  --set-env-vars=ALLOWED_WORKSPACE=<your-workspace> \
+  --set-env-vars=ALLOWED_WORKSPACE=<your-workspace>,TRUST_PROXY=true \
   --allow-unauthenticated \
   --port=8080
 ```
@@ -438,18 +438,11 @@ WORKSPACE=<your-workspace>
   then redeploy or let Cloud Run pick up the new version on next container start.
 - **Updating the service YAML**: `packages/hub/cloudrun-service.yaml` can be
   applied with `gcloud run services replace packages/hub/cloudrun-service.yaml`
-  after substituting the placeholder values.
+  after substituting the placeholder values. The template sets `TRUST_PROXY=true`
+  for Cloud Run's load balancer.
 
-### Integration notes for the hosted Korso console (internal)
-
-These notes apply only to the Korso-hosted console/BFF integration;
-self-hosters can ignore them. The upstream forwarder must pass the request
-**method and body** through — every forwarded Shepherd endpoint is POST
-(`/join`, `/work`, `/done`, …). The hub's routes live at the **root** (`/work`,
-not `/api/work`), so the console's per-upstream path prefix for Shepherd must
-be the empty string. And the Cloud Run OIDC token's `aud` must equal the hub's
-own Cloud Run URL (the BFF's `SHEPHERD_API_BASE`), since that is exactly what
-the IAM check validates.
+For Korso-hosted console/BFF integration notes, see
+[`docs/hosted-integration.md`](docs/hosted-integration.md).
 
 ## License
 

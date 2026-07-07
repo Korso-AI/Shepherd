@@ -303,8 +303,8 @@ export function Dashboard({
   );
   // `null` = not yet chosen (derive a default on first render); "__all__" = All
   // repos; else a specific repo. Seeded from storage exactly like app.js.
-  const [selectedRepo, setSelectedRepo] = useState<string | null>(
-    () => readStored(REPO_KEY),
+  const [selectedRepo, setSelectedRepo] = useState<string | null>(() =>
+    readStored(REPO_KEY),
   );
   const [doneShown, setDoneShown] = useState(DONE_PAGE);
 
@@ -389,11 +389,15 @@ export function Dashboard({
   // treats null/"__all__" as all), mirroring app.js's `online`/`active`.
   const online = snapshot
     ? snapshot.agents.filter(
-        (a) => a.presence === "live" && matchesRepo({ repo: a.repo ?? "" }, effectiveRepo),
+        (a) =>
+          a.presence === "live" &&
+          matchesRepo({ repo: a.repo ?? "" }, effectiveRepo),
       ).length
     : 0;
   const active = snapshot
-    ? snapshot.tasks.filter((t) => t.status === "active" && matchesRepo(t, effectiveRepo)).length
+    ? snapshot.tasks.filter(
+        (t) => t.status === "active" && matchesRepo(t, effectiveRepo),
+      ).length
     : 0;
 
   const statusView = STATUS_VIEW[status];
@@ -425,7 +429,10 @@ export function Dashboard({
   const showBoardChrome = !noWorkspace && activeTab !== "config";
 
   return (
-    <div id="board" className={activeTab === "chat" ? "board--chat-active" : undefined}>
+    <div
+      id="board"
+      className={activeTab === "chat" ? "board--chat-active" : undefined}
+    >
       <header>
         {brand ?? (
           /* The brand is the document <h1> so the outline is valid (h1 → the
@@ -459,7 +466,10 @@ export function Dashboard({
           <>
             <span
               id="status"
-              className={"status" + (statusView.kind ? ` status--${statusView.kind}` : "")}
+              className={
+                "status" +
+                (statusView.kind ? ` status--${statusView.kind}` : "")
+              }
             >
               {statusView.text}
             </span>
@@ -523,7 +533,11 @@ export function Dashboard({
                 {activeCount}
               </span>
             </div>
-            <ActiveList tasks={tasks} nowMs={nowMs} selectedRepo={effectiveRepo} />
+            <ActiveList
+              tasks={tasks}
+              nowMs={nowMs}
+              selectedRepo={effectiveRepo}
+            />
           </div>
           <div className="board__rule" />
           <div className="col">
@@ -570,15 +584,16 @@ export function Dashboard({
         hidden={activeTab !== "chat"}
       >
         {noWorkspace ? (
-          <EmptyState
-            onGetStarted={openSetupGuide}
-            ctaLabel="Open setup guide"
-          >
+          <EmptyState onGetStarted={openSetupGuide} ctaLabel="Open setup guide">
             Finish setting up your workspace to start chatting with your agents.
           </EmptyState>
         ) : (
           <div className="chat-wrap">
-            <Chat announcements={announcements} selectedRepo={effectiveRepo} nowMs={nowMs} />
+            <Chat
+              announcements={announcements}
+              selectedRepo={effectiveRepo}
+              nowMs={nowMs}
+            />
             <Composer
               agents={agents}
               selectedRepo={effectiveRepo}

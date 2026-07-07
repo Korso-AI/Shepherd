@@ -30,7 +30,7 @@ import { type TenantContext } from "../tenant.js";
 
 export async function leave(
   input: LeaveRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<LeaveResponseT> {
   const { pool, config } = getContext();
 
@@ -45,7 +45,7 @@ export async function leave(
     // offline immediately, while "last seen" still reads as roughly when the
     // agent actually left (rather than the epoch).
     const offlineAt = new Date(
-      now.getTime() - (config.STALE_AFTER_SECONDS + 1) * 1000
+      now.getTime() - (config.STALE_AFTER_SECONDS + 1) * 1000,
     );
     await expireSessionPresence(tx, session.workspaceId, session.id, offlineAt);
   });

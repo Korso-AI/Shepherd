@@ -44,7 +44,8 @@ import { NO_ROUTE_WORKSPACE, type TenantContext } from "../../src/tenant.js";
 // ---------------------------------------------------------------------------
 
 const TEST_CONFIG: Config = {
-  DATABASE_URL: process.env["TEST_DATABASE_URL"] ?? process.env["DATABASE_URL"] ?? "",
+  DATABASE_URL:
+    process.env["TEST_DATABASE_URL"] ?? process.env["DATABASE_URL"] ?? "",
   TEAM_TOKEN: "test-token",
   HUB_PORT: 8080,
   ALLOWED_WORKSPACE: "test-ws",
@@ -81,7 +82,8 @@ async function seedSession(
   const human = opts.human ?? "alice";
   const program = opts.program ?? "my-prog";
   const model = opts.model ?? "claude-3";
-  const agentName = opts.agentName ?? `agent-${Math.random().toString(36).slice(2, 8)}`;
+  const agentName =
+    opts.agentName ?? `agent-${Math.random().toString(36).slice(2, 8)}`;
 
   return withTransaction(pool, async (tx) => {
     const agent = await createAgent(tx, {
@@ -115,7 +117,7 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     await runTestMigrations(pool);
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      ["test-ws", "test-ws"]
+      ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
     tenant = { workspaceId };
@@ -137,11 +139,14 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   it("happy (no conflict): returns workItemId and empty conflicts", async () => {
     const { sessionId } = await seedSession(pool, workspaceId);
 
-    const result = await work({
-      sessionId,
-      intent: "Refactor auth module",
-      pathGlobs: ["src/api/**"],
-    }, tenant);
+    const result = await work(
+      {
+        sessionId,
+        intent: "Refactor auth module",
+        pathGlobs: ["src/api/**"],
+      },
+      tenant,
+    );
 
     expect(result.workItemId).toBeTruthy();
     expect(typeof result.workItemId).toBe("string");
@@ -156,19 +161,25 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   it("idempotency: repeated work for same session+intent+globs reuses one claim", async () => {
     const { sessionId } = await seedSession(pool, workspaceId);
 
-    const first = await work({
-      sessionId,
-      intent: "Refactor auth module",
-      pathGlobs: ["src/api/**", "src/auth/**"],
-    }, tenant);
+    const first = await work(
+      {
+        sessionId,
+        intent: "Refactor auth module",
+        pathGlobs: ["src/api/**", "src/auth/**"],
+      },
+      tenant,
+    );
 
     // Same intent, same globs in a DIFFERENT order (+ incidental dup/whitespace)
     // — must be treated as the same claim, not a new one.
-    const second = await work({
-      sessionId,
-      intent: "Refactor auth module",
-      pathGlobs: ["src/auth/** ", "src/api/**", "src/api/**"],
-    }, tenant);
+    const second = await work(
+      {
+        sessionId,
+        intent: "Refactor auth module",
+        pathGlobs: ["src/auth/** ", "src/api/**", "src/api/**"],
+      },
+      tenant,
+    );
 
     expect(second.workItemId).toBe(first.workItemId);
 
@@ -184,11 +195,20 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   it("idempotency: a DIFFERENT intent or different globs still inserts a new claim", async () => {
     const { sessionId } = await seedSession(pool, workspaceId);
 
-    const a = await work({ sessionId, intent: "Work A", pathGlobs: ["src/a/**"] }, tenant);
+    const a = await work(
+      { sessionId, intent: "Work A", pathGlobs: ["src/a/**"] },
+      tenant,
+    );
     // Different intent, same globs -> new claim.
-    const b = await work({ sessionId, intent: "Work B", pathGlobs: ["src/a/**"] }, tenant);
+    const b = await work(
+      { sessionId, intent: "Work B", pathGlobs: ["src/a/**"] },
+      tenant,
+    );
     // Same intent as A, different globs -> new claim.
-    const c = await work({ sessionId, intent: "Work A", pathGlobs: ["src/c/**"] }, tenant);
+    const c = await work(
+      { sessionId, intent: "Work A", pathGlobs: ["src/c/**"] },
+      tenant,
+    );
 
     expect(new Set([a.workItemId, b.workItemId, c.workItemId]).size).toBe(3);
 
@@ -204,7 +224,9 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   // Happy path: new claim is visible to subsequent listActiveClaims
   // -------------------------------------------------------------------------
   it("happy: claim is visible to others after work() completes", async () => {
-    const { sessionId: sessionA } = await seedSession(pool, workspaceId, { agentName: "agent-a" });
+    const { sessionId: sessionA } = await seedSession(pool, workspaceId, {
+      agentName: "agent-a",
+    });
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
@@ -212,33 +234,45 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A claims src/api/**
-    await work({
-      sessionId: sessionA,
-      intent: "Build API",
-      pathGlobs: ["src/api/**"],
-    }, tenant);
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Build API",
+        pathGlobs: ["src/api/**"],
+      },
+      tenant,
+    );
 
     // B claims an unrelated path — should see A's claim in activeClaims but not conflicts
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Build UI",
-      pathGlobs: ["src/ui/**"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Build UI",
+        pathGlobs: ["src/ui/**"],
+      },
+      tenant,
+    );
 
     expect(resultB.landscape.conflicts).toHaveLength(0);
     expect(resultB.landscape.activeClaims).toHaveLength(1);
-    expect(resultB.landscape.activeClaims[0]!.pathGlobs).toContain("src/api/**");
+    expect(resultB.landscape.activeClaims[0]!.pathGlobs).toContain(
+      "src/api/**",
+    );
   });
 
   // -------------------------------------------------------------------------
   // Happy path: conflict detected
   // -------------------------------------------------------------------------
   it("conflict: B's claim overlapping A's glob appears in B's conflicts", async () => {
-    const { sessionId: sessionA, agentName: nameA } = await seedSession(pool, workspaceId, {
-      agentName: "agent-a",
-      human: "alice",
-      program: "prog-a",
-    });
+    const { sessionId: sessionA, agentName: nameA } = await seedSession(
+      pool,
+      workspaceId,
+      {
+        agentName: "agent-a",
+        human: "alice",
+        program: "prog-a",
+      },
+    );
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
@@ -246,18 +280,24 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A claims src/auth/**
-    await work({
-      sessionId: sessionA,
-      intent: "Auth module",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth module",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
 
     // B claims overlapping path
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Login page",
-      pathGlobs: ["src/auth/login.ts"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Login page",
+        pathGlobs: ["src/auth/login.ts"],
+      },
+      tenant,
+    );
 
     // B's claim still succeeds
     expect(resultB.workItemId).toBeTruthy();
@@ -295,11 +335,14 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     );
 
     // B claims overlapping path — should see no conflicts since A's claim is expired
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Login page",
-      pathGlobs: ["src/auth/login.ts"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Login page",
+        pathGlobs: ["src/auth/login.ts"],
+      },
+      tenant,
+    );
 
     expect(resultB.landscape.conflicts).toHaveLength(0);
     expect(resultB.landscape.activeClaims).toHaveLength(0);
@@ -321,11 +364,14 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A claims a path
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
 
     // Manually make session A's heartbeat very old (well past STALE_AFTER=120s).
     // The 60s background heartbeat keeps a genuinely-live session fresh, so a
@@ -337,11 +383,14 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     );
 
     // B claims overlapping path — A's claim is hidden, so B sees no conflict.
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Login page",
-      pathGlobs: ["src/auth/login.ts"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Login page",
+        pathGlobs: ["src/auth/login.ts"],
+      },
+      tenant,
+    );
 
     expect(resultB.landscape.conflicts).toHaveLength(0);
     expect(resultB.landscape.activeClaims).toHaveLength(0);
@@ -354,21 +403,26 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     const { sessionId } = await seedSession(pool, workspaceId);
 
     const before = new Date();
-    const result = await work({
-      sessionId,
-      intent: "Short TTL test",
-      pathGlobs: ["src/foo/**"],
-      ttlSeconds: 5, // below MIN_TTL_SECONDS=30
-    }, tenant);
+    const result = await work(
+      {
+        sessionId,
+        intent: "Short TTL test",
+        pathGlobs: ["src/foo/**"],
+        ttlSeconds: 5, // below MIN_TTL_SECONDS=30
+      },
+      tenant,
+    );
     const after = new Date();
 
     expect(result.workItemId).toBeTruthy();
 
     // Verify the actual stored expires_at is ~30 seconds out (clamped), not 5
-    const { rows } = await pool.query<{ expires_at: Date; ttl_seconds: number }>(
-      "SELECT expires_at, ttl_seconds FROM work_items WHERE id = $1",
-      [result.workItemId],
-    );
+    const { rows } = await pool.query<{
+      expires_at: Date;
+      ttl_seconds: number;
+    }>("SELECT expires_at, ttl_seconds FROM work_items WHERE id = $1", [
+      result.workItemId,
+    ]);
     expect(rows[0]!.ttl_seconds).toBe(30);
     // expires_at should be ~30 seconds from call time (not 5)
     const expiresAt = rows[0]!.expires_at.getTime();
@@ -393,16 +447,22 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
 
     // Fire two overlapping work() calls concurrently
     const [resultA, resultB] = await Promise.all([
-      work({
-        sessionId: sessionA,
-        intent: "Concurrent claim A",
-        pathGlobs: ["src/shared/**"],
-      }, tenant),
-      work({
-        sessionId: sessionB,
-        intent: "Concurrent claim B",
-        pathGlobs: ["src/shared/**"],
-      }, tenant),
+      work(
+        {
+          sessionId: sessionA,
+          intent: "Concurrent claim A",
+          pathGlobs: ["src/shared/**"],
+        },
+        tenant,
+      ),
+      work(
+        {
+          sessionId: sessionB,
+          intent: "Concurrent claim B",
+          pathGlobs: ["src/shared/**"],
+        },
+        tenant,
+      ),
     ]);
 
     // Both succeed (claim always succeeds)
@@ -442,21 +502,29 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // First work() by B should receive the announcement
-    const result1 = await work({
-      sessionId: sessionB,
-      intent: "First work",
-      pathGlobs: ["src/ui/**"],
-    }, tenant);
+    const result1 = await work(
+      {
+        sessionId: sessionB,
+        intent: "First work",
+        pathGlobs: ["src/ui/**"],
+      },
+      tenant,
+    );
 
     expect(result1.landscape.announcements).toHaveLength(1);
-    expect(result1.landscape.announcements[0]!.body).toBe("Hey everyone, heads up!");
+    expect(result1.landscape.announcements[0]!.body).toBe(
+      "Hey everyone, heads up!",
+    );
 
     // Second work() by B should NOT redeliver the same announcement
-    const result2 = await work({
-      sessionId: sessionB,
-      intent: "Second work",
-      pathGlobs: ["src/other/**"],
-    }, tenant);
+    const result2 = await work(
+      {
+        sessionId: sessionB,
+        intent: "Second work",
+        pathGlobs: ["src/other/**"],
+      },
+      tenant,
+    );
 
     expect(result2.landscape.announcements).toHaveLength(0);
   });
@@ -468,11 +536,14 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     const fakeSessionId = "00000000-0000-0000-0000-000000000000";
 
     await expect(
-      work({
-        sessionId: fakeSessionId,
-        intent: "ghost work",
-        pathGlobs: ["src/**"],
-      }, tenant),
+      work(
+        {
+          sessionId: fakeSessionId,
+          intent: "ghost work",
+          pathGlobs: ["src/**"],
+        },
+        tenant,
+      ),
     ).rejects.toThrow(UnknownSessionError);
   });
 
@@ -481,7 +552,9 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   // -------------------------------------------------------------------------
 
   it("changeReport: stored records are visible to an overlapping peer with presence enrichment", async () => {
-    const { sessionId: sessionA } = await seedSession(pool, workspaceId, { agentName: "agent-a" });
+    const { sessionId: sessionA } = await seedSession(pool, workspaceId, {
+      agentName: "agent-a",
+    });
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
@@ -489,28 +562,44 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A reports a committed + an uncommitted change on src/auth/**.
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "abc123",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "deadbeef", message: "commit auth", paths: ["src/auth/login.ts"] },
-          { kind: "uncommitted", sha: null, message: null, paths: ["src/auth/wip.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "abc123",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "deadbeef",
+              message: "commit auth",
+              paths: ["src/auth/login.ts"],
+            },
+            {
+              kind: "uncommitted",
+              sha: null,
+              message: null,
+              paths: ["src/auth/wip.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
     // B claims an overlapping glob -> should see BOTH of A's change records.
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth fix",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth fix",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
 
     expect(resultB.landscape.changeRecords).toHaveLength(2);
     for (const rec of resultB.landscape.changeRecords) {
@@ -519,15 +608,21 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
       expect(rec.authorIsLive).toBe(true);
       expect(typeof rec.authorLastActiveAt).toBe("string");
     }
-    const committed = resultB.landscape.changeRecords.find((r) => r.kind === "committed");
+    const committed = resultB.landscape.changeRecords.find(
+      (r) => r.kind === "committed",
+    );
     expect(committed!.commitSha).toBe("deadbeef");
     expect(committed!.message).toBe("commit auth");
-    const uncommitted = resultB.landscape.changeRecords.find((r) => r.kind === "uncommitted");
+    const uncommitted = resultB.landscape.changeRecords.find(
+      (r) => r.kind === "uncommitted",
+    );
     expect(uncommitted!.commitSha).toBeNull();
   });
 
   it("changeReport: committed records reflect the current reported set; uncommitted is wholesale-replaced", async () => {
-    const { sessionId: sessionA } = await seedSession(pool, workspaceId, { agentName: "agent-a" });
+    const { sessionId: sessionA } = await seedSession(pool, workspaceId, {
+      agentName: "agent-a",
+    });
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
@@ -535,27 +630,43 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A reports one committed (s1) + one uncommitted.
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "h1",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "s1", message: "m1", paths: ["src/auth/a.ts"] },
-          { kind: "uncommitted", sha: null, message: null, paths: ["src/auth/b.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "h1",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "s1",
+              message: "m1",
+              paths: ["src/auth/a.ts"],
+            },
+            {
+              kind: "uncommitted",
+              sha: null,
+              message: null,
+              paths: ["src/auth/b.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
-    let resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth fix",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    let resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth fix",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
     // B sees both A records (1 committed + 1 uncommitted).
     expect(resultB.landscape.changeRecords).toHaveLength(2);
 
@@ -563,50 +674,67 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     // uncommitted row is wholesale-replaced (cleared); s1 is no longer in A's
     // report (it was squashed/rebased away), so it is dropped — committed records
     // now reflect the agent's CURRENT unlanded set, not an ever-growing history.
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "h2",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "s2", message: "m2", paths: ["src/auth/a.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "h2",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "s2",
+              message: "m2",
+              paths: ["src/auth/a.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
-    resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth fix",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth fix",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
     expect(resultB.landscape.changeRecords).toHaveLength(1);
     expect(resultB.landscape.changeRecords[0]!.kind).toBe("committed");
     expect(resultB.landscape.changeRecords[0]!.commitSha).toBe("s2");
 
     // A reports a clean tree ([]) — nothing dirty AND nothing unlanded. Its
     // committed rows clear too, so B sees nothing from A.
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "h3",
-        truncated: false,
-        entries: [],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "h3",
+          truncated: false,
+          entries: [],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
-    resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth fix",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth fix",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
     expect(resultB.landscape.changeRecords).toHaveLength(0);
   });
 
@@ -616,20 +744,28 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
       branch: "main",
     });
 
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/new-branch",
-        baseBranch: "main",
-        head: "h1",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "s1", message: "m1", paths: ["src/auth/a.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/new-branch",
+          baseBranch: "main",
+          head: "h1",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "s1",
+              message: "m1",
+              paths: ["src/auth/a.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
     const { rows } = await pool.query<{ branch: string }>(
       "SELECT branch FROM sessions WHERE id = $1",
@@ -639,7 +775,9 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   });
 
   it("changeReport: non-overlapping records are excluded; own records never appear", async () => {
-    const { sessionId: sessionA } = await seedSession(pool, workspaceId, { agentName: "agent-a" });
+    const { sessionId: sessionA } = await seedSession(pool, workspaceId, {
+      agentName: "agent-a",
+    });
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
@@ -647,63 +785,89 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A reports a change on src/ui/**.
-    await work({
-      sessionId: sessionA,
-      intent: "UI work",
-      pathGlobs: ["src/ui/**"],
-      changeReport: {
-        branch: "feat/ui",
-        baseBranch: "main",
-        head: "h1",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "s1", message: "m1", paths: ["src/ui/page.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "UI work",
+        pathGlobs: ["src/ui/**"],
+        changeReport: {
+          branch: "feat/ui",
+          baseBranch: "main",
+          head: "h1",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "s1",
+              message: "m1",
+              paths: ["src/ui/page.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
     // B claims a non-overlapping glob -> A's record is excluded.
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "h2",
-        truncated: false,
-        entries: [
-          { kind: "uncommitted", sha: null, message: null, paths: ["src/auth/x.ts"] },
-        ],
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "h2",
+          truncated: false,
+          entries: [
+            {
+              kind: "uncommitted",
+              sha: null,
+              message: null,
+              paths: ["src/auth/x.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
     // B sees no overlapping records, and never sees its OWN record.
     expect(resultB.landscape.changeRecords).toHaveLength(0);
   });
 
   it("changeReport: a stale author's record is still returned but authorIsLive===false", async () => {
-    const { sessionId: sessionA } = await seedSession(pool, workspaceId, { agentName: "agent-a" });
+    const { sessionId: sessionA } = await seedSession(pool, workspaceId, {
+      agentName: "agent-a",
+    });
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
       program: "prog-b",
     });
 
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "h1",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "s1", message: "m1", paths: ["src/auth/a.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "h1",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "s1",
+              message: "m1",
+              paths: ["src/auth/a.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
     // Backdate A's heartbeat past STALE_AFTER_SECONDS (=120).
     await pool.query(
@@ -711,11 +875,14 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
       [sessionA],
     );
 
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth fix",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth fix",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
 
     expect(resultB.landscape.changeRecords).toHaveLength(1);
     expect(resultB.landscape.changeRecords[0]!.authorIsLive).toBe(false);
@@ -733,7 +900,11 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     // route workspace (NO_ROUTE_WORKSPACE) — resolveSession reads the session and
     // authorizes membership against ITS workspace.
     await withTransaction(pool, (tx) =>
-      addMembership(tx, { workspaceId, accountId: "acct-member", role: "member" }),
+      addMembership(tx, {
+        workspaceId,
+        accountId: "acct-member",
+        role: "member",
+      }),
     );
     const { sessionId } = await seedSession(pool, workspaceId);
     const accountTenant: TenantContext = {
@@ -787,7 +958,9 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
   });
 
   it("back-compat: work with no changeReport leaves records untouched", async () => {
-    const { sessionId: sessionA } = await seedSession(pool, workspaceId, { agentName: "agent-a" });
+    const { sessionId: sessionA } = await seedSession(pool, workspaceId, {
+      agentName: "agent-a",
+    });
     const { sessionId: sessionB } = await seedSession(pool, workspaceId, {
       agentName: "agent-b",
       human: "bob",
@@ -795,33 +968,47 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A reports a change.
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-      changeReport: {
-        branch: "feat/auth",
-        baseBranch: "main",
-        head: "h1",
-        truncated: false,
-        entries: [
-          { kind: "committed", sha: "s1", message: "m1", paths: ["src/auth/a.ts"] },
-        ],
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+        changeReport: {
+          branch: "feat/auth",
+          baseBranch: "main",
+          head: "h1",
+          truncated: false,
+          entries: [
+            {
+              kind: "committed",
+              sha: "s1",
+              message: "m1",
+              paths: ["src/auth/a.ts"],
+            },
+          ],
+        },
       },
-    }, tenant);
+      tenant,
+    );
 
     // A calls work again with NO changeReport -> its records persist.
-    await work({
-      sessionId: sessionA,
-      intent: "Auth work",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    await work(
+      {
+        sessionId: sessionA,
+        intent: "Auth work",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
 
-    const resultB = await work({
-      sessionId: sessionB,
-      intent: "Auth fix",
-      pathGlobs: ["src/auth/**"],
-    }, tenant);
+    const resultB = await work(
+      {
+        sessionId: sessionB,
+        intent: "Auth fix",
+        pathGlobs: ["src/auth/**"],
+      },
+      tenant,
+    );
     expect(resultB.landscape.changeRecords).toHaveLength(1);
     expect(resultB.landscape.changeRecords[0]!.commitSha).toBe("s1");
   });
@@ -832,6 +1019,8 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
 // ---------------------------------------------------------------------------
 describe.skipIf(dbAvailable)("work operation — DB not available", () => {
   it("skips because no database is configured", () => {
-    console.log("[work.test] No TEST_DATABASE_URL or DATABASE_URL — DB tests skipped.");
+    console.log(
+      "[work.test] No TEST_DATABASE_URL or DATABASE_URL — DB tests skipped.",
+    );
   });
 });

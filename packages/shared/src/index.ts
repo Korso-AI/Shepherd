@@ -176,9 +176,15 @@ export type WorkspaceAgentT = z.infer<typeof WorkspaceAgent>;
 export type WorkspaceTaskT = z.infer<typeof WorkspaceTask>;
 export type TaskStatusT = z.infer<typeof TaskStatus>;
 export type WorkspaceAnnouncementT = z.infer<typeof WorkspaceAnnouncement>;
-export type WorkspaceLandscapeResponseT = z.infer<typeof WorkspaceLandscapeResponse>;
-export type WorkspaceAnnounceRequestT = z.infer<typeof WorkspaceAnnounceRequest>;
-export type WorkspaceAnnounceResponseT = z.infer<typeof WorkspaceAnnounceResponse>;
+export type WorkspaceLandscapeResponseT = z.infer<
+  typeof WorkspaceLandscapeResponse
+>;
+export type WorkspaceAnnounceRequestT = z.infer<
+  typeof WorkspaceAnnounceRequest
+>;
+export type WorkspaceAnnounceResponseT = z.infer<
+  typeof WorkspaceAnnounceResponse
+>;
 
 export type RoleT = z.infer<typeof Role>;
 export type WorkspaceSummaryT = z.infer<typeof WorkspaceSummary>;
@@ -196,14 +202,20 @@ export type InviteResponseT = z.infer<typeof InviteResponse>;
 export type InviteByEmailRequestT = z.infer<typeof InviteByEmailRequest>;
 export type InviteByEmailResponseT = z.infer<typeof InviteByEmailResponse>;
 export type EmailInviteSummaryT = z.infer<typeof EmailInviteSummary>;
-export type ListEmailInvitesResponseT = z.infer<typeof ListEmailInvitesResponse>;
+export type ListEmailInvitesResponseT = z.infer<
+  typeof ListEmailInvitesResponse
+>;
 export type RedeemInviteResponseT = z.infer<typeof RedeemInviteResponse>;
 export type MemberSummaryT = z.infer<typeof MemberSummary>;
 export type ListMembersResponseT = z.infer<typeof ListMembersResponse>;
 export type SetMemberRoleRequestT = z.infer<typeof SetMemberRoleRequest>;
 export type SetMemberRoleResponseT = z.infer<typeof SetMemberRoleResponse>;
-export type TransferOwnershipRequestT = z.infer<typeof TransferOwnershipRequest>;
-export type TransferOwnershipResponseT = z.infer<typeof TransferOwnershipResponse>;
+export type TransferOwnershipRequestT = z.infer<
+  typeof TransferOwnershipRequest
+>;
+export type TransferOwnershipResponseT = z.infer<
+  typeof TransferOwnershipResponse
+>;
 export type FeedbackTypeT = z.infer<typeof FeedbackType>;
 export type FeedbackContextT = z.infer<typeof FeedbackContext>;
 export type FeedbackRequestT = z.infer<typeof FeedbackRequest>;
@@ -211,4 +223,6 @@ export type FeedbackResponseT = z.infer<typeof FeedbackResponse>;
 
 export type TrendPointT = z.infer<typeof TrendPoint>;
 export type TopWorkspaceT = z.infer<typeof TopWorkspace>;
-export type ShepherdAnalyticsResponseT = z.infer<typeof ShepherdAnalyticsResponse>;
+export type ShepherdAnalyticsResponseT = z.infer<
+  typeof ShepherdAnalyticsResponse
+>;

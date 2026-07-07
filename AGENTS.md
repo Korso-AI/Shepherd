@@ -22,7 +22,7 @@ It is built from four packages:
 
 > **Status:** live. The hub, the MCP server, the `@shepherd/shared` contract, and the `packages/ui/`
 > dashboard (React + Vite) are real code; **hosted multi-tenancy is implemented** (a `NOT NULL
-> workspace_id` on every coordination table, account memberships, hashed `shp_…` API tokens, the
+workspace_id` on every coordination table, account memberships, hashed `shp_…` API tokens, the
 > per-request auth edge, per-workspace query scoping). The two deployment modes (self-hosted
 > `TEAM_TOKEN`; Korso-hosted via `x-internal-token` + trusted `x-account-id`, plus minted agent tokens)
 > are described in [`README.md`](README.md) and live in `packages/hub/src/tenant.ts`.
@@ -82,26 +82,26 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
 - `build` — `tsc -b` for the graph; `tsup` for the published `mcp-server`; Vite for `ui`.
 - `boundaries` — `dependency-cruiser` enforces [the import rules above](#architecture--module-boundaries).
 
-> **Current gating status.** `npm run check` exists today as **build + test** (root `package.json`),
-> and `.github/workflows/ci.yml` runs the same build + full test suite (against a real Postgres service
-> container) on every PR and push to main. There is still **no lint, no format check, no no-emit
-> typecheck, and no boundaries check**, and several dev dependencies float on `"latest"` (root + `ui`).
-> The full pipeline above is the **target**; extending `check` + pinning those deps is the next step,
-> because **a rule that isn't a failing check does not exist**.
+> **Current gating status.** `npm run check` runs **lint + build + test** (root `package.json`),
+> and `.github/workflows/ci.yml` runs the same on every PR and push to main (with a Postgres service
+> container for the full hub suite). There is still **no format check, no no-emit typecheck, and no
+> boundaries check**, and several dev dependencies float on `"latest"` (root + `ui`). The full pipeline
+> above is the **target**; wiring the remaining steps + pinning those deps is the next step, because
+> **a rule that isn't a failing check does not exist**.
 
 ## Environment & tooling
 
 - **npm workspaces** manage the graph and lockfile (`package-lock.json`, committed; CI uses `npm ci`).
 - **Pin dependencies — they must earn their place.** Replace floating `"latest"` ranges with real,
-  audited versions; a *new* dep must clear `npm audit` and beat the stdlib/Fastify/existing-dep rungs of
+  audited versions; a _new_ dep must clear `npm audit` and beat the stdlib/Fastify/existing-dep rungs of
   the [minimalism ladder](#minimalism--the-lazy-senior-dev-discipline).
 - **TypeScript** in `strict` mode (NodeNext, ES2022, `composite`); type errors are build failures. Build
   the graph with `tsc -b`.
 - **Vitest** for unit + integration; **Testing Library** for the UI.
 - **Fastify 5** (hub) / **`@modelcontextprotocol/sdk`** (MCP server) / **Vite + React** (UI) / **`pg`** for
   Postgres / **`pino`** for hub logging.
-- Target **Node 22 LTS** for development; the published `mcp-server` keeps a wider `engines` floor (`>=18`)
-  so any agent host can run it.
+- Target **Node 22 LTS** for development; published packages require **Node >=20** (`engines` in
+  `package.json`).
 
 ## Code style
 
@@ -109,13 +109,13 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
 - **No `any`.** Use `unknown` at boundaries and narrow. The one sanctioned place an external/untyped value
   becomes typed is a **zod boundary parser** — never a raw cast that launders `unknown` into a domain type.
 - **Validate every external payload at the boundary with zod** (agent requests, HTTP bodies, headers, env).
-  Parse, don't assume. The wire `…T` types describe the *contract*; the zod `.parse`/`.safeParse` proves the
-  *payload*. The env schema in `packages/hub/src/config.ts` and the wire contract in `@shepherd/shared`
+  Parse, don't assume. The wire `…T` types describe the _contract_; the zod `.parse`/`.safeParse` proves the
+  _payload_. The env schema in `packages/hub/src/config.ts` and the wire contract in `@shepherd/shared`
   are the model: bounded, validated parsers at the trust edge.
 - **Secrets are server-side only.** Read them from `process.env` in the hub; never ship a secret to the UI
   bundle. `TEAM_TOKEN` / `BFF_INTERNAL_TOKEN` / `DATABASE_URL` are hub config, never client-visible.
 - **TSDoc** on exported functions, types, and modules; the auth/tenancy modules already model this. Comments
-  explain *why*, not *what*.
+  explain _why_, not _what_.
 - Keep functions small and single-purpose; prefer pure functions (the helpers in `tenant.ts` —
   `hashToken`, `timingSafeCompare` — are the model).
   Caps (target — to be wired into the `lint` rule): file soft 300 / hard 500 lines; function soft 50 /
@@ -127,7 +127,7 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
 ## Minimalism — the lazy-senior-dev discipline
 
 > The best code is the code you never wrote. This repo is predominantly agent-written, and the
-> characteristic failure mode here is *over-building*: speculative abstractions, a helper reinvented, a
+> characteristic failure mode here is _over-building_: speculative abstractions, a helper reinvented, a
 > dependency for a one-liner, flexibility no caller needs. Before writing code, climb this ladder and stop
 > at the first rung that works:
 >
@@ -135,15 +135,15 @@ format:check  →  lint  →  typecheck (tsc -b --noEmit / tsc --noEmit)  →  t
 > 2. **Reuse** — does `@shepherd/shared` (the zod contract, `generateName`, `canonicalizeRepo`) or an
 >    existing hub module already do it?
 > 3. **Platform / stdlib** — does Node (`node:crypto`, `node:http`), Fastify, or `pg` already cover it?
-> 4. **Existing dependency** — does a package already in `package-lock.json` solve it? A *new* dep must
+> 4. **Existing dependency** — does a package already in `package-lock.json` solve it? A _new_ dep must
 >    clear `npm audit` and earn its place — prefer the platform.
-> 5. **Smallest correct change** — the shortest working diff wins, *once you understand the problem.*
+> 5. **Smallest correct change** — the shortest working diff wins, _once you understand the problem._
 >
 > Deletion over addition. Boring over clever. Fix root causes, not symptoms — **one guard in the tenant
 > resolver beats a check in every route handler.**
 
-**Not lazy about — never "minimized away."** Minimalism governs how much *code* you write, never how much
-*correctness* you keep. The carve-outs are exactly this repo's non-negotiables, and they all live in the
+**Not lazy about — never "minimized away."** Minimalism governs how much _code_ you write, never how much
+_correctness_ you keep. The carve-outs are exactly this repo's non-negotiables, and they all live in the
 auth/tenancy edge (see [Correctness & safety](#correctness--safety)): the zod boundary parse on every wire
 payload; **constant-time** token comparison (`timingSafeCompare` — never `===` on a secret); **fail-closed**
 tenant resolution; **`workspace_id` scoping on every query**; never echoing a `sessionId` back to the agent;
@@ -157,7 +157,7 @@ instead of treating the shortcut as load-bearing (e.g. the deferred per-session 
 ## Correctness & safety
 
 Shepherd's dangerous code is the **auth edge** (`packages/hub/src/tenant.ts`) and the
-**workspace-scoped data layer** (`packages/hub/src/repo.ts`). The safety properties are bound to *that code*,
+**workspace-scoped data layer** (`packages/hub/src/repo.ts`). The safety properties are bound to _that code_,
 not to a label — they hold no matter which route, mode, or workspace is in play:
 
 - **Fail closed.** `resolveTenant` denies (`401`) on every uncertain path and **never** falls back
@@ -165,7 +165,7 @@ not to a label — they hold no matter which route, mode, or workspace is in pla
   `x-internal-token` to a hub with no `BFF_INTERNAL_TOKEN` configured → 401. A partial auth config is a hard
   error, not a fallback.
 - **One credential per request, never conflated.** Resolution order: `x-internal-token` (BFF — the shared
-  secret is verified, *then* the trusted `x-account-id` is honoured, and it reaches a workspace only via a
+  secret is verified, _then_ the trusted `x-account-id` is honoured, and it reaches a workspace only via a
   live **membership**), a minted `Bearer shp_…` agent token (hashed lookup, gated on live membership), or
   the self-host `TEAM_TOKEN` bearer (scoped to `ALLOWED_WORKSPACE`; any inbound `x-account-id` is
   **ignored**). A client can never supply or override its own account or workspace.
@@ -199,7 +199,7 @@ not to a label — they hold no matter which route, mode, or workspace is in pla
   execute a line.
 - **Never edit, weaken, delete, or `skip`/`xfail` a test to turn a red build green.** A failing test is a
   finding — fix the code under test. The only sanctioned reason to change an assertion is that it is genuinely
-  *stale* (the behavior it pinned was intentionally changed); say so explicitly in the commit/PR.
+  _stale_ (the behavior it pinned was intentionally changed); say so explicitly in the commit/PR.
 - Tests must be **independent and runnable in any order**.
 
 ## Definition of Done

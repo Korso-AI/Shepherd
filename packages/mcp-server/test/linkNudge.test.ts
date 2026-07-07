@@ -34,7 +34,9 @@ describe("buildLinkNudge", () => {
   });
 
   it("nudges when no tool name is given (SessionStart / UserPromptSubmit)", () => {
-    expect(buildLinkNudge(repo, undefined, { declinedDir })).toBe(LINK_NUDGE_TEXT);
+    expect(buildLinkNudge(repo, undefined, { declinedDir })).toBe(
+      LINK_NUDGE_TEXT,
+    );
   });
 
   it("nudges from a subdirectory of the repo (marker lookup walks up)", () => {
@@ -44,13 +46,22 @@ describe("buildLinkNudge", () => {
   });
 
   it("is silent for read-only tools", () => {
-    for (const tool of ["Read", "Grep", "Glob", "Bash", "mcp__shepherd__sync"]) {
+    for (const tool of [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash",
+      "mcp__shepherd__sync",
+    ]) {
       expect(buildLinkNudge(repo, tool, { declinedDir })).toBe("");
     }
   });
 
   it("is silent when the repo is linked (a .shepherd marker exists)", () => {
-    writeFileSync(join(repo, ".shepherd"), JSON.stringify({ workspace: "acme" }) + "\n");
+    writeFileSync(
+      join(repo, ".shepherd"),
+      JSON.stringify({ workspace: "acme" }) + "\n",
+    );
     expect(buildLinkNudge(repo, "Edit", { declinedDir })).toBe("");
   });
 

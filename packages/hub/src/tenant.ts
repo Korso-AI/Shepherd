@@ -92,7 +92,10 @@ export const NO_ROUTE_WORKSPACE = "";
  */
 export function requireWorkspaceId(tenant: TenantContext): string {
   if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
-    throw new AuthError(400, "operation requires a workspace-scoped credential");
+    throw new AuthError(
+      400,
+      "operation requires a workspace-scoped credential",
+    );
   }
   return tenant.workspaceId;
 }
@@ -180,7 +183,10 @@ export function hashToken(plaintext: string): string {
  * secret) — that is treated as no-match WITHOUT a timing side-channel: we still
  * run a full digest compare against a constant.
  */
-function timingSafeCompare(provided: string, expected: string | undefined): boolean {
+function timingSafeCompare(
+  provided: string,
+  expected: string | undefined,
+): boolean {
   const ha = crypto.createHash("sha256").update(provided, "utf8").digest();
   const hb = crypto
     .createHash("sha256")
@@ -217,11 +223,19 @@ function sha256Hex(value: string): string {
  * when unset, no email can match, so the operator surface stays unreachable —
  * no org-specific domain is baked into the source.
  */
-function isInternalOperatorEmail(email: string, domain: string | undefined): boolean {
+function isInternalOperatorEmail(
+  email: string,
+  domain: string | undefined,
+): boolean {
   if (domain === undefined) return false;
   const at = email.lastIndexOf("@");
   if (at < 1) return false;
-  return email.slice(at + 1).trim().toLowerCase() === domain.trim().toLowerCase();
+  return (
+    email
+      .slice(at + 1)
+      .trim()
+      .toLowerCase() === domain.trim().toLowerCase()
+  );
 }
 
 /**
@@ -241,7 +255,7 @@ function isInternalOperatorEmail(email: string, domain: string | undefined): boo
 function verifyOperatorProof(
   request: ResolvableRequest,
   config: Config,
-  accountId: string
+  accountId: string,
 ): string | null {
   const path = request.url.split("?")[0]!;
   if (!path.startsWith("/admin/")) return null;
@@ -250,7 +264,10 @@ function verifyOperatorProof(
   const verified = headerValue(request, "x-operator-verified");
   const timestampMs = headerValue(request, "x-operator-timestamp");
   const requestTarget = headerValue(request, "x-operator-request-target");
-  const bodySha256 = headerValue(request, "x-operator-body-sha256")?.toLowerCase();
+  const bodySha256 = headerValue(
+    request,
+    "x-operator-body-sha256",
+  )?.toLowerCase();
   const signature = headerValue(request, "x-operator-signature")?.toLowerCase();
   const secret = config.OPERATOR_IDENTITY_SECRET;
 
@@ -266,11 +283,15 @@ function verifyOperatorProof(
     return null;
   }
 
-  if (!isInternalOperatorEmail(email, config.OPERATOR_EMAIL_DOMAIN)) return null;
+  if (!isInternalOperatorEmail(email, config.OPERATOR_EMAIL_DOMAIN))
+    return null;
 
   // Freshness: the signed ms-epoch timestamp must be within the replay window.
   if (!/^\d+$/.test(timestampMs)) return null;
-  if (Math.abs(Date.now() - Number(timestampMs)) > OPERATOR_SIGNATURE_MAX_AGE_SECONDS * 1000) {
+  if (
+    Math.abs(Date.now() - Number(timestampMs)) >
+    OPERATOR_SIGNATURE_MAX_AGE_SECONDS * 1000
+  ) {
     return null;
   }
 
@@ -298,7 +319,10 @@ function verifyOperatorProof(
     "true",
     bodySha256,
   ].join("\n");
-  const expected = crypto.createHmac("sha256", secret).update(payload, "utf8").digest("hex");
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(payload, "utf8")
+    .digest("hex");
   if (!timingSafeCompare(signature, expected)) return null;
 
   return email;
@@ -347,7 +371,10 @@ function consumeRateLimit(key: string, now: number = Date.now()): void {
   } else {
     const elapsed = now - bucket.updatedAt;
     if (elapsed > 0) {
-      bucket.tokens = Math.min(RATE_LIMIT_CAPACITY, bucket.tokens + elapsed * refillPerMs);
+      bucket.tokens = Math.min(
+        RATE_LIMIT_CAPACITY,
+        bucket.tokens + elapsed * refillPerMs,
+      );
       bucket.updatedAt = now;
     }
   }
@@ -390,7 +417,10 @@ function refillPreauthBucket(bucket: Bucket, now: number): void {
   const refillPerMs = PREAUTH_FAIL_CAPACITY / PREAUTH_FAIL_WINDOW_MS;
   const elapsed = now - bucket.updatedAt;
   if (elapsed > 0) {
-    bucket.tokens = Math.min(PREAUTH_FAIL_CAPACITY, bucket.tokens + elapsed * refillPerMs);
+    bucket.tokens = Math.min(
+      PREAUTH_FAIL_CAPACITY,
+      bucket.tokens + elapsed * refillPerMs,
+    );
     bucket.updatedAt = now;
   }
 }
@@ -405,7 +435,10 @@ function assertPreauthBudget(ip: string, now: number = Date.now()): void {
   if (bucket === undefined) return;
   refillPreauthBucket(bucket, now);
   if (bucket.tokens < 1) {
-    throw new AuthError(429, "too many failed authentications from this address");
+    throw new AuthError(
+      429,
+      "too many failed authentications from this address",
+    );
   }
 }
 
@@ -462,7 +495,11 @@ const lastProfileUpsert = new Map<string, number>();
  * for a key (and the first after the window lapses) always returns false (write),
  * so liveness/profile freshness is never indefinitely starved.
  */
-function throttleWrite(seen: Map<string, number>, key: string, now: number): boolean {
+function throttleWrite(
+  seen: Map<string, number>,
+  key: string,
+  now: number,
+): boolean {
   const last = seen.get(key);
   if (last !== undefined && now - last < HOT_PATH_WRITE_THROTTLE_MS) {
     return true; // skip — written recently
@@ -505,10 +542,7 @@ interface ResolvableRequest {
 }
 
 /** First value of a (possibly array-valued) header, trimmed; undefined if absent/empty. */
-function headerValue(
-  req: ResolvableRequest,
-  name: string
-): string | undefined {
+function headerValue(req: ResolvableRequest, name: string): string | undefined {
   const raw = req.headers[name];
   const v = Array.isArray(raw) ? raw[0] : raw;
   if (v === undefined) return undefined;
@@ -552,7 +586,7 @@ function routeWorkspaceId(url: string): string | null {
 export async function resolveTenant(
   request: ResolvableRequest,
   config: Config,
-  pool: pg.Pool
+  pool: pg.Pool,
 ): Promise<TenantContext> {
   const ip = request.ip ?? "unknown";
   assertPreauthBudget(ip);
@@ -570,7 +604,7 @@ export async function resolveTenant(
 async function resolveCredentials(
   request: ResolvableRequest,
   config: Config,
-  pool: pg.Pool
+  pool: pg.Pool,
 ): Promise<TenantContext> {
   const internalToken = headerValue(request, "x-internal-token");
 
@@ -618,7 +652,12 @@ async function resolveCredentials(
     const workspaceId = routeWorkspaceId(request.url);
     if (workspaceId === null) {
       // Non-:id route: no workspace to validate here. The operation supplies it.
-      return { workspaceId: NO_ROUTE_WORKSPACE, accountId, via: "browser", ...operatorFields };
+      return {
+        workspaceId: NO_ROUTE_WORKSPACE,
+        accountId,
+        via: "browser",
+        ...operatorFields,
+      };
     }
 
     // :id route: the caller must be a member of THIS workspace. A missing
@@ -627,7 +666,13 @@ async function resolveCredentials(
     if (membership === null) {
       throw new AuthError(404, "not a member of the requested workspace");
     }
-    return { workspaceId, accountId, role: membership.role, via: "browser", ...operatorFields };
+    return {
+      workspaceId,
+      accountId,
+      role: membership.role,
+      via: "browser",
+      ...operatorFields,
+    };
   }
 
   // --- 2 & 3. Bearer token ------------------------------------------------
@@ -669,7 +714,11 @@ async function resolveCredentials(
 
     // WORKSPACE-scoped token: the caller must still be a LIVE member of the
     // token's workspace.
-    const membership = await findMembership(pool, tokenRow.account_id, tokenRow.workspace_id);
+    const membership = await findMembership(
+      pool,
+      tokenRow.account_id,
+      tokenRow.workspace_id,
+    );
     if (membership === null) {
       // Fail closed: the token authenticates, but its account is no longer
       // a member of the token's workspace. It is the MEMBERSHIP — not the token —
@@ -680,7 +729,10 @@ async function resolveCredentials(
       // present it. 401 rather than the browser path's 404: the caller holds a
       // real token naming its OWN workspace, so there is no cross-workspace
       // existence to hide here — this is a plain authentication failure.
-      throw new AuthError(401, "token account is no longer a member of its workspace");
+      throw new AuthError(
+        401,
+        "token account is no longer a member of its workspace",
+      );
     }
     return {
       workspaceId: tokenRow.workspace_id,
@@ -694,7 +746,8 @@ async function resolveCredentials(
   //    never matches. Scope is the single ALLOWED_WORKSPACE, looked up by slug.
   if (timingSafeCompare(bearer, config.TEAM_TOKEN)) {
     const slug = config.ALLOWED_WORKSPACE;
-    const ws = slug !== undefined ? await findWorkspaceBySlug(pool, slug) : null;
+    const ws =
+      slug !== undefined ? await findWorkspaceBySlug(pool, slug) : null;
     if (ws === null) {
       // The team token is valid but its workspace was never seeded (boot seeds
       // it on startup). Treat as a server-misconfiguration auth failure.

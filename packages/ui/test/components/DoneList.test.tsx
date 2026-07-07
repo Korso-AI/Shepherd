@@ -10,7 +10,9 @@ import { DoneList } from "../../src/components/DoneList.js";
  */
 const NOW = Date.parse("2026-06-28T12:00:00.000Z");
 
-function task(over: Partial<WorkspaceTaskT> & { agentName: string }): WorkspaceTaskT {
+function task(
+  over: Partial<WorkspaceTaskT> & { agentName: string },
+): WorkspaceTaskT {
   return {
     agentName: over.agentName,
     program: over.program ?? "claude",
@@ -47,7 +49,9 @@ describe("DoneList", () => {
         onLoadMore={() => {}}
       />,
     );
-    const days = [...container.querySelectorAll(".day")].map((d) => d.textContent);
+    const days = [...container.querySelectorAll(".day")].map(
+      (d) => d.textContent,
+    );
     expect(days).toContain("Today");
     expect(days).toContain("Yesterday");
   });
@@ -75,12 +79,16 @@ describe("DoneList", () => {
         onLoadMore={() => {}}
       />,
     );
-    const droppedCard = screen.getByText("dropped task").closest(".task") as HTMLElement;
+    const droppedCard = screen
+      .getByText("dropped task")
+      .closest(".task") as HTMLElement;
     const dropChip = within(droppedCard).getByText("dropped");
     expect(dropChip).toHaveClass("task__stat--drop");
     expect(within(droppedCard).getByText(/no done signal/)).toBeInTheDocument();
 
-    const doneCard = screen.getByText("done task").closest(".task") as HTMLElement;
+    const doneCard = screen
+      .getByText("done task")
+      .closest(".task") as HTMLElement;
     const doneChip = within(doneCard).getByText("done");
     expect(doneChip).not.toHaveClass("task__stat--drop");
     expect(within(doneCard).getByText(/finished/)).toBeInTheDocument();
@@ -136,7 +144,13 @@ describe("DoneList", () => {
       <DoneList
         tasks={[
           task({ agentName: "Abe", intent: "done-here", repo: "korso/a" }),
-          task({ agentName: "Bo", intent: "still-active", status: "active", endedAt: null, repo: "korso/a" }),
+          task({
+            agentName: "Bo",
+            intent: "still-active",
+            status: "active",
+            endedAt: null,
+            repo: "korso/a",
+          }),
           task({ agentName: "Cy", intent: "other-repo", repo: "korso/b" }),
         ]}
         nowMs={NOW}

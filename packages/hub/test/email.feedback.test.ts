@@ -15,7 +15,11 @@ const PARAMS = {
   id: "fb-uuid-1",
   type: "bug",
   body: "the export button crashes the tab when the table is empty and the console shows a TypeError",
-  account: { id: "acct-alice", name: "Alice Example", email: "alice@example.test" },
+  account: {
+    id: "acct-alice",
+    name: "Alice Example",
+    email: "alice@example.test",
+  },
   workspace: { id: "ws-uuid-1", name: "Acme Team", slug: "acme" },
   context: {
     route: "/shepherd",
@@ -31,7 +35,9 @@ afterEach(() => {
 
 describe("sendFeedbackEmail", () => {
   it("POSTs the expected Resend payload", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await sendFeedbackEmail(PARAMS, CONFIG);
@@ -43,10 +49,12 @@ describe("sendFeedbackEmail", () => {
     const payload = JSON.parse(init.body);
     expect(payload.from).toBe(CONFIG.INVITE_EMAIL_FROM);
     expect(payload.to).toBe("dev@example.test");
-    expect(payload.subject).toBe(`[Feedback] bug — ${PARAMS.body.slice(0, 60)}…`);
+    expect(payload.subject).toBe(
+      `[Feedback] bug — ${PARAMS.body.slice(0, 60)}…`,
+    );
     expect(payload.text).toContain(PARAMS.body);
     expect(payload.text).toContain(
-      "account: Alice Example <alice@example.test> (acct-alice)"
+      "account: Alice Example <alice@example.test> (acct-alice)",
     );
     expect(payload.text).toContain("workspace: Acme Team (acme)");
     expect(payload.text).toContain("route: /shepherd");
@@ -55,12 +63,20 @@ describe("sendFeedbackEmail", () => {
   });
 
   it("keeps a short body un-truncated in the subject and dashes null identities", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await sendFeedbackEmail(
-      { ...PARAMS, body: "short one", account: null, workspace: null, context: null },
-      CONFIG
+      {
+        ...PARAMS,
+        body: "short one",
+        account: null,
+        workspace: null,
+        context: null,
+      },
+      CONFIG,
     );
 
     const payload = JSON.parse(fetchMock.mock.calls[0]![1].body);
@@ -70,7 +86,9 @@ describe("sendFeedbackEmail", () => {
   });
 
   it("falls back to raw ids when identities are unresolved", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     await sendFeedbackEmail(
@@ -79,7 +97,7 @@ describe("sendFeedbackEmail", () => {
         account: { id: "acct-alice", name: null, email: null },
         workspace: { id: "ws-uuid-1", name: null, slug: null },
       },
-      CONFIG
+      CONFIG,
     );
 
     const payload = JSON.parse(fetchMock.mock.calls[0]![1].body);
@@ -90,7 +108,7 @@ describe("sendFeedbackEmail", () => {
   it("throws on a non-ok Resend response", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response("nope", { status: 422 }))
+      vi.fn().mockResolvedValue(new Response("nope", { status: 422 })),
     );
     await expect(sendFeedbackEmail(PARAMS, CONFIG)).rejects.toThrow(/422/);
   });

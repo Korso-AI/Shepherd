@@ -134,7 +134,11 @@ function setup(opts?: {
   const mockGet = vi.fn(async () => {
     throw new Error("get not stubbed in this test");
   });
-  const hubClient: HubClient = { post: mockPost, get: mockGet, ...opts?.overrideMock };
+  const hubClient: HubClient = {
+    post: mockPost,
+    get: mockGet,
+    ...opts?.overrideMock,
+  };
 
   if (opts?.joinNeverResolves) {
     mockPost.mockReturnValueOnce(new Promise<never>(() => {}));
@@ -176,7 +180,15 @@ describe("registerTools", () => {
     it("registers exactly work, done, announce, sync, link, unlink, decline", () => {
       const { tools } = setup();
       expect(Object.keys(tools).sort()).toEqual(
-        ["announce", "decline", "done", "link", "sync", "unlink", "work"].sort()
+        [
+          "announce",
+          "decline",
+          "done",
+          "link",
+          "sync",
+          "unlink",
+          "work",
+        ].sort(),
       );
     });
   });
@@ -221,7 +233,10 @@ describe("registerTools", () => {
       await ready;
 
       expect(mockPost).toHaveBeenCalledOnce();
-      const [path, body] = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/join");
       // Uses the resolved CONTEXT, not raw env/config.
       expect(body).toEqual({
@@ -240,7 +255,10 @@ describe("registerTools", () => {
       });
       await ready;
 
-      const [, body] = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+      const [, body] = mockPost.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect("model" in body).toBe(false);
       expect(body.repo).toBe("ctx-repo");
       expect(body.branch).toBe("feat/ctx");
@@ -270,7 +288,10 @@ describe("registerTools", () => {
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       try {
         const { tools, ready } = setup({
-          joinError: new HubRequestError(401, "Hub returned HTTP 401 for /join: Unauthorized"),
+          joinError: new HubRequestError(
+            401,
+            "Hub returned HTTP 401 for /join: Unauthorized",
+          ),
         });
         await ready;
 
@@ -334,7 +355,10 @@ describe("registerTools", () => {
   describe("session caching", () => {
     it("work includes the cached sessionId from auto-join", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-3", sessionId: "00000000-0000-0000-0000-000000000003" },
+        join: {
+          agentName: "agent-3",
+          sessionId: "00000000-0000-0000-0000-000000000003",
+        },
       });
       await ready;
 
@@ -342,10 +366,16 @@ describe("registerTools", () => {
         workItemId: "bbbbbbbb-0000-0000-0000-000000000001",
         landscape: fakeLandscape,
       });
-      await tools["work"].handler({ intent: "refactor auth", pathGlobs: ["src/auth/**"] });
+      await tools["work"].handler({
+        intent: "refactor auth",
+        pathGlobs: ["src/auth/**"],
+      });
 
       expect(mockPost).toHaveBeenCalledTimes(2);
-      const [workPath, workBody] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [workPath, workBody] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(workPath).toBe("/work");
       expect(workBody.sessionId).toBe("00000000-0000-0000-0000-000000000003");
       expect(workBody.intent).toBe("refactor auth");
@@ -358,7 +388,10 @@ describe("registerTools", () => {
   describe("work", () => {
     it("formats landscape (conflicts, claims, announcements), surfaces identity and the done nudge", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-4", sessionId: "00000000-0000-0000-0000-000000000004" },
+        join: {
+          agentName: "agent-4",
+          sessionId: "00000000-0000-0000-0000-000000000004",
+        },
       });
       await ready;
 
@@ -432,7 +465,9 @@ describe("registerTools", () => {
       const { mockPost, tools, ready } = setup();
       await ready;
 
-      mockPost.mockRejectedValueOnce(new HubUnreachable("Connection refused at /work"));
+      mockPost.mockRejectedValueOnce(
+        new HubUnreachable("Connection refused at /work"),
+      );
 
       const result = await tools["work"].handler({
         intent: "some work",
@@ -449,7 +484,10 @@ describe("registerTools", () => {
   describe("done", () => {
     it("POSTs to /done with sessionId merged and nudges back to work", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-8", sessionId: "00000000-0000-0000-0000-000000000008" },
+        join: {
+          agentName: "agent-8",
+          sessionId: "00000000-0000-0000-0000-000000000008",
+        },
       });
       await ready;
 
@@ -458,7 +496,10 @@ describe("registerTools", () => {
         workItemId: "ffff0000-0000-0000-0000-000000000002",
       });
 
-      const [path, body] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/done");
       expect(body.sessionId).toBe("00000000-0000-0000-0000-000000000008");
       expect(body.workItemId).toBe("ffff0000-0000-0000-0000-000000000002");
@@ -474,7 +515,10 @@ describe("registerTools", () => {
   describe("announce", () => {
     it("POSTs to /announce with sessionId and targetAgentName merged", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-9", sessionId: "00000000-0000-0000-0000-000000000009" },
+        join: {
+          agentName: "agent-9",
+          sessionId: "00000000-0000-0000-0000-000000000009",
+        },
       });
       await ready;
 
@@ -484,7 +528,10 @@ describe("registerTools", () => {
         targetAgentName: "agent-2",
       });
 
-      const [path, body] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/announce");
       expect(body.sessionId).toBe("00000000-0000-0000-0000-000000000009");
       expect(body.body).toBe("Auth module refactored");
@@ -500,7 +547,10 @@ describe("registerTools", () => {
   describe("sync", () => {
     it("formats landscape returned by /sync and surfaces identity", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-10", sessionId: "00000000-0000-0000-0000-000000000010" },
+        join: {
+          agentName: "agent-10",
+          sessionId: "00000000-0000-0000-0000-000000000010",
+        },
       });
       await ready;
 
@@ -519,7 +569,10 @@ describe("registerTools", () => {
 
     it("returns degraded result (NOT isError) when the hub is unreachable", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-11", sessionId: "00000000-0000-0000-0000-000000000011" },
+        join: {
+          agentName: "agent-11",
+          sessionId: "00000000-0000-0000-0000-000000000011",
+        },
       });
       await ready;
 
@@ -541,7 +594,10 @@ describe("registerTools", () => {
   describe("malformed hub response handling", () => {
     it("work degrades gracefully (no throw) when /work returns a schema-invalid body", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-mal", sessionId: "00000000-0000-0000-0000-000000000060" },
+        join: {
+          agentName: "agent-mal",
+          sessionId: "00000000-0000-0000-0000-000000000060",
+        },
       });
       await ready;
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -552,7 +608,10 @@ describe("registerTools", () => {
         landscape: null,
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
 
       expect(result.isError).toBeUndefined();
       const text: string = result.content[0].text;
@@ -566,7 +625,10 @@ describe("registerTools", () => {
 
     it("sync degrades gracefully when /sync returns a schema-invalid landscape", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-mal2", sessionId: "00000000-0000-0000-0000-000000000061" },
+        join: {
+          agentName: "agent-mal2",
+          sessionId: "00000000-0000-0000-0000-000000000061",
+        },
       });
       await ready;
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -585,12 +647,17 @@ describe("registerTools", () => {
   describe("heartbeat", () => {
     it("starts the heartbeat with the resolved sessionId after a successful join", async () => {
       const { heartbeat, ready } = setup({
-        join: { agentName: "agent-h", sessionId: "00000000-0000-0000-0000-000000000021" },
+        join: {
+          agentName: "agent-h",
+          sessionId: "00000000-0000-0000-0000-000000000021",
+        },
       });
       await ready;
 
       expect(heartbeat.start).toHaveBeenCalledOnce();
-      expect(heartbeat.start).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000021");
+      expect(heartbeat.start).toHaveBeenCalledWith(
+        "00000000-0000-0000-0000-000000000021",
+      );
     });
 
     it("does NOT start the heartbeat when join never resolves", async () => {
@@ -616,7 +683,10 @@ describe("registerTools", () => {
   describe("changeReport on work/sync", () => {
     it("attaches buildChangeReport result to the /work body", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-cr", sessionId: "00000000-0000-0000-0000-000000000031" },
+        join: {
+          agentName: "agent-cr",
+          sessionId: "00000000-0000-0000-0000-000000000031",
+        },
       });
       await ready;
 
@@ -626,15 +696,26 @@ describe("registerTools", () => {
         head: "headsha",
         truncated: false,
         entries: [
-          { kind: "uncommitted" as const, sha: null, message: null, paths: ["src/a.ts"] },
+          {
+            kind: "uncommitted" as const,
+            sha: null,
+            message: null,
+            paths: ["src/a.ts"],
+          },
         ],
       };
       vi.mocked(buildChangeReport).mockResolvedValueOnce(report);
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
 
       await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
 
-      const [path, body] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/work");
       expect(body.changeReport).toEqual(report);
       expect(body.intent).toBe("do");
@@ -642,7 +723,10 @@ describe("registerTools", () => {
 
     it("attaches buildChangeReport result to the /sync body", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-cr2", sessionId: "00000000-0000-0000-0000-000000000032" },
+        join: {
+          agentName: "agent-cr2",
+          sessionId: "00000000-0000-0000-0000-000000000032",
+        },
       });
       await ready;
 
@@ -658,39 +742,68 @@ describe("registerTools", () => {
 
       await tools["sync"].handler({});
 
-      const [path, body] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/sync");
       expect(body.changeReport).toEqual(report);
     });
 
     it("omits changeReport when buildChangeReport returns undefined", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-cr3", sessionId: "00000000-0000-0000-0000-000000000033" },
+        join: {
+          agentName: "agent-cr3",
+          sessionId: "00000000-0000-0000-0000-000000000033",
+        },
       });
       await ready;
 
       vi.mocked(buildChangeReport).mockResolvedValueOnce(undefined);
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
 
-      const [, body] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [, body] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect("changeReport" in body).toBe(false);
       expect(result.isError).toBeUndefined();
     });
 
     it("still POSTs (without changeReport) and returns normally when buildChangeReport throws", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-cr4", sessionId: "00000000-0000-0000-0000-000000000034" },
+        join: {
+          agentName: "agent-cr4",
+          sessionId: "00000000-0000-0000-0000-000000000034",
+        },
       });
       await ready;
 
-      vi.mocked(buildChangeReport).mockRejectedValueOnce(new Error("git blew up"));
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
+      vi.mocked(buildChangeReport).mockRejectedValueOnce(
+        new Error("git blew up"),
+      );
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
 
-      const [path, body] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/work");
       expect("changeReport" in body).toBe(false);
       expect(result.isError).toBeUndefined();
@@ -698,7 +811,10 @@ describe("registerTools", () => {
 
     it("hub-unreachable still yields the degraded result with changeReport present", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-cr5", sessionId: "00000000-0000-0000-0000-000000000035" },
+        join: {
+          agentName: "agent-cr5",
+          sessionId: "00000000-0000-0000-0000-000000000035",
+        },
       });
       await ready;
 
@@ -709,9 +825,14 @@ describe("registerTools", () => {
         truncated: false,
         entries: [],
       });
-      mockPost.mockRejectedValueOnce(new HubUnreachable("Connection refused at /work"));
+      mockPost.mockRejectedValueOnce(
+        new HubUnreachable("Connection refused at /work"),
+      );
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
 
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain("proceeding uncoordinated");
@@ -741,13 +862,22 @@ describe("registerTools", () => {
     it("folds inbox announcements into the work landscape ANNOUNCEMENTS section", async () => {
       const inboxFile = seedInbox([ann(99, "from the inbox")]);
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-ix", sessionId: "00000000-0000-0000-0000-000000000050" },
+        join: {
+          agentName: "agent-ix",
+          sessionId: "00000000-0000-0000-0000-000000000050",
+        },
         inboxFile,
       });
       await ready;
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       expect(result.content[0].text).toContain("ANNOUNCEMENTS:");
       expect(result.content[0].text).toContain("from the inbox");
     });
@@ -755,11 +885,16 @@ describe("registerTools", () => {
     it("surfaces inbox announcements on sync", async () => {
       const inboxFile = seedInbox([ann(101, "sync inbox msg")]);
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-iy", sessionId: "00000000-0000-0000-0000-000000000051" },
+        join: {
+          agentName: "agent-iy",
+          sessionId: "00000000-0000-0000-0000-000000000051",
+        },
         inboxFile,
       });
       await ready;
-      mockPost.mockResolvedValueOnce({ landscape: { conflicts: [], activeClaims: [], announcements: [] } });
+      mockPost.mockResolvedValueOnce({
+        landscape: { conflicts: [], activeClaims: [], announcements: [] },
+      });
 
       const result = await tools["sync"].handler({});
       expect(result.content[0].text).toContain("sync inbox msg");
@@ -768,20 +903,28 @@ describe("registerTools", () => {
     it("appends inbox announcements to done output", async () => {
       const inboxFile = seedInbox([ann(102, "done inbox msg")]);
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-iz", sessionId: "00000000-0000-0000-0000-000000000052" },
+        join: {
+          agentName: "agent-iz",
+          sessionId: "00000000-0000-0000-0000-000000000052",
+        },
         inboxFile,
       });
       await ready;
       mockPost.mockResolvedValueOnce({ ok: true, announcements: [] });
 
-      const result = await tools["done"].handler({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" });
+      const result = await tools["done"].handler({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      });
       expect(result.content[0].text).toContain("done inbox msg");
     });
 
     it("merges hub + inbox announcements without duplicating by id", async () => {
       const inboxFile = seedInbox([ann(1, "dup"), ann(2, "only-inbox")]);
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-iw", sessionId: "00000000-0000-0000-0000-000000000053" },
+        join: {
+          agentName: "agent-iw",
+          sessionId: "00000000-0000-0000-0000-000000000053",
+        },
         inboxFile,
       });
       await ready;
@@ -802,10 +945,15 @@ describe("registerTools", () => {
 
     it("is a no-op when no inboxFile is configured (existing behavior)", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-noinbox", sessionId: "00000000-0000-0000-0000-000000000054" },
+        join: {
+          agentName: "agent-noinbox",
+          sessionId: "00000000-0000-0000-0000-000000000054",
+        },
       });
       await ready;
-      mockPost.mockResolvedValueOnce({ landscape: { conflicts: [], activeClaims: [], announcements: [] } });
+      mockPost.mockResolvedValueOnce({
+        landscape: { conflicts: [], activeClaims: [], announcements: [] },
+      });
 
       const result = await tools["sync"].handler({});
       expect(result.content[0].text).toContain("ANNOUNCEMENTS: none");
@@ -814,32 +962,53 @@ describe("registerTools", () => {
     it("every delivery of messages carries the reply-routing hint; none without", async () => {
       const inboxFile = seedInbox([ann(200, "please respond to this")]);
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-rr", sessionId: "00000000-0000-0000-0000-000000000055" },
+        join: {
+          agentName: "agent-rr",
+          sessionId: "00000000-0000-0000-0000-000000000055",
+        },
         inboxFile,
       });
       await ready;
 
       // With messages (landscape path): the hint rides along.
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
-      const withMsgs = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
+      const withMsgs = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = withMsgs.content[0].text;
       expect(text.toLowerCase()).toContain("can't see this chat");
       expect(text).toContain("`announce`");
 
       // Without messages (inbox already drained): no hint noise.
       mockPost.mockResolvedValueOnce({ ok: true, announcements: [] });
-      const withoutMsgs = await tools["done"].handler({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" });
-      expect(withoutMsgs.content[0].text.toLowerCase()).not.toContain("can't see this chat");
+      const withoutMsgs = await tools["done"].handler({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      });
+      expect(withoutMsgs.content[0].text.toLowerCase()).not.toContain(
+        "can't see this chat",
+      );
     });
 
     it("the standalone messages block (done path) carries the hint too", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-rr2", sessionId: "00000000-0000-0000-0000-000000000056" },
+        join: {
+          agentName: "agent-rr2",
+          sessionId: "00000000-0000-0000-0000-000000000056",
+        },
       });
       await ready;
-      mockPost.mockResolvedValueOnce({ ok: true, announcements: [ann(300, "hub-fresh msg")] });
+      mockPost.mockResolvedValueOnce({
+        ok: true,
+        announcements: [ann(300, "hub-fresh msg")],
+      });
 
-      const result = await tools["done"].handler({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" });
+      const result = await tools["done"].handler({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      });
       const text: string = result.content[0].text;
       expect(text).toContain("hub-fresh msg");
       expect(text.toLowerCase()).toContain("can't see this chat");
@@ -851,13 +1020,21 @@ describe("registerTools", () => {
   const ISO_LIVE = "2026-06-24T12:00:00.000Z";
 
   function landscapeWith(changeRecords: unknown[]) {
-    return { conflicts: [], activeClaims: [], announcements: [], changeRecords };
+    return {
+      conflicts: [],
+      activeClaims: [],
+      announcements: [],
+      changeRecords,
+    };
   }
 
   describe("change-record rendering", () => {
     it("hides a committed record already landed (isAncestor true), shows an unpushed one", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r1", sessionId: "00000000-0000-0000-0000-000000000041" },
+        join: {
+          agentName: "agent-r1",
+          sessionId: "00000000-0000-0000-0000-000000000041",
+        },
       });
       await ready;
 
@@ -869,19 +1046,36 @@ describe("registerTools", () => {
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "landed", message: "already merged thing", paths: ["src/a.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "landed",
+            message: "already merged thing",
+            paths: ["src/a.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "unpushed", message: "new unpushed thing", paths: ["src/b.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "unpushed",
+            message: "new unpushed thing",
+            paths: ["src/b.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
         ]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       expect(text).not.toContain("already merged thing");
@@ -890,7 +1084,10 @@ describe("registerTools", () => {
 
     it("#8: labels a committed record present-but-not-in-branch as landed → pull/rebase, absent as unpushed → coordinate", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r1b", sessionId: "00000000-0000-0000-0000-000000000051" },
+        join: {
+          agentName: "agent-r1b",
+          sessionId: "00000000-0000-0000-0000-000000000051",
+        },
       });
       await ready;
 
@@ -903,19 +1100,36 @@ describe("registerTools", () => {
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "behind", message: "landed work", paths: ["src/a.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "behind",
+            message: "landed work",
+            paths: ["src/a.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "absent", message: "unpushed work", paths: ["src/b.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "absent",
+            message: "unpushed work",
+            paths: ["src/b.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
         ]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       // The present-but-behind commit reads as landed and tells me to pull/rebase.
@@ -928,26 +1142,41 @@ describe("registerTools", () => {
 
     it("includes line ranges only when hasCommit is true", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r2", sessionId: "00000000-0000-0000-0000-000000000042" },
+        join: {
+          agentName: "agent-r2",
+          sessionId: "00000000-0000-0000-0000-000000000042",
+        },
       });
       await ready;
 
       vi.mocked(isAncestor).mockReturnValue(false);
       vi.mocked(hasCommit).mockReturnValue(true);
-      vi.mocked(changedLineRanges).mockReturnValue({ "src/b.ts": [{ start: 10, end: 20 }] });
+      vi.mocked(changedLineRanges).mockReturnValue({
+        "src/b.ts": [{ start: 10, end: 20 }],
+      });
 
       mockPost.mockResolvedValueOnce({
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "unpushed", message: "edits b", paths: ["src/b.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "unpushed",
+            message: "edits b",
+            paths: ["src/b.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
         ]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       expect(changedLineRanges).toHaveBeenCalled();
@@ -957,7 +1186,10 @@ describe("registerTools", () => {
 
     it("does NOT compute line ranges when hasCommit is false (file-level only)", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r3", sessionId: "00000000-0000-0000-0000-000000000043" },
+        join: {
+          agentName: "agent-r3",
+          sessionId: "00000000-0000-0000-0000-000000000043",
+        },
       });
       await ready;
 
@@ -968,9 +1200,16 @@ describe("registerTools", () => {
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "unpushed", message: "edits b", paths: ["src/b.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "unpushed",
+            message: "edits b",
+            paths: ["src/b.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
         ]),
       });
@@ -981,7 +1220,10 @@ describe("registerTools", () => {
 
     it("bounds total line-range git work across many records to the global budget (PERF-1)", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-budget", sessionId: "00000000-0000-0000-0000-000000000049" },
+        join: {
+          agentName: "agent-budget",
+          sessionId: "00000000-0000-0000-0000-000000000049",
+        },
       });
       await ready;
 
@@ -992,12 +1234,27 @@ describe("registerTools", () => {
       // 30 committed records × 5 paths each = 150 candidate paths, well over the
       // 50-path global budget. Without the cap this would be 150 paths of git work.
       const records = Array.from({ length: 30 }, (_, i) => ({
-        agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed" as const,
-        commitSha: "deadbeef", message: `edit ${i}`,
-        paths: [`src/f${i}/a.ts`, `src/f${i}/b.ts`, `src/f${i}/c.ts`, `src/f${i}/d.ts`, `src/f${i}/e.ts`],
-        authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+        agentName: "Mate",
+        human: "bob",
+        branch: "feat/y",
+        kind: "committed" as const,
+        commitSha: "deadbeef",
+        message: `edit ${i}`,
+        paths: [
+          `src/f${i}/a.ts`,
+          `src/f${i}/b.ts`,
+          `src/f${i}/c.ts`,
+          `src/f${i}/d.ts`,
+          `src/f${i}/e.ts`,
+        ],
+        authorIsLive: true,
+        authorLastActiveAt: ISO_LIVE,
+        updatedAt: ISO_LIVE,
       }));
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: landscapeWith(records) });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: landscapeWith(records),
+      });
 
       await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
 
@@ -1009,7 +1266,10 @@ describe("registerTools", () => {
 
     it("always shows an uncommitted record on overlap, with no line detail and no isAncestor drop", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r4", sessionId: "00000000-0000-0000-0000-000000000044" },
+        join: {
+          agentName: "agent-r4",
+          sessionId: "00000000-0000-0000-0000-000000000044",
+        },
       });
       await ready;
 
@@ -1020,14 +1280,24 @@ describe("registerTools", () => {
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "uncommitted",
-            commitSha: null, message: null, paths: ["src/c.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "uncommitted",
+            commitSha: null,
+            message: null,
+            paths: ["src/c.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
         ]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       expect(text).toContain("src/c.ts");
@@ -1036,30 +1306,52 @@ describe("registerTools", () => {
 
     it("renders presence: 'active now' when authorIsLive, else 'offline, last seen'", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r5", sessionId: "00000000-0000-0000-0000-000000000045" },
+        join: {
+          agentName: "agent-r5",
+          sessionId: "00000000-0000-0000-0000-000000000045",
+        },
       });
       await ready;
 
       vi.mocked(isAncestor).mockReturnValue(false);
 
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const twoHoursAgo = new Date(
+        Date.now() - 2 * 60 * 60 * 1000,
+      ).toISOString();
       mockPost.mockResolvedValueOnce({
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "LiveMate", human: "bob", branch: "feat/y", kind: "uncommitted",
-            commitSha: null, message: null, paths: ["src/live.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "LiveMate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "uncommitted",
+            commitSha: null,
+            message: null,
+            paths: ["src/live.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
           {
-            agentName: "OfflineMate", human: "carol", branch: "feat/z", kind: "uncommitted",
-            commitSha: null, message: null, paths: ["src/off.ts"],
-            authorIsLive: false, authorLastActiveAt: twoHoursAgo, updatedAt: twoHoursAgo,
+            agentName: "OfflineMate",
+            human: "carol",
+            branch: "feat/z",
+            kind: "uncommitted",
+            commitSha: null,
+            message: null,
+            paths: ["src/off.ts"],
+            authorIsLive: false,
+            authorLastActiveAt: twoHoursAgo,
+            updatedAt: twoHoursAgo,
           },
         ]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       expect(text).toContain("active now");
@@ -1069,26 +1361,41 @@ describe("registerTools", () => {
 
     it("frames the section inform-not-block and never directs which lines to avoid", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r6", sessionId: "00000000-0000-0000-0000-000000000046" },
+        join: {
+          agentName: "agent-r6",
+          sessionId: "00000000-0000-0000-0000-000000000046",
+        },
       });
       await ready;
 
       vi.mocked(isAncestor).mockReturnValue(false);
       vi.mocked(hasCommit).mockReturnValue(true);
-      vi.mocked(changedLineRanges).mockReturnValue({ "src/b.ts": [{ start: 10, end: 20 }] });
+      vi.mocked(changedLineRanges).mockReturnValue({
+        "src/b.ts": [{ start: 10, end: 20 }],
+      });
 
       mockPost.mockResolvedValueOnce({
         workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         landscape: landscapeWith([
           {
-            agentName: "Mate", human: "bob", branch: "feat/y", kind: "committed",
-            commitSha: "unpushed", message: "edits b", paths: ["src/b.ts"],
-            authorIsLive: true, authorLastActiveAt: ISO_LIVE, updatedAt: ISO_LIVE,
+            agentName: "Mate",
+            human: "bob",
+            branch: "feat/y",
+            kind: "committed",
+            commitSha: "unpushed",
+            message: "edits b",
+            paths: ["src/b.ts"],
+            authorIsLive: true,
+            authorLastActiveAt: ISO_LIVE,
+            updatedAt: ISO_LIVE,
           },
         ]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       // A title that frames as awareness, not a directive.
@@ -1100,7 +1407,10 @@ describe("registerTools", () => {
 
     it("renders nothing extra when there are no change records", async () => {
       const { mockPost, tools, ready } = setup({
-        join: { agentName: "agent-r7", sessionId: "00000000-0000-0000-0000-000000000047" },
+        join: {
+          agentName: "agent-r7",
+          sessionId: "00000000-0000-0000-0000-000000000047",
+        },
       });
       await ready;
 
@@ -1109,7 +1419,10 @@ describe("registerTools", () => {
         landscape: landscapeWith([]),
       });
 
-      const result = await tools["work"].handler({ intent: "do", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
 
       expect(text).not.toContain("Unlanded changes touching your area");
@@ -1202,7 +1515,10 @@ describe("registerTools", () => {
       // No join for a declined repo.
       expect(mockPost).not.toHaveBeenCalled();
 
-      const result = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "x",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text.toLowerCase();
       expect(text).toContain("declin");
       // The unanswered "run link to choose" ask must NOT be shown to a decliner.
@@ -1237,7 +1553,10 @@ describe("registerTools", () => {
       expect(mockPost).not.toHaveBeenCalled();
       expect(heartbeat.start).not.toHaveBeenCalled();
 
-      const result = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "x",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
       expect(text).toContain("team-beta");
       expect(text.toLowerCase()).toContain("different workspace");
@@ -1260,7 +1579,11 @@ describe("registerTools", () => {
         authToken: "sh-tok",
         WORKSPACE: undefined,
       };
-      const linkedCtx: JoinContext = { ...fakeContext, linked: true, workspace: "other-ws" };
+      const linkedCtx: JoinContext = {
+        ...fakeContext,
+        linked: true,
+        workspace: "other-ws",
+      };
       const { ready } = registerTools(server as any, {
         hubClient,
         config: hostedConfig,
@@ -1273,7 +1596,10 @@ describe("registerTools", () => {
       expect(mockPost).toHaveBeenCalledOnce();
       expect(heartbeat.start).not.toHaveBeenCalled();
 
-      const result = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+      const result = await tools["work"].handler({
+        intent: "x",
+        pathGlobs: ["src/**"],
+      });
       const text: string = result.content[0].text;
       expect(result.isError).toBeUndefined();
       expect(text).toContain("other-ws");
@@ -1289,7 +1615,11 @@ describe("registerTools", () => {
       const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };
       const { server } = makeFakeServer();
       const selfHostConfig: Config = { ...fakeConfig, WORKSPACE: "team-alpha" };
-      const linkedCtx: JoinContext = { ...fakeContext, linked: true, workspace: "team-alpha" };
+      const linkedCtx: JoinContext = {
+        ...fakeContext,
+        linked: true,
+        workspace: "team-alpha",
+      };
       const { ready } = registerTools(server as any, {
         hubClient,
         config: selfHostConfig,
@@ -1299,7 +1629,10 @@ describe("registerTools", () => {
       await ready;
 
       expect(mockPost).toHaveBeenCalledOnce();
-      const [path] = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+      const [path] = mockPost.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/join");
       expect(heartbeat.start).toHaveBeenCalledOnce();
     });
@@ -1310,22 +1643,37 @@ describe("registerTools", () => {
   describe("activate hot-activation seam", () => {
     it("linked startup: activates with the marker slug — /join POSTed, heartbeat started, tools coordinate", async () => {
       const { mockPost, tools, heartbeat, ready } = setup({
-        join: { agentName: "agent-act", sessionId: "00000000-0000-0000-0000-0000000000ac" },
+        join: {
+          agentName: "agent-act",
+          sessionId: "00000000-0000-0000-0000-0000000000ac",
+        },
       });
       await ready;
 
       // The marker slug (context.workspace) is what /join is called with.
-      const [path, body] = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+      const [path, body] = mockPost.mock.calls[0] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(path).toBe("/join");
       expect(body.workspace).toBe("acme");
       // Heartbeat started with the cached sessionId.
       expect(heartbeat.start).toHaveBeenCalledOnce();
 
       // A coordination tool proceeds against the live session (no prompt).
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
-      const result = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "x",
+        pathGlobs: ["src/**"],
+      });
       expect(result.isError).toBeUndefined();
-      const [workPath] = mockPost.mock.calls[1] as [string, Record<string, unknown>];
+      const [workPath] = mockPost.mock.calls[1] as [
+        string,
+        Record<string, unknown>,
+      ];
       expect(workPath).toBe("/work");
     });
 
@@ -1359,7 +1707,10 @@ describe("registerTools", () => {
 
         // ...but a failed start leaves NO "active but not heartbeating" session:
         // a coordination tool degrades instead of POSTing with a half-set session.
-        const result = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+        const result = await tools["work"].handler({
+          intent: "x",
+          pathGlobs: ["src/**"],
+        });
         expect(result.isError).toBeUndefined();
         expect(result.content[0].text).toContain("proceeding uncoordinated");
         // Only /join was posted; no /work against an orphaned session.
@@ -1376,8 +1727,14 @@ describe("registerTools", () => {
       });
       await ready;
 
-      mockPost.mockResolvedValueOnce({ workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", landscape: fakeLandscape });
-      const work = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
+      const work = await tools["work"].handler({
+        intent: "x",
+        pathGlobs: ["src/**"],
+      });
       expect(work.content[0].text).not.toContain(secret);
 
       mockPost.mockResolvedValueOnce({ landscape: fakeLandscape });
@@ -1403,7 +1760,12 @@ describe("registerTools", () => {
         config: fakeConfig,
         // Linked marker present; the on-disk decline is stale (suppressed by
         // the marker) and must be cleared when the marker activates.
-        context: { ...fakeContext, linked: true, declined: true, linkState: "linked" },
+        context: {
+          ...fakeContext,
+          linked: true,
+          declined: true,
+          linkState: "linked",
+        },
         heartbeat,
         cwd,
         declinedDir,
@@ -1411,7 +1773,10 @@ describe("registerTools", () => {
       await ready;
 
       // Activated normally...
-      expect(mockPost).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "acme" }));
+      expect(mockPost).toHaveBeenCalledWith(
+        "/join",
+        expect.objectContaining({ workspace: "acme" }),
+      );
       expect(heartbeat.start).toHaveBeenCalledOnce();
       // ...and the stale decline was cleared (choosing/inheriting a marker wins).
       expect(isDeclined(cwd, declinedDir)).toBe(false);

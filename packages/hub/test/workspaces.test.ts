@@ -14,14 +14,7 @@
  * resolve. truncateTenancy resets the tenancy tables between tests.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -75,11 +68,14 @@ function bffHeaders(accountId: string, extra: Record<string, string> = {}) {
 }
 
 /** Seed (idempotently) the self-host workspace and return its uuid. */
-async function seedWorkspace(pool: pg.Pool, slug = ALLOWED_WS): Promise<string> {
+async function seedWorkspace(
+  pool: pg.Pool,
+  slug = ALLOWED_WS,
+): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -88,13 +84,13 @@ async function seedWorkspace(pool: pg.Pool, slug = ALLOWED_WS): Promise<string> 
 async function seedAgentToken(
   pool: pg.Pool,
   accountId: string,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<string> {
   const raw = `shp_${accountId}_${workspaceId}`;
   await pool.query(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES ($1, $2, $3, 'test-token')`,
-    [workspaceId, accountId, hashToken(raw)]
+    [workspaceId, accountId, hashToken(raw)],
   );
   return raw;
 }
@@ -146,7 +142,7 @@ describe.skipIf(!dbAvailable)(
       // The workspaces row exists with the caller as created_by.
       const wsRow = await pool.query<{ created_by: string; slug: string }>(
         `SELECT created_by, slug FROM workspaces WHERE id = $1`,
-        [ws.id]
+        [ws.id],
       );
       expect(wsRow.rows).toHaveLength(1);
       expect(wsRow.rows[0]!.created_by).toBe("acct-alice");
@@ -154,7 +150,7 @@ describe.skipIf(!dbAvailable)(
       // The membership row exists, admin.
       const memRow = await pool.query<{ role: string }>(
         `SELECT role FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        ["acct-alice", ws.id]
+        ["acct-alice", ws.id],
       );
       expect(memRow.rows).toHaveLength(1);
       expect(memRow.rows[0]!.role).toBe("admin");
@@ -217,7 +213,7 @@ describe.skipIf(!dbAvailable)(
       // Exactly 10 landed.
       const count = await pool.query<{ count: string }>(
         `SELECT count(*) AS count FROM workspaces WHERE created_by = $1`,
-        ["acct-capper"]
+        ["acct-capper"],
       );
       expect(Number(count.rows[0]!.count)).toBe(10);
     });
@@ -228,7 +224,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/workspaces",
-        headers: { authorization: `Bearer ${TEST_TOKEN}`, "content-type": "application/json" },
+        headers: {
+          authorization: `Bearer ${TEST_TOKEN}`,
+          "content-type": "application/json",
+        },
         payload: { name: "Forbidden" },
       });
       expect(res.statusCode).toBe(401);
@@ -239,33 +238,39 @@ describe.skipIf(!dbAvailable)(
     it("lists exactly the caller's workspaces with roles, leaking none", async () => {
       // alice creates two; bob creates one; alice is added as member to bob's.
       const a1 = CreateWorkspaceResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: "/workspaces",
-          headers: bffHeaders("acct-alice"),
-          payload: { name: "Alice One" },
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            headers: bffHeaders("acct-alice"),
+            payload: { name: "Alice One" },
+          })
+        ).json(),
       );
       CreateWorkspaceResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: "/workspaces",
-          headers: bffHeaders("acct-alice"),
-          payload: { name: "Alice Two" },
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            headers: bffHeaders("acct-alice"),
+            payload: { name: "Alice Two" },
+          })
+        ).json(),
       );
       const b1 = CreateWorkspaceResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: "/workspaces",
-          headers: bffHeaders("acct-bob"),
-          payload: { name: "Bob One" },
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            headers: bffHeaders("acct-bob"),
+            payload: { name: "Bob One" },
+          })
+        ).json(),
       );
       // Add alice as a member of bob's workspace.
       await pool.query(
         `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, 'member')`,
-        ["acct-alice", b1.id]
+        ["acct-alice", b1.id],
       );
 
       const res = await app.inject({
@@ -295,20 +300,24 @@ describe.skipIf(!dbAvailable)(
     it("GET /workspaces with an agent shp_ token returns ALL the account's workspaces", async () => {
       // alice creates two workspaces via the browser path.
       const a1 = CreateWorkspaceResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: "/workspaces",
-          headers: bffHeaders("acct-alice"),
-          payload: { name: "Alice One" },
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            headers: bffHeaders("acct-alice"),
+            payload: { name: "Alice One" },
+          })
+        ).json(),
       );
       const a2 = CreateWorkspaceResponse.parse(
-        (await app.inject({
-          method: "POST",
-          url: "/workspaces",
-          headers: bffHeaders("acct-alice"),
-          payload: { name: "Alice Two" },
-        })).json()
+        (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            headers: bffHeaders("acct-alice"),
+            payload: { name: "Alice Two" },
+          })
+        ).json(),
       );
       // An agent token scoped to ONLY workspace a1.
       const bearer = await seedAgentToken(pool, "acct-alice", a1.id);
@@ -335,5 +344,5 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(401);
     });
-  }
+  },
 );

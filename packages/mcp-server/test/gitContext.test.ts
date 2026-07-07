@@ -36,7 +36,10 @@ function track(dir: string): string {
 }
 
 /** Initialize a deterministic git repo with a configured identity and origin. */
-function initRepo(cwd: string, opts: { origin?: string; name?: string; email?: string } = {}): void {
+function initRepo(
+  cwd: string,
+  opts: { origin?: string; name?: string; email?: string } = {},
+): void {
   git(cwd, "init", "-q");
   git(cwd, "config", "user.name", opts.name ?? "Test User");
   git(cwd, "config", "user.email", opts.email ?? "tester@example.com");
@@ -167,7 +170,12 @@ describe("detectBaseBranch", () => {
     commitAll(dir, "init");
     // Simulate a fetched remote-tracking ref + origin/HEAD symbolic ref.
     git(dir, "update-ref", "refs/remotes/origin/main", "HEAD");
-    git(dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+    git(
+      dir,
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+      "refs/remotes/origin/main",
+    );
     expect(detectBaseBranch(dir)).toBe("origin/main");
   });
 
@@ -272,7 +280,9 @@ describe("unlandedCommits", () => {
     expect(real).toBeDefined();
     expect(real!.paths).toContain("feature.txt");
     // The empty commit's message is not present.
-    expect(result.commits.some((c) => c.message === "empty commit")).toBe(false);
+    expect(result.commits.some((c) => c.message === "empty commit")).toBe(
+      false,
+    );
   });
 
   it("returns the neutral result without spawning git for a flag-like base branch", () => {
@@ -281,8 +291,14 @@ describe("unlandedCommits", () => {
     writeFile(dir, "a.txt", "hi");
     commitAll(dir, "init");
     // A baseBranch beginning with "-" or empty is rejected defensively.
-    expect(unlandedCommits(dir, "--all")).toEqual({ commits: [], truncated: false });
-    expect(unlandedCommits(dir, "-foo")).toEqual({ commits: [], truncated: false });
+    expect(unlandedCommits(dir, "--all")).toEqual({
+      commits: [],
+      truncated: false,
+    });
+    expect(unlandedCommits(dir, "-foo")).toEqual({
+      commits: [],
+      truncated: false,
+    });
     expect(unlandedCommits(dir, "")).toEqual({ commits: [], truncated: false });
   });
 });
@@ -383,7 +399,8 @@ describe("changedLineRanges", () => {
     const dir = track(mkTmp("gc-ranges-"));
     initRepo(dir);
     // 60 numbered lines.
-    const original = Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    const original =
+      Array.from({ length: 60 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
     writeFile(dir, "file.txt", original);
     commitAll(dir, "init 60 lines");
     // Edit lines 12..45 in place (same line count, content changed).
@@ -406,7 +423,8 @@ describe("changedLineRanges", () => {
   it("handles a root commit (no parent) via fallback", () => {
     const dir = track(mkTmp("gc-ranges-root-"));
     initRepo(dir);
-    const content = Array.from({ length: 5 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    const content =
+      Array.from({ length: 5 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
     writeFile(dir, "root.txt", content);
     const sha = commitAll(dir, "root commit");
     const ranges = changedLineRanges(dir, sha, ["root.txt"]);
@@ -425,7 +443,9 @@ describe("changedLineRanges", () => {
     const allPaths = Array.from({ length: total }, (_, i) => `r/${i}.txt`);
     const ranges = changedLineRanges(dir, sha, allPaths);
     // Only the first MAX_LINE_RANGE_PATHS paths are processed; the rest are ignored.
-    expect(Object.keys(ranges).length).toBeLessThanOrEqual(MAX_LINE_RANGE_PATHS);
+    expect(Object.keys(ranges).length).toBeLessThanOrEqual(
+      MAX_LINE_RANGE_PATHS,
+    );
     expect(ranges["r/0.txt"]).toBeDefined();
     expect(ranges[`r/${total - 1}.txt`]).toBeUndefined();
     // Raised timeout: this test deliberately spawns the capped maximum of
@@ -448,7 +468,10 @@ describe("fail-open behaviour in a non-git directory", () => {
       expect(detectHuman(dir)).toBeNull();
       expect(detectBaseBranch(dir)).toBeNull();
       expect(headSha(dir)).toBeNull();
-      expect(unlandedCommits(dir, "origin/main")).toEqual({ commits: [], truncated: false });
+      expect(unlandedCommits(dir, "origin/main")).toEqual({
+        commits: [],
+        truncated: false,
+      });
       expect(dirtyPaths(dir)).toEqual({ paths: [], truncated: false });
       expect(isAncestor(dir, "0".repeat(40))).toBe(false);
       expect(hasCommit(dir, "0".repeat(40))).toBe(false);

@@ -27,7 +27,9 @@ export function __resetAnalyticsCache(): void {
   cache = null;
 }
 
-export async function platformAnalytics(tenant: TenantContext): Promise<ShepherdAnalytics> {
+export async function platformAnalytics(
+  tenant: TenantContext,
+): Promise<ShepherdAnalytics> {
   // Operator-only: the data is product-wide, so gate before touching the DB
   // (and before the cache, so the gate can never be bypassed by a warm entry).
   requireOperator(tenant);

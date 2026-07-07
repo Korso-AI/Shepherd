@@ -18,14 +18,7 @@
  * needing a live agent session.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -98,7 +91,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -108,12 +101,12 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -122,12 +115,12 @@ async function seedToken(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  raw: string
+  raw: string,
 ): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES ($1, $2, $3, NULL) RETURNING id`,
-    [workspaceId, accountId, hashToken(raw)]
+    [workspaceId, accountId, hashToken(raw)],
   );
   return rows[0]!.id;
 }
@@ -135,11 +128,11 @@ async function seedToken(
 /** Count announcement rows for a workspace (the side-effect assertion). */
 async function countAnnouncements(
   pool: pg.Pool,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM announcements WHERE workspace_id = $1`,
-    [workspaceId]
+    [workspaceId],
   );
   return Number(rows[0]!.n);
 }
@@ -195,7 +188,7 @@ describe.skipIf(!dbAvailable)(
 
       const { rows } = await pool.query<{ from_admin: boolean }>(
         `SELECT from_admin FROM announcements WHERE id = $1`,
-        [body.announcementIds[0]]
+        [body.announcementIds[0]],
       );
       expect(rows[0]!.from_admin).toBe(true);
       expect(await countAnnouncements(pool, wsId)).toBe(1);
@@ -268,5 +261,5 @@ describe.skipIf(!dbAvailable)(
       expect(body.ok).toBe(true);
       expect(await countAnnouncements(pool, wsId)).toBe(1);
     });
-  }
+  },
 );

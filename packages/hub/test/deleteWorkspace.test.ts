@@ -16,14 +16,7 @@
  * between tests; the rate limiter is reset in afterEach.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -76,7 +69,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -86,12 +79,12 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "member"
+  role: "admin" | "member" = "member",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -104,19 +97,19 @@ async function seedMembership(
 async function seedFullWorkspaceData(
   pool: pg.Pool,
   workspaceId: string,
-  accountId: string
+  accountId: string,
 ): Promise<{ feedbackId: string }> {
   const { rows: agentRows } = await pool.query<{ id: string }>(
     `INSERT INTO agents (workspace_id, name, human, program, model)
      VALUES ($1, 'agent-1', 'Human', 'claude', 'opus') RETURNING id`,
-    [workspaceId]
+    [workspaceId],
   );
   const agentId = agentRows[0]!.id;
 
   const { rows: sessionRows } = await pool.query<{ id: string }>(
     `INSERT INTO sessions (workspace_id, agent_id, repo, branch)
      VALUES ($1, $2, 'acme/repo', 'main') RETURNING id`,
-    [workspaceId, agentId]
+    [workspaceId, agentId],
   );
   const sessionId = sessionRows[0]!.id;
 
@@ -124,42 +117,42 @@ async function seedFullWorkspaceData(
     `INSERT INTO work_items
        (workspace_id, session_id, repo, intent_text, path_globs, ttl_seconds, expires_at)
      VALUES ($1, $2, 'acme/repo', 'refactor', ARRAY['src/**'], 1800, now() + interval '1 hour')`,
-    [workspaceId, sessionId]
+    [workspaceId, sessionId],
   );
 
   const { rows: annRows } = await pool.query<{ id: string }>(
     `INSERT INTO announcements (workspace_id, repo, from_session_id, body)
      VALUES ($1, 'acme/repo', $2, 'heads up') RETURNING id`,
-    [workspaceId, sessionId]
+    [workspaceId, sessionId],
   );
   await pool.query(
     `INSERT INTO announcement_deliveries (session_id, announcement_id) VALUES ($1, $2)`,
-    [sessionId, annRows[0]!.id]
+    [sessionId, annRows[0]!.id],
   );
 
   await pool.query(
     `INSERT INTO change_records
        (workspace_id, repo, agent_id, agent_name, branch, kind, path_globs)
      VALUES ($1, 'acme/repo', $2, 'agent-1', 'main', 'uncommitted', ARRAY['src/**'])`,
-    [workspaceId, agentId]
+    [workspaceId, agentId],
   );
 
   await pool.query(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES ($1, $2, $3, NULL)`,
-    [workspaceId, accountId, hashToken("shp_delete_me")]
+    [workspaceId, accountId, hashToken("shp_delete_me")],
   );
 
   await pool.query(
     `INSERT INTO invites (workspace_id, code, created_by, role_granted, max_uses)
      VALUES ($1, 'invite-code', $2, 'member', 5)`,
-    [workspaceId, accountId]
+    [workspaceId, accountId],
   );
 
   const { rows: fbRows } = await pool.query<{ id: string }>(
     `INSERT INTO feedback (workspace_id, account_id, type, body)
      VALUES ($1, $2, 'bug', 'something broke') RETURNING id`,
-    [workspaceId, accountId]
+    [workspaceId, accountId],
   );
 
   return { feedbackId: fbRows[0]!.id };
@@ -169,18 +162,21 @@ async function seedFullWorkspaceData(
 async function countByWorkspace(
   pool: pg.Pool,
   table: string,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<number> {
   // `table` is a hardcoded test-local literal, never user input — safe to inline.
   const { rows } = await pool.query<{ count: string }>(
     `SELECT count(*) AS count FROM ${table} WHERE workspace_id = $1`,
-    [workspaceId]
+    [workspaceId],
   );
   return Number(rows[0]!.count);
 }
 
 /** Whether a workspace row still exists. */
-async function workspaceExists(pool: pg.Pool, workspaceId: string): Promise<boolean> {
+async function workspaceExists(
+  pool: pg.Pool,
+  workspaceId: string,
+): Promise<boolean> {
   const { rows } = await pool.query(`SELECT 1 FROM workspaces WHERE id = $1`, [
     workspaceId,
   ]);
@@ -219,7 +215,11 @@ describe.skipIf(!dbAvailable)(
       const wsId = await seedWorkspace(pool, "delete-full");
       await seedMembership(pool, "acct-admin", wsId, "admin");
       await seedMembership(pool, "acct-member", wsId, "member");
-      const { feedbackId } = await seedFullWorkspaceData(pool, wsId, "acct-admin");
+      const { feedbackId } = await seedFullWorkspaceData(
+        pool,
+        wsId,
+        "acct-admin",
+      );
 
       const res = await app.inject({
         method: "DELETE",
@@ -247,7 +247,7 @@ describe.skipIf(!dbAvailable)(
       // Feedback history is preserved but detached (workspace_id SET NULL).
       const { rows } = await pool.query<{ workspace_id: string | null }>(
         `SELECT workspace_id FROM feedback WHERE id = $1`,
-        [feedbackId]
+        [feedbackId],
       );
       expect(rows).toHaveLength(1);
       expect(rows[0]!.workspace_id).toBeNull();
@@ -355,5 +355,5 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(200);
     });
-  }
+  },
 );

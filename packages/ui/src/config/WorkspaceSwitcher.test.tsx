@@ -12,8 +12,18 @@ import type { WorkspaceSummaryT } from "@shepherd/shared";
 // menu. create/join were moved here from the old <Workspaces> Config section.
 // ---------------------------------------------------------------------------
 
-const WS_A: WorkspaceSummaryT = { id: "ws_a", slug: "acme", name: "Acme", role: "admin" };
-const WS_B: WorkspaceSummaryT = { id: "ws_b", slug: "beta", name: "Beta", role: "member" };
+const WS_A: WorkspaceSummaryT = {
+  id: "ws_a",
+  slug: "acme",
+  name: "Acme",
+  role: "admin",
+};
+const WS_B: WorkspaceSummaryT = {
+  id: "ws_b",
+  slug: "beta",
+  name: "Beta",
+  role: "member",
+};
 
 describe("WorkspaceSwitcher", () => {
   let client: ReturnType<typeof makeMockClient>;
@@ -53,7 +63,9 @@ describe("WorkspaceSwitcher", () => {
 
   it("shows a 'Get started' trigger when there is no workspace", () => {
     renderSwitcher({ selected: null });
-    expect(screen.getByRole("button", { name: /get started/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /get started/i }),
+    ).toBeInTheDocument();
   });
 
   it("lists all workspaces and switches when one is picked", async () => {
@@ -71,64 +83,82 @@ describe("WorkspaceSwitcher", () => {
     renderSwitcher({ workspaces: [WS_A, WS_B], selected: WS_A });
     await userEvent.click(screen.getByRole("button", { name: /acme/i }));
 
-    expect(screen.getByRole("menuitemradio", { name: /acme/i })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.getByRole("menuitemradio", { name: /beta/i })).toHaveAttribute(
-      "aria-checked",
-      "false",
-    );
+    expect(
+      screen.getByRole("menuitemradio", { name: /acme/i }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("menuitemradio", { name: /beta/i }),
+    ).toHaveAttribute("aria-checked", "false");
   });
 
   it("creates a workspace, selects it, then re-lists", async () => {
-    client.createWorkspace = vi
-      .fn()
-      .mockResolvedValue({ id: "ws_new", slug: "new", name: "My Team", role: "admin" });
+    client.createWorkspace = vi.fn().mockResolvedValue({
+      id: "ws_new",
+      slug: "new",
+      name: "My Team",
+      role: "admin",
+    });
     const onSelect = vi.fn();
     const onChanged = vi.fn();
     renderSwitcher({ selected: WS_A, onSelect, onChanged });
 
     await userEvent.click(screen.getByRole("button", { name: /acme/i }));
-    await userEvent.click(screen.getByRole("menuitem", { name: /create workspace/i }));
-    await userEvent.type(screen.getByLabelText(/new workspace name/i), "My Team");
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /create workspace/i }),
+    );
+    await userEvent.type(
+      screen.getByLabelText(/new workspace name/i),
+      "My Team",
+    );
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
-    await waitFor(() => expect(client.createWorkspace).toHaveBeenCalledWith({ name: "My Team" }));
+    await waitFor(() =>
+      expect(client.createWorkspace).toHaveBeenCalledWith({ name: "My Team" }),
+    );
     expect(onSelect).toHaveBeenCalledWith("ws_new");
     expect(onChanged).toHaveBeenCalled();
   });
 
   it("joins by redeeming an invite code, selects the joined workspace, and refreshes members", async () => {
-    client.redeemInvite = vi
-      .fn()
-      .mockResolvedValue({ workspace: { id: "ws_join", slug: "j", name: "Joined", role: "member" } });
+    client.redeemInvite = vi.fn().mockResolvedValue({
+      workspace: { id: "ws_join", slug: "j", name: "Joined", role: "member" },
+    });
     const onSelect = vi.fn();
     const onChanged = vi.fn();
     const onMembersChanged = vi.fn();
     renderSwitcher({ selected: WS_A, onSelect, onChanged, onMembersChanged });
 
     await userEvent.click(screen.getByRole("button", { name: /acme/i }));
-    await userEvent.click(screen.getByRole("menuitem", { name: /join with a code/i }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /join with a code/i }),
+    );
     await userEvent.type(screen.getByLabelText(/invite code/i), "INV-123");
     await userEvent.click(screen.getByRole("button", { name: /^join$/i }));
 
-    await waitFor(() => expect(client.redeemInvite).toHaveBeenCalledWith("INV-123"));
+    await waitFor(() =>
+      expect(client.redeemInvite).toHaveBeenCalledWith("INV-123"),
+    );
     expect(onSelect).toHaveBeenCalledWith("ws_join");
     expect(onChanged).toHaveBeenCalled();
     expect(onMembersChanged).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a create error inside the menu without closing it", async () => {
-    client.createWorkspace = vi.fn().mockRejectedValue(new Error("name already taken"));
+    client.createWorkspace = vi
+      .fn()
+      .mockRejectedValue(new Error("name already taken"));
     renderSwitcher({ selected: WS_A });
 
     await userEvent.click(screen.getByRole("button", { name: /acme/i }));
-    await userEvent.click(screen.getByRole("menuitem", { name: /create workspace/i }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /create workspace/i }),
+    );
     await userEvent.type(screen.getByLabelText(/new workspace name/i), "Dup");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/already taken/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /already taken/i,
+    );
   });
 
   it("closes the menu on Escape", async () => {

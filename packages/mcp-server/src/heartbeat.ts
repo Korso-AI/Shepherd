@@ -81,7 +81,9 @@ export function createHeartbeat({
     // announcement content into agent context. On a parse failure we degrade
     // gracefully (treat as NO announcements): this beat delivers nothing and
     // acks nothing, so the hub keeps anything pending for a later, valid beat.
-    const parsed = HeartbeatResponse.safeParse(await hubClient.post("/heartbeat", body));
+    const parsed = HeartbeatResponse.safeParse(
+      await hubClient.post("/heartbeat", body),
+    );
     if (!parsed.success) {
       console.error(
         "[shepherd] heartbeat returned a response that failed contract validation — ignoring this beat's announcements.",
@@ -100,7 +102,7 @@ export function createHeartbeat({
         console.error(
           `[shepherd] inbox delivery failed (not acking, will retry): ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -126,7 +128,7 @@ export function createHeartbeat({
       void beat(sessionId).catch((err: unknown) => {
         // stderr only — stdout is the MCP protocol channel.
         console.error(
-          `[shepherd] heartbeat failed: ${err instanceof Error ? err.message : String(err)}`
+          `[shepherd] heartbeat failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       });
     }, intervalSeconds * 1000);

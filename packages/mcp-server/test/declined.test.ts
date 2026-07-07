@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { isDeclined, setDeclined, clearDeclined, declinedFilePath } from "../src/declined.js";
+import {
+  isDeclined,
+  setDeclined,
+  clearDeclined,
+  declinedFilePath,
+} from "../src/declined.js";
 
 const tmpDirs: string[] = [];
 function mkTmp(prefix: string): string {
@@ -46,7 +51,9 @@ describe("declined", () => {
 
     setDeclined(repo, declinedDir);
     const file = declinedFilePath(repo, declinedDir);
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as { declinedAt?: unknown };
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      declinedAt?: unknown;
+    };
     expect(typeof parsed.declinedAt).toBe("string");
   });
 
@@ -58,7 +65,9 @@ describe("declined", () => {
     setDeclined(repoA, declinedDir);
     expect(isDeclined(repoA, declinedDir)).toBe(true);
     expect(isDeclined(repoB, declinedDir)).toBe(false);
-    expect(declinedFilePath(repoA, declinedDir)).not.toBe(declinedFilePath(repoB, declinedDir));
+    expect(declinedFilePath(repoA, declinedDir)).not.toBe(
+      declinedFilePath(repoB, declinedDir),
+    );
   });
 
   it("fails open: an unreadable/garbage file returns false without throwing", () => {

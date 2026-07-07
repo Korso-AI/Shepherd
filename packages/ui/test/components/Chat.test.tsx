@@ -30,9 +30,7 @@ const NOW = Date.parse("2026-06-28T12:00:00.000Z");
 describe("Chat", () => {
   it("shows the empty hint when no announcements match", () => {
     render(<Chat announcements={[]} selectedRepo={null} nowMs={NOW} />);
-    expect(
-      screen.getByText(/No announcements yet/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/No announcements yet/)).toBeInTheDocument();
   });
 
   it("renders a broadcast from an agent left-aligned with its initials", () => {
@@ -50,14 +48,20 @@ describe("Chat", () => {
     expect(row).not.toHaveClass("msg--me");
     expect(row).not.toHaveClass("msg--targeted");
     // The avatar carries the CamelCase initials (RedDragon -> RD).
-    expect(within(row as HTMLElement).getByText(initialsFor("RedDragon"))).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("RedDragon")).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByText(initialsFor("RedDragon")),
+    ).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByText("RedDragon"),
+    ).toBeInTheDocument();
   });
 
   it("renders an operator message right-aligned (msg--me)", () => {
     render(
       <Chat
-        announcements={[announcement({ fromAgentName: "admin", fromAdmin: true })]}
+        announcements={[
+          announcement({ fromAgentName: "admin", fromAdmin: true }),
+        ]}
         selectedRepo={null}
         nowMs={NOW}
       />,
@@ -111,7 +115,9 @@ describe("Chat", () => {
   it("renders the time via formatRelative against nowMs", () => {
     render(
       <Chat
-        announcements={[announcement({ createdAt: "2026-06-28T11:59:00.000Z" })]}
+        announcements={[
+          announcement({ createdAt: "2026-06-28T11:59:00.000Z" }),
+        ]}
         selectedRepo={null}
         nowMs={NOW}
       />,
@@ -124,8 +130,14 @@ describe("Chat", () => {
     render(
       <Chat
         announcements={[
-          announcement({ body: "newest", createdAt: "2026-06-28T11:59:30.000Z" }),
-          announcement({ body: "oldest", createdAt: "2026-06-28T11:50:00.000Z" }),
+          announcement({
+            body: "newest",
+            createdAt: "2026-06-28T11:59:30.000Z",
+          }),
+          announcement({
+            body: "oldest",
+            createdAt: "2026-06-28T11:50:00.000Z",
+          }),
         ]}
         selectedRepo={null}
         nowMs={NOW}

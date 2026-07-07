@@ -137,8 +137,8 @@ export function ShepherdRoot({ brand, hubUrl, onLogout }: ShepherdRootProps) {
       ) : (
         <>
           <p className="config-none">
-            You&apos;re not in a workspace yet. Use the <b>Get started ▾</b> menu at the
-            top to create one or join with an invite code.
+            You&apos;re not in a workspace yet. Use the <b>Get started ▾</b>{" "}
+            menu at the top to create one or join with an invite code.
           </p>
           {/* Account actions still need a home with no workspace selected —
               rendered as the same Account card as the Config → Account tab. */}

@@ -36,7 +36,7 @@ export const dbAvailable: boolean = TEST_DATABASE_URL !== undefined;
 if (!dbAvailable) {
   console.warn(
     "[test/setup] No TEST_DATABASE_URL or DATABASE_URL set — " +
-      "DB-dependent tests will be skipped."
+      "DB-dependent tests will be skipped.",
   );
 }
 
@@ -44,7 +44,7 @@ if (!dbAvailable) {
 export function createTestPool(): pg.Pool {
   if (!TEST_DATABASE_URL) {
     throw new Error(
-      "Cannot create test pool: neither TEST_DATABASE_URL nor DATABASE_URL is set."
+      "Cannot create test pool: neither TEST_DATABASE_URL nor DATABASE_URL is set.",
     );
   }
   return new pg.Pool({ connectionString: TEST_DATABASE_URL });

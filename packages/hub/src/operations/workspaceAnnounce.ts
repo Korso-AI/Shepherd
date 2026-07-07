@@ -45,11 +45,15 @@ import {
 } from "../repo.js";
 import { withTransaction } from "../db.js";
 import { ValidationError } from "../errors.js";
-import { requireWorkspaceId, requireAdmin, type TenantContext } from "../tenant.js";
+import {
+  requireWorkspaceId,
+  requireAdmin,
+  type TenantContext,
+} from "../tenant.js";
 
 export async function workspaceAnnounce(
   input: WorkspaceAnnounceRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<WorkspaceAnnounceResponseT> {
   const { pool, config } = getContext();
   // Scoped to the credential's workspace_id (NOT config.ALLOWED_WORKSPACE).
@@ -76,10 +80,14 @@ export async function workspaceAnnounce(
     let repos: string[];
     if (targetAgentName !== null) {
       // DM: deliver into the target's own repo. Reject if we can't place them.
-      const repo = await findAgentRepoForDelivery(tx, workspaceId, targetAgentName);
+      const repo = await findAgentRepoForDelivery(
+        tx,
+        workspaceId,
+        targetAgentName,
+      );
       if (repo === null) {
         throw new ValidationError(
-          `Unknown or never-connected agent: ${targetAgentName}`
+          `Unknown or never-connected agent: ${targetAgentName}`,
         );
       }
       repos = [repo];

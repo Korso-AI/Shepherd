@@ -19,7 +19,7 @@ The marker names the workspace and wins over the `WORKSPACE` env var. `WORKSPACE
 ## 1. Install
 
 The server is published to npm and runs via `npx` — no clone or build required
-(Node 18+):
+(Node 20+):
 
 ```sh
 npx -y --package=@korso/shepherd shepherd-mcp
@@ -38,11 +38,11 @@ first fetch, and `@korso/shepherd@latest` picks up updates automatically.
 
 **Two things are required — the hub URL and exactly one credential:**
 
-| Variable | Description | Example |
-|---|---|---|
-| `HUB_URL` | Base URL of the deployed hub. Must be a **full valid URL**; plain `http` to a **non-loopback** host is **refused** (the token would travel in cleartext) unless you set `SHEPHERD_ALLOW_INSECURE_HTTP=1` — loopback (`localhost`/`127.0.0.1`/`::1`) http is always allowed for local dev | `https://shepherd.example.com` |
-| `SHEPHERD_TOKEN` | **Hosted-hub credential** — a minted `shp_…` token from the dashboard. It carries its own workspace identity (so `WORKSPACE` is ignored) and **wins over `TEAM_TOKEN`** when both are set | `shp_abc123` |
-| `TEAM_TOKEN` | **Self-host credential** — the shared bearer token matching the hub's `TEAM_TOKEN` | `tok_abc123` |
+| Variable         | Description                                                                                                                                                                                                                                                                              | Example                        |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `HUB_URL`        | Base URL of the deployed hub. Must be a **full valid URL**; plain `http` to a **non-loopback** host is **refused** (the token would travel in cleartext) unless you set `SHEPHERD_ALLOW_INSECURE_HTTP=1` — loopback (`localhost`/`127.0.0.1`/`::1`) http is always allowed for local dev | `https://shepherd.example.com` |
+| `SHEPHERD_TOKEN` | **Hosted-hub credential** — a minted `shp_…` token from the dashboard. It carries its own workspace identity (so `WORKSPACE` is ignored) and **wins over `TEAM_TOKEN`** when both are set                                                                                                | `shp_abc123`                   |
+| `TEAM_TOKEN`     | **Self-host credential** — the shared bearer token matching the hub's `TEAM_TOKEN`                                                                                                                                                                                                       | `tok_abc123`                   |
 
 A missing/invalid `HUB_URL`, or having neither token, causes an immediate
 startup failure with a clear error on stderr listing what's wrong. (No other
@@ -53,19 +53,19 @@ var triggers this.)
 just `HUB_URL` and a token produces a valid, fully-identified session. Set an
 override only to replace what's detected:
 
-| Variable | If omitted | Example |
-|---|---|---|
-| `WORKSPACE` | self-host only — defaults to `default` (**must match hub's `ALLOWED_WORKSPACE` if overridden**); ignored with `SHEPHERD_TOKEN`, and a repo's `.shepherd` marker wins over it | `shepherd` |
-| `REPO` | `git remote origin` → `owner/repo`, else repo folder name, else `unknown-repo` | `Korso-AI/shepherd` |
-| `BRANCH` | `git rev-parse --abbrev-ref HEAD`, else `HEAD` | `main` |
-| `BASE_BRANCH` | `origin/HEAD`, else `origin/main` / `origin/master` (used for the change-awareness heads-up) | `origin/main` |
-| `HUMAN` | git `user.name`, else local-part of `user.email`, else this device's **cached** last-detected name, else a generated name | `alex` |
-| `PROGRAM` | defaults to `claude-code` | `codex` |
-| `MODEL` | omitted — **never auto-detected**, so set it if you want it shown | `claude-sonnet-4-6` |
-| `HEARTBEAT_INTERVAL_SECONDS` | defaults to `60` | `30` |
-| `SHEPHERD_INBOX_DIR` | defaults to `~/.shepherd/inbox`. Override only to relocate the **announcement-push** inbox (see below); the background heartbeat writes incoming announcements here. If you set it, point your client hook/extension at the **same** dir | `~/.shepherd/inbox` |
-| `SHEPHERD_NO_AUTO_HOOKS` | unset — set to `1`/`true` to stop the server from auto-installing the client delivery hook on first run (see below) | `1` |
-| `SHEPHERD_ALLOW_INSECURE_HTTP` | unset — set to `1`/`true` to permit a plain-`http` `HUB_URL` to a **non-loopback** host (otherwise refused; the token travels unencrypted). Loopback http never needs it | `1` |
+| Variable                       | If omitted                                                                                                                                                                                                                               | Example             |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `WORKSPACE`                    | self-host only — defaults to `default` (**must match hub's `ALLOWED_WORKSPACE` if overridden**); ignored with `SHEPHERD_TOKEN`, and a repo's `.shepherd` marker wins over it                                                             | `shepherd`          |
+| `REPO`                         | `git remote origin` → `owner/repo`, else repo folder name, else `unknown-repo`                                                                                                                                                           | `Korso-AI/shepherd` |
+| `BRANCH`                       | `git rev-parse --abbrev-ref HEAD`, else `HEAD`                                                                                                                                                                                           | `main`              |
+| `BASE_BRANCH`                  | `origin/HEAD`, else `origin/main` / `origin/master` (used for the change-awareness heads-up)                                                                                                                                             | `origin/main`       |
+| `HUMAN`                        | git `user.name`, else local-part of `user.email`, else this device's **cached** last-detected name, else a generated name                                                                                                                | `alex`              |
+| `PROGRAM`                      | defaults to `claude-code`                                                                                                                                                                                                                | `codex`             |
+| `MODEL`                        | omitted — **never auto-detected**, so set it if you want it shown                                                                                                                                                                        | `claude-sonnet-4-6` |
+| `HEARTBEAT_INTERVAL_SECONDS`   | defaults to `60`                                                                                                                                                                                                                         | `30`                |
+| `SHEPHERD_INBOX_DIR`           | defaults to `~/.shepherd/inbox`. Override only to relocate the **announcement-push** inbox (see below); the background heartbeat writes incoming announcements here. If you set it, point your client hook/extension at the **same** dir | `~/.shepherd/inbox` |
+| `SHEPHERD_NO_AUTO_HOOKS`       | unset — set to `1`/`true` to stop the server from auto-installing the client delivery hook on first run (see below)                                                                                                                      | `1`                 |
+| `SHEPHERD_ALLOW_INSECURE_HTTP` | unset — set to `1`/`true` to permit a plain-`http` `HUB_URL` to a **non-loopback** host (otherwise refused; the token travels unencrypted). Loopback http never needs it                                                                 | `1`                 |
 
 **Device-identity cache.** Whenever `HUMAN` is unset and git **does** detect a
 name, that name is cached for your OS user at `~/.shepherd/identity.json`. A
@@ -94,8 +94,8 @@ default `~/.shepherd/inbox`). That file is then drained by two paths:
    get announcements **without** waiting for a Shepherd tool call — surfaced on
    the agent's next action of any kind — the client needs its hook wired up.
    **You normally don't do this by hand**: the first time the server runs under
-   Claude Code, Codex, or Pi, it installs the hook itself (see *Automatic hook
-   install* below). The per-client sections that follow document exactly what
+   Claude Code, Codex, or Pi, it installs the hook itself (see _Automatic hook
+   install_ below). The per-client sections that follow document exactly what
    gets installed, for auditing or manual setup.
 
 ### Automatic hook install
@@ -105,12 +105,12 @@ default `~/.shepherd/inbox`). That file is then drained by two paths:
 > given client on this machine it **writes to that client's own configuration
 > file in your home directory**, without a separate prompt:
 >
-> | Client | File it edits/creates | What it adds |
-> |---|---|---|
-> | Claude Code | `~/.claude/settings.json` | `SessionStart` + `PreToolUse` hook entries |
-> | Codex | `~/.codex/config.toml` | a `[[hooks.UserPromptSubmit]]` block (+ `features.hooks = true`) |
-> | Cursor | `~/.cursor/hooks.json` | a `beforeSubmitPrompt` entry |
-> | Pi | `~/.pi/agent/extensions/shepherd-inbox.js` | copies the bundled extension |
+> | Client      | File it edits/creates                      | What it adds                                                     |
+> | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
+> | Claude Code | `~/.claude/settings.json`                  | `SessionStart` + `PreToolUse` hook entries                       |
+> | Codex       | `~/.codex/config.toml`                     | a `[[hooks.UserPromptSubmit]]` block (+ `features.hooks = true`) |
+> | Cursor      | `~/.cursor/hooks.json`                     | a `beforeSubmitPrompt` entry                                     |
+> | Pi          | `~/.pi/agent/extensions/shepherd-inbox.js` | copies the bundled extension                                     |
 >
 > This edit is **additive only** (existing keys/entries are never modified,
 > removed, or reordered), **marker-guarded** (attempted **at most once per
@@ -170,7 +170,7 @@ declined it goes quiet, and like everything else here it fails open.
 **First-run ask (zero-setup).** Independently of the hook, the server watches an
 unlinked, undeclined repo for its first file edit (a lightweight `git status`
 poll) and — on clients that support MCP elicitation — asks the user directly via
-a popup: *"Coordinate this repo with Shepherd?"* with the workspace choices and
+a popup: _"Coordinate this repo with Shepherd?"_ with the workspace choices and
 a "No — don't ask again" option. Only an explicitly **submitted** answer is
 recorded (a dismissed or auto-declined popup means "ask again next session"), so
 the question is answered at most once and never by accident. Linking activates
@@ -180,7 +180,7 @@ instructions + hook nudge above.
 
 ### Claude Code — `PreToolUse` + `SessionStart` hooks
 
-*(Installed automatically on first run — shown for reference/manual setup.)*
+_(Installed automatically on first run — shown for reference/manual setup.)_
 
 `PreToolUse` fires before every tool, giving the most frequent passive delivery;
 `SessionStart` surfaces the link ask at the top of a session in an unlinked repo.
@@ -203,7 +203,10 @@ uses (override both with `SHEPHERD_INBOX_DIR` if you relocated it):
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "npx -y --package=@korso/shepherd shepherd-inbox-hook" }
+          {
+            "type": "command",
+            "command": "npx -y --package=@korso/shepherd shepherd-inbox-hook"
+          }
         ]
       }
     ],
@@ -211,7 +214,10 @@ uses (override both with `SHEPHERD_INBOX_DIR` if you relocated it):
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "npx -y --package=@korso/shepherd shepherd-inbox-hook" }
+          {
+            "type": "command",
+            "command": "npx -y --package=@korso/shepherd shepherd-inbox-hook"
+          }
         ]
       }
     ]
@@ -221,7 +227,7 @@ uses (override both with `SHEPHERD_INBOX_DIR` if you relocated it):
 
 ### Codex — `UserPromptSubmit` hook
 
-*(Installed automatically on first run — shown for reference/manual setup.)*
+_(Installed automatically on first run — shown for reference/manual setup.)_
 
 Codex uses the **same** hook contract as Claude Code (JSON on stdin, a
 `hookSpecificOutput.additionalContext` reply), so the **same bin** serves it. Use
@@ -241,7 +247,7 @@ command = ["npx", "-y", "--package=@korso/shepherd", "shepherd-inbox-hook"]
 
 ### Pi — extension
 
-*(Installed automatically on first run — shown for reference/manual setup.)*
+_(Installed automatically on first run — shown for reference/manual setup.)_
 
 Pi has no stdin/stdout hook; it loads in-process extensions. The auto-install
 copies the bundled extension into Pi's extensions dir; by hand:
@@ -259,7 +265,7 @@ with `pi -e /abs/path/to/dist/inboxExtension.js`.)
 
 ### Cursor — `beforeSubmitPrompt` hook
 
-*(Installed automatically on first run — shown for reference/manual setup.)*
+_(Installed automatically on first run — shown for reference/manual setup.)_
 
 Cursor runs hooks from `~/.cursor/hooks.json` with JSON on stdin and a JSON
 reply on stdout; the same bin detects Cursor's dialect (BOM-prefixed payload,
@@ -480,14 +486,14 @@ npm publish --workspace=@korso/shepherd   # prepublishOnly runs tsup automatical
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `Configuration error — missing or invalid env vars` | `HUB_URL` is absent/not a valid URL, or neither `SHEPHERD_TOKEN` nor `TEAM_TOKEN` is set | Add the missing var(s) to your client's `env` block |
-| Tools return a "not linked" advisory | The repo has no committed `.shepherd` marker, so the server is dormant here | Ask the agent to run the `link` tool (takes effect immediately) — or `decline` to stop being asked |
-| Tools report "session not ready … proceeding uncoordinated" | Join rejected — usually a stale/revoked token, or (self-host) a workspace the hub doesn't allow | Re-check the token; leave `WORKSPACE` unset (→ `default`) or match the hub's `ALLOWED_WORKSPACE` |
-| Agent shows up under a surprising name/repo/branch | Identity auto-detected from git, or reused from the device-identity cache when launched outside a git work tree | Override with `HUMAN`/`REPO`/`BRANCH`/`MODEL` env vars (§2); a correct git `user.name` on the next in-repo launch refreshes the cache, or delete `~/.shepherd/identity.json` to clear it |
-| `npm error 404 … @korso/shepherd` | Package not published yet, or name typo | `npm view @korso/shepherd version` to confirm it's live |
-| Process exits immediately with no error | Rare; check for node version incompatibility | Requires Node 18+ (ESM support) |
+| Symptom                                                     | Likely cause                                                                                                    | Fix                                                                                                                                                                                      |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Configuration error — missing or invalid env vars`         | `HUB_URL` is absent/not a valid URL, or neither `SHEPHERD_TOKEN` nor `TEAM_TOKEN` is set                        | Add the missing var(s) to your client's `env` block                                                                                                                                      |
+| Tools return a "not linked" advisory                        | The repo has no committed `.shepherd` marker, so the server is dormant here                                     | Ask the agent to run the `link` tool (takes effect immediately) — or `decline` to stop being asked                                                                                       |
+| Tools report "session not ready … proceeding uncoordinated" | Join rejected — usually a stale/revoked token, or (self-host) a workspace the hub doesn't allow                 | Re-check the token; leave `WORKSPACE` unset (→ `default`) or match the hub's `ALLOWED_WORKSPACE`                                                                                         |
+| Agent shows up under a surprising name/repo/branch          | Identity auto-detected from git, or reused from the device-identity cache when launched outside a git work tree | Override with `HUMAN`/`REPO`/`BRANCH`/`MODEL` env vars (§2); a correct git `user.name` on the next in-repo launch refreshes the cache, or delete `~/.shepherd/identity.json` to clear it |
+| `npm error 404 … @korso/shepherd`                           | Package not published yet, or name typo                                                                         | `npm view @korso/shepherd version` to confirm it's live                                                                                                                                  |
+| Process exits immediately with no error                     | Rare; check for node version incompatibility                                                                    | Requires Node 20+ (see `engines` in package.json)                                                                                                                                        |
 
 ---
 

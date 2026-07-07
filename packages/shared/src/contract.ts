@@ -46,7 +46,10 @@ const ChangeReportEntry = z.object({
   // attacker-controlled, flag-like value (e.g. "--output=...") from being parsed
   // by git as an option on a teammate's machine (argument injection). gitContext
   // re-validates defensively as well.
-  sha: z.string().regex(/^[0-9a-f]{4,64}$/).nullable(),
+  sha: z
+    .string()
+    .regex(/^[0-9a-f]{4,64}$/)
+    .nullable(),
   // Length caps here and below are DB-bloat guards, not semantic limits: they
   // sit 10-100x above any real value (commit subjects, branch names, paths),
   // bounding what one authenticated caller can persist per field.
@@ -320,7 +323,10 @@ export const SyncResponse = z.object({
 // ---------------------------------------------------------------------------
 
 /** Input shape an agent provides for work(); sessionId and changeReport are added/handled by the hub. */
-export const WorkAgentInput = WorkRequest.omit({ sessionId: true, changeReport: true });
+export const WorkAgentInput = WorkRequest.omit({
+  sessionId: true,
+  changeReport: true,
+});
 
 /** Input shape an agent provides for announce(); sessionId is added by the hub. */
 export const AnnounceAgentInput = AnnounceRequest.omit({ sessionId: true });

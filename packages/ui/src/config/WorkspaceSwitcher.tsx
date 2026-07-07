@@ -71,7 +71,8 @@ export function WorkspaceSwitcher({
   useEffect(() => {
     if (!open) return;
     function onDocClick(e: MouseEvent) {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
+      if (rootRef.current && !rootRef.current.contains(e.target as Node))
+        close();
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") close();
@@ -134,12 +135,18 @@ export function WorkspaceSwitcher({
         onClick={() => (open ? close() : setOpen(true))}
       >
         {hasWorkspace ? (
-          <span className="ws-avatar" aria-hidden="true">{initial(label)}</span>
+          <span className="ws-avatar" aria-hidden="true">
+            {initial(label)}
+          </span>
         ) : (
-          <span className="ws-plus" aria-hidden="true">＋</span>
+          <span className="ws-plus" aria-hidden="true">
+            ＋
+          </span>
         )}
         <span className="ws-name">{label}</span>
-        <span className="ws-caret" aria-hidden="true">▾</span>
+        <span className="ws-caret" aria-hidden="true">
+          ▾
+        </span>
       </button>
 
       {open && (
@@ -167,11 +174,18 @@ export function WorkspaceSwitcher({
                             close();
                           }}
                         >
-                          <span className="ws-avatar ws-avatar--sm" aria-hidden="true">
+                          <span
+                            className="ws-avatar ws-avatar--sm"
+                            aria-hidden="true"
+                          >
                             {initial(w.name)}
                           </span>
                           <span className="ws-mi__name">{w.name}</span>
-                          {active && <span className="ws-mi__check" aria-hidden="true">✓</span>}
+                          {active && (
+                            <span className="ws-mi__check" aria-hidden="true">
+                              ✓
+                            </span>
+                          )}
                         </button>
                       </li>
                     );
@@ -223,7 +237,11 @@ export function WorkspaceSwitcher({
                 onChange={(e) => setName(e.target.value)}
               />
               <div className="ws-form__row">
-                <button type="button" className="ws-form__back" onClick={() => setMode("menu")}>
+                <button
+                  type="button"
+                  className="ws-form__back"
+                  onClick={() => setMode("menu")}
+                >
                   Back
                 </button>
                 <button type="submit" disabled={busy || !name.trim()}>
@@ -251,7 +269,11 @@ export function WorkspaceSwitcher({
                 onChange={(e) => setCode(e.target.value)}
               />
               <div className="ws-form__row">
-                <button type="button" className="ws-form__back" onClick={() => setMode("menu")}>
+                <button
+                  type="button"
+                  className="ws-form__back"
+                  onClick={() => setMode("menu")}
+                >
                   Back
                 </button>
                 <button type="submit" disabled={busy || !code.trim()}>

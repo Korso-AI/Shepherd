@@ -62,7 +62,9 @@ describe("useLandscapePolling", () => {
 
   it("fetches once on mount and reports status 'live'", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const { result } = renderHook(() => useLandscapePolling(), {
       wrapper: wrapper(client),
@@ -76,12 +78,16 @@ describe("useLandscapePolling", () => {
     expect(client.getLandscape).toHaveBeenCalledTimes(1);
     expect(result.current.status).toBe("live");
     expect(result.current.snapshot).not.toBeNull();
-    expect(result.current.lastUpdatedMs).toBe(Date.parse("2026-06-28T12:00:00.000Z"));
+    expect(result.current.lastUpdatedMs).toBe(
+      Date.parse("2026-06-28T12:00:00.000Z"),
+    );
   });
 
   it("polls again on the interval (default 5000ms)", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     renderHook(() => useLandscapePolling(), { wrapper: wrapper(client) });
 
@@ -103,7 +109,9 @@ describe("useLandscapePolling", () => {
 
   it("respects a custom pollMs", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     renderHook(() => useLandscapePolling({ pollMs: 2000 }), {
       wrapper: wrapper(client),
@@ -197,7 +205,9 @@ describe("useLandscapePolling", () => {
 
   it("refresh() triggers an immediate extra fetch", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const { result } = renderHook(() => useLandscapePolling(), {
       wrapper: wrapper(client),
@@ -216,7 +226,9 @@ describe("useLandscapePolling", () => {
 
   it("advances lastUpdatedMs on a successful refresh after recovering", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const { result } = renderHook(() => useLandscapePolling(), {
       wrapper: wrapper(client),
@@ -232,13 +244,17 @@ describe("useLandscapePolling", () => {
       await result.current.refresh();
     });
 
-    expect(result.current.lastUpdatedMs).toBe(Date.parse("2026-06-28T12:00:10.000Z"));
+    expect(result.current.lastUpdatedMs).toBe(
+      Date.parse("2026-06-28T12:00:10.000Z"),
+    );
     expect(result.current.status).toBe("live");
   });
 
   it("polls client.landscape(workspaceId) when a workspaceId is given", async () => {
     const client = makeStub();
-    client.landscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.landscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const { result } = renderHook(
       () => useLandscapePolling({ workspaceId: "ws_1" }),
@@ -258,7 +274,9 @@ describe("useLandscapePolling", () => {
 
   it("polls the singular getLandscape alias when no workspaceId is given", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     renderHook(() => useLandscapePolling(), { wrapper: wrapper(client) });
 
@@ -272,7 +290,9 @@ describe("useLandscapePolling", () => {
 
   it("re-polls immediately against the new id when workspaceId changes", async () => {
     const client = makeStub();
-    client.landscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.landscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const { rerender } = renderHook(
       ({ id }: { id: string }) => useLandscapePolling({ workspaceId: id }),
@@ -341,7 +361,9 @@ describe("useLandscapePolling", () => {
 
   it("skips the interval poll while the tab is hidden, then polls on becoming visible", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const visibility = vi.spyOn(document, "visibilityState", "get");
     visibility.mockReturnValue("visible");
@@ -373,7 +395,9 @@ describe("useLandscapePolling", () => {
 
   it("clears both intervals on unmount (no further fetches)", async () => {
     const client = makeStub();
-    client.getLandscape.mockResolvedValue(makeSnapshot("2026-06-28T12:00:00.000Z"));
+    client.getLandscape.mockResolvedValue(
+      makeSnapshot("2026-06-28T12:00:00.000Z"),
+    );
 
     const { unmount } = renderHook(() => useLandscapePolling(), {
       wrapper: wrapper(client),

@@ -82,10 +82,10 @@ export function RepoSelect({
 
   /** A single menu option; `repo === null` is the "All repos" row. */
   const renderItem = (repo: string | null, text: string): ReactElement => {
-    const c = repo === null ? counts.__all__ ?? EMPTY : counts[repo] ?? EMPTY;
+    const c =
+      repo === null ? (counts.__all__ ?? EMPTY) : (counts[repo] ?? EMPTY);
     const isOn = repo === null ? isAll : selected === repo;
-    const cls =
-      "repo-mi" + (isOn ? " on" : "") + (repo === null ? " all" : "");
+    const cls = "repo-mi" + (isOn ? " on" : "") + (repo === null ? " all" : "");
     return (
       <button
         key={repo ?? "__all__"}

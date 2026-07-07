@@ -14,10 +14,7 @@ export {
 } from "./client.js";
 export type { ShepherdClient, ShepherdClientConfig } from "./client.js";
 
-export {
-  ShepherdClientProvider,
-  useShepherdClient,
-} from "./context.js";
+export { ShepherdClientProvider, useShepherdClient } from "./context.js";
 
 export { ShepherdRoot } from "./ShepherdRoot.js";
 export type { ShepherdRootProps } from "./ShepherdRoot.js";

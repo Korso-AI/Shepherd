@@ -8,7 +8,9 @@ import { initialsFor } from "../../src/logic.js";
  * presence + repo filter, active-before-idle ordering, and the .person--idle
  * greying for agents not owning an active task in view.
  */
-function agent(over: Partial<WorkspaceAgentT> & { name: string }): WorkspaceAgentT {
+function agent(
+  over: Partial<WorkspaceAgentT> & { name: string },
+): WorkspaceAgentT {
   return {
     name: over.name,
     human: over.human ?? "human",
@@ -21,7 +23,9 @@ function agent(over: Partial<WorkspaceAgentT> & { name: string }): WorkspaceAgen
   };
 }
 
-function task(over: Partial<WorkspaceTaskT> & { agentName: string }): WorkspaceTaskT {
+function task(
+  over: Partial<WorkspaceTaskT> & { agentName: string },
+): WorkspaceTaskT {
   return {
     agentName: over.agentName,
     program: over.program ?? "claude",
@@ -57,7 +61,13 @@ describe("Crew", () => {
   });
 
   it("renders an avatar with the agent initials", () => {
-    render(<Crew agents={[agent({ name: "RedDragon" })]} tasks={[]} selectedRepo={null} />);
+    render(
+      <Crew
+        agents={[agent({ name: "RedDragon" })]}
+        tasks={[]}
+        selectedRepo={null}
+      />,
+    );
     expect(screen.getByText(initialsFor("RedDragon"))).toBeInTheDocument();
   });
 
@@ -70,14 +80,20 @@ describe("Crew", () => {
     const { container } = render(
       <Crew agents={agents} tasks={[]} selectedRepo={"korso/a"} />,
     );
-    const names = [...container.querySelectorAll(".person__name")].map((n) => n.textContent);
+    const names = [...container.querySelectorAll(".person__name")].map(
+      (n) => n.textContent,
+    );
     expect(names).toEqual(["Live"]);
   });
 
   it("orders two active or two idle agents alphabetically", () => {
     const agents = [agent({ name: "Bea" }), agent({ name: "Ann" })];
-    const { container } = render(<Crew agents={agents} tasks={[]} selectedRepo={null} />);
-    const names = [...container.querySelectorAll(".person__name")].map((n) => n.textContent);
+    const { container } = render(
+      <Crew agents={agents} tasks={[]} selectedRepo={null} />,
+    );
+    const names = [...container.querySelectorAll(".person__name")].map(
+      (n) => n.textContent,
+    );
     expect(names).toEqual(["Ann", "Bea"]);
   });
 });

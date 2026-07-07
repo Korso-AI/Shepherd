@@ -17,7 +17,12 @@ describe("RepoSelect", () => {
 
   it("is absent when there are fewer than 2 repos", () => {
     const { container } = render(
-      <RepoSelect repos={["korso/a"]} counts={counts} selected={null} onSelect={() => {}} />,
+      <RepoSelect
+        repos={["korso/a"]}
+        counts={counts}
+        selected={null}
+        onSelect={() => {}}
+      />,
     );
     // Nothing rendered (no trigger button) — host hidden with a single repo.
     expect(container.querySelector("button")).toBeNull();

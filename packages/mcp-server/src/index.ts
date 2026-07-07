@@ -8,13 +8,20 @@ import { resolveContext } from "./resolveContext.js";
 import { createHeartbeat } from "./heartbeat.js";
 import { buildChangeReport } from "./changeReport.js";
 import { buildInstructions } from "./instructions.js";
-import { inboxFilePath, appendAnnouncements, defaultInboxDir } from "./inbox.js";
+import {
+  inboxFilePath,
+  appendAnnouncements,
+  defaultInboxDir,
+} from "./inbox.js";
 import { autoInstallHooks } from "./hookInstall.js";
 import { PACKAGE_VERSION } from "./version.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const hubClient = createHubClient({ hubUrl: config.HUB_URL, token: config.authToken });
+  const hubClient = createHubClient({
+    hubUrl: config.HUB_URL,
+    token: config.authToken,
+  });
   // Resolve the startup-stable identity (env → git detection → fallbacks).
   const context = await resolveContext(config);
 
@@ -42,7 +49,8 @@ async function main(): Promise<void> {
     // A model-visible sink (this working dir's inbox file). Its presence opts
     // the heartbeat into two-phase announcement delivery: append locally, then
     // ack the hub. appendAnnouncements is itself fail-open.
-    announcementSink: (announcements) => appendAnnouncements(inboxFile, announcements),
+    announcementSink: (announcements) =>
+      appendAnnouncements(inboxFile, announcements),
   });
   // Instructions are keyed on the repo's first-run state (linked / declined /
   // never-asked), so a declined repo costs one quiet paragraph instead of the
@@ -50,11 +58,17 @@ async function main(): Promise<void> {
   // a hot link mid-session is bridged by the link tool's own result text.
   const server = new McpServer(
     { name: "shepherd", version: PACKAGE_VERSION },
-    { instructions: buildInstructions(context.linkState, context.workspace) }
+    { instructions: buildInstructions(context.linkState, context.workspace) },
   );
   // registerTools auto-joins the workspace (fire-and-forget) — the agent never
   // has to call a `join` tool. It starts the heartbeat once the session lands.
-  const tools = registerTools(server, { hubClient, config, context, heartbeat, inboxFile });
+  const tools = registerTools(server, {
+    hubClient,
+    config,
+    context,
+    heartbeat,
+    inboxFile,
+  });
   const transport = new StdioServerTransport();
 
   // Layer 4: once the initialize handshake identifies the client, attempt the

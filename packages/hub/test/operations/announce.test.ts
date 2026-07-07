@@ -69,7 +69,7 @@ async function createSession(
     human: "Alex",
     program: "claude",
     model: "claude-3-5-sonnet",
-  }
+  },
 ): Promise<{ agentName: string; sessionId: string }> {
   return join(
     {
@@ -78,7 +78,7 @@ async function createSession(
       branch: "main",
       ...params,
     },
-    tenant
+    tenant,
   );
 }
 
@@ -96,7 +96,7 @@ describe.skipIf(!dbAvailable)(
       await runTestMigrations(pool);
       const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-        ["test-ws", "test-ws"]
+        ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
       tenant = { workspaceId };
@@ -123,11 +123,14 @@ describe.skipIf(!dbAvailable)(
         model: "claude-3-5-sonnet",
       });
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "Hello everyone!",
-        // No targetAgentName → broadcast
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "Hello everyone!",
+          // No targetAgentName → broadcast
+        },
+        tenant,
+      );
 
       expect(result.ok).toBe(true);
       expect(typeof result.announcementId).toBe("number");
@@ -136,7 +139,7 @@ describe.skipIf(!dbAvailable)(
       // Verify the row has NULL target_agent_name in the DB.
       const { rows } = await pool.query<{ target_agent_name: string | null }>(
         `SELECT target_agent_name FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       expect(rows).toHaveLength(1);
       expect(rows[0]!.target_agent_name).toBeNull();
@@ -162,17 +165,24 @@ describe.skipIf(!dbAvailable)(
         model: "claude-3-5-sonnet",
       });
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "Broadcast message",
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "Broadcast message",
+        },
+        tenant,
+      );
 
       const now = new Date();
 
       // Fetch pending for receiver1
-      const r1Session = await getSession(pool, workspaceId, receiver1.sessionId);
+      const r1Session = await getSession(
+        pool,
+        workspaceId,
+        receiver1.sessionId,
+      );
       const pending1 = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, r1Session)
+        fetchPendingAnnouncements(tx, r1Session),
       );
       expect(pending1).toHaveLength(1);
       expect(pending1[0]!.id).toBe(result.announcementId);
@@ -180,9 +190,13 @@ describe.skipIf(!dbAvailable)(
       expect(pending1[0]!.targetAgentName).toBeNull();
 
       // Fetch pending for receiver2
-      const r2Session = await getSession(pool, workspaceId, receiver2.sessionId);
+      const r2Session = await getSession(
+        pool,
+        workspaceId,
+        receiver2.sessionId,
+      );
       const pending2 = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, r2Session)
+        fetchPendingAnnouncements(tx, r2Session),
       );
       expect(pending2).toHaveLength(1);
       expect(pending2[0]!.id).toBe(result.announcementId);
@@ -214,29 +228,40 @@ describe.skipIf(!dbAvailable)(
         model: "claude-3-5-sonnet",
       });
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "Only for Bob",
-        targetAgentName: target.agentName,
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "Only for Bob",
+          targetAgentName: target.agentName,
+        },
+        tenant,
+      );
 
       expect(result.ok).toBe(true);
 
       const now = new Date();
 
       // Target sees the announcement
-      const targetSession = await getSession(pool, workspaceId, target.sessionId);
+      const targetSession = await getSession(
+        pool,
+        workspaceId,
+        target.sessionId,
+      );
       const targetPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, targetSession)
+        fetchPendingAnnouncements(tx, targetSession),
       );
       expect(targetPending).toHaveLength(1);
       expect(targetPending[0]!.id).toBe(result.announcementId);
       expect(targetPending[0]!.targetAgentName).toBe(target.agentName);
 
       // Bystander does NOT see the announcement
-      const bystanderSession = await getSession(pool, workspaceId, bystander.sessionId);
+      const bystanderSession = await getSession(
+        pool,
+        workspaceId,
+        bystander.sessionId,
+      );
       const bystanderPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession)
+        fetchPendingAnnouncements(tx, bystanderSession),
       );
       expect(bystanderPending).toHaveLength(0);
     });
@@ -259,11 +284,14 @@ describe.skipIf(!dbAvailable)(
       }); // -> bob-1
 
       // Alex addresses the bare handle "bob" — the real agent is "bob-1".
-      const err = await announce({
-        sessionId: alex.sessionId,
-        body: "hey bob",
-        targetAgentName: "bob",
-      }, tenant).catch((e) => e as Error);
+      const err = await announce(
+        {
+          sessionId: alex.sessionId,
+          body: "hey bob",
+          targetAgentName: "bob",
+        },
+        tenant,
+      ).catch((e) => e as Error);
 
       expect(err).toBeInstanceOf(Error);
       // Names the offending target and points at the real, reachable name.
@@ -272,15 +300,18 @@ describe.skipIf(!dbAvailable)(
 
       // Nothing was persisted — the transaction rolled back on the rejection.
       const { rows } = await pool.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM announcements`
+        `SELECT count(*)::text AS n FROM announcements`,
       );
       expect(rows[0]!.n).toBe("0");
       // The valid name still works (regression guard for the happy path).
-      const ok = await announce({
-        sessionId: alex.sessionId,
-        body: "hey bob",
-        targetAgentName: bob.agentName,
-      }, tenant);
+      const ok = await announce(
+        {
+          sessionId: alex.sessionId,
+          body: "hey bob",
+          targetAgentName: bob.agentName,
+        },
+        tenant,
+      );
       expect(ok.ok).toBe(true);
     });
 
@@ -293,11 +324,14 @@ describe.skipIf(!dbAvailable)(
 
       // No other agent exists; an entirely unknown name is rejected.
       await expect(
-        announce({
-          sessionId: alex.sessionId,
-          body: "anybody?",
-          targetAgentName: "ghost-9",
-        }, tenant)
+        announce(
+          {
+            sessionId: alex.sessionId,
+            body: "anybody?",
+            targetAgentName: "ghost-9",
+          },
+          tenant,
+        ),
       ).rejects.toThrow(/ghost-9/);
     });
 
@@ -312,17 +346,24 @@ describe.skipIf(!dbAvailable)(
         model: "claude-3-5-sonnet",
       });
 
-      await announce({
-        sessionId: sender.sessionId,
-        body: "This is my own message",
-      }, tenant);
+      await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "This is my own message",
+        },
+        tenant,
+      );
 
       const now = new Date();
 
       // Sender's pending should be empty (from_session_id filter)
-      const senderSession = await getSession(pool, workspaceId, sender.sessionId);
+      const senderSession = await getSession(
+        pool,
+        workspaceId,
+        sender.sessionId,
+      );
       const senderPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, senderSession)
+        fetchPendingAnnouncements(tx, senderSession),
       );
       expect(senderPending).toHaveLength(0);
     });
@@ -334,17 +375,24 @@ describe.skipIf(!dbAvailable)(
         model: "claude-3-5-sonnet",
       });
 
-      await announce({
-        sessionId: sender.sessionId,
-        body: "Targeting myself",
-        targetAgentName: sender.agentName,
-      }, tenant);
+      await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "Targeting myself",
+          targetAgentName: sender.agentName,
+        },
+        tenant,
+      );
 
       const now = new Date();
 
-      const senderSession = await getSession(pool, workspaceId, sender.sessionId);
+      const senderSession = await getSession(
+        pool,
+        workspaceId,
+        sender.sessionId,
+      );
       const senderPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, senderSession)
+        fetchPendingAnnouncements(tx, senderSession),
       );
       // from_session_id filter removes it
       expect(senderPending).toHaveLength(0);
@@ -367,26 +415,35 @@ describe.skipIf(!dbAvailable)(
       });
 
       // Bob broadcasts something for Alex to receive.
-      const bobMsg = await announce({
-        sessionId: bob.sessionId,
-        body: "heads up from bob",
-      }, tenant);
+      const bobMsg = await announce(
+        {
+          sessionId: bob.sessionId,
+          body: "heads up from bob",
+        },
+        tenant,
+      );
 
       // Alex announces; the response carries Bob's message (delivered now),
       // and excludes Alex's own just-sent broadcast.
-      const alexRes = await announce({
-        sessionId: alex.sessionId,
-        body: "alex broadcasting",
-      }, tenant);
+      const alexRes = await announce(
+        {
+          sessionId: alex.sessionId,
+          body: "alex broadcasting",
+        },
+        tenant,
+      );
       expect(alexRes.announcements).toHaveLength(1);
       expect(alexRes.announcements[0]!.id).toBe(bobMsg.announcementId);
       expect(alexRes.announcements[0]!.body).toBe("heads up from bob");
 
       // It was marked delivered: a second announce does not re-deliver it.
-      const alexRes2 = await announce({
-        sessionId: alex.sessionId,
-        body: "alex again",
-      }, tenant);
+      const alexRes2 = await announce(
+        {
+          sessionId: alex.sessionId,
+          body: "alex again",
+        },
+        tenant,
+      );
       expect(alexRes2.announcements).toHaveLength(0);
     });
 
@@ -397,11 +454,14 @@ describe.skipIf(!dbAvailable)(
     it("toAdmin: inserts announcement with to_admin=true and NULL target_agent_name", async () => {
       const sender = await createSession();
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "deploy is green",
-        toAdmin: true,
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "deploy is green",
+          toAdmin: true,
+        },
+        tenant,
+      );
 
       expect(result.ok).toBe(true);
 
@@ -410,7 +470,7 @@ describe.skipIf(!dbAvailable)(
         target_agent_name: string | null;
       }>(
         `SELECT to_admin, target_agent_name FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       expect(rows).toHaveLength(1);
       expect(rows[0]!.to_admin).toBe(true);
@@ -429,15 +489,22 @@ describe.skipIf(!dbAvailable)(
         model: "claude-3-5-sonnet",
       });
 
-      await announce({
-        sessionId: sender.sessionId,
-        body: "for the operator only",
-        toAdmin: true,
-      }, tenant);
+      await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "for the operator only",
+          toAdmin: true,
+        },
+        tenant,
+      );
 
-      const bystanderSession = await getSession(pool, workspaceId, bystander.sessionId);
+      const bystanderSession = await getSession(
+        pool,
+        workspaceId,
+        bystander.sessionId,
+      );
       const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession)
+        fetchPendingAnnouncements(tx, bystanderSession),
       );
       expect(pending).toHaveLength(0);
     });
@@ -445,15 +512,18 @@ describe.skipIf(!dbAvailable)(
     it("toAdmin: surfaces in the workspace landscape flagged toAdmin, fromAdmin=false", async () => {
       const sender = await createSession();
 
-      await announce({
-        sessionId: sender.sessionId,
-        body: "deploy is green",
-        toAdmin: true,
-      }, tenant);
+      await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "deploy is green",
+          toAdmin: true,
+        },
+        tenant,
+      );
 
       const now = new Date();
       const rows = await withTransaction(pool, (tx) =>
-        getWorkspaceLandscape(tx, workspaceId, now, 120)
+        getWorkspaceLandscape(tx, workspaceId, now, 120),
       );
       const msg = rows.announcements.find((a) => a.body === "deploy is green");
       expect(msg).toBeDefined();
@@ -467,12 +537,15 @@ describe.skipIf(!dbAvailable)(
       const sender = await createSession();
 
       await expect(
-        announce({
-          sessionId: sender.sessionId,
-          body: "ambiguous",
-          toAdmin: true,
-          targetAgentName: "someone-1",
-        }, tenant)
+        announce(
+          {
+            sessionId: sender.sessionId,
+            body: "ambiguous",
+            toAdmin: true,
+            targetAgentName: "someone-1",
+          },
+          tenant,
+        ),
       ).rejects.toThrow();
     });
 
@@ -485,7 +558,11 @@ describe.skipIf(!dbAvailable)(
 
     it("account-scoped member: broadcast succeeds and is scoped to session.workspaceId", async () => {
       await withTransaction(pool, (tx) =>
-        addMembership(tx, { workspaceId, accountId: "acct-member", role: "member" })
+        addMembership(tx, {
+          workspaceId,
+          accountId: "acct-member",
+          role: "member",
+        }),
       );
       const sender = await createSession();
       const accountTenant: TenantContext = {
@@ -496,14 +573,14 @@ describe.skipIf(!dbAvailable)(
 
       const result = await announce(
         { sessionId: sender.sessionId, body: "account-scoped broadcast" },
-        accountTenant
+        accountTenant,
       );
 
       expect(result.ok).toBe(true);
       // The announcement row is scoped to the SESSION's workspace, not a route.
       const { rows } = await pool.query<{ workspace_id: string }>(
         `SELECT workspace_id FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       expect(rows[0]!.workspace_id).toBe(workspaceId);
     });
@@ -514,7 +591,7 @@ describe.skipIf(!dbAvailable)(
       const { rows: wsRows } = await pool.query<{ id: string }>(
         `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
          ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-        ["announce-other-ws", "announce-other-ws"]
+        ["announce-other-ws", "announce-other-ws"],
       );
       const otherWs = wsRows[0]!.id;
       const otherSessionId = await withTransaction(pool, async (tx) => {
@@ -542,12 +619,12 @@ describe.skipIf(!dbAvailable)(
       await expect(
         announce(
           { sessionId: otherSessionId, body: "cross-tenant attempt" },
-          accountTenant
-        )
+          accountTenant,
+        ),
       ).rejects.toThrow(UnknownSessionError);
 
       const { rows } = await pool.query<{ n: string }>(
-        `SELECT COUNT(*)::text AS n FROM announcements`
+        `SELECT COUNT(*)::text AS n FROM announcements`,
       );
       expect(rows[0]!.n).toBe("0");
     });
@@ -564,10 +641,10 @@ describe.skipIf(!dbAvailable)(
         displayName?: string;
         githubLogin?: string;
         email?: string;
-      }
+      },
     ): Promise<void> {
       await withTransaction(pool, (tx) =>
-        addMembership(tx, { workspaceId, accountId, role: "member" })
+        addMembership(tx, { workspaceId, accountId, role: "member" }),
       );
       await pool.query(
         `INSERT INTO account_profiles (account_id, display_name, github_login, email)
@@ -579,23 +656,30 @@ describe.skipIf(!dbAvailable)(
           profile.displayName ?? null,
           profile.githubLogin ?? null,
           profile.email ?? null,
-        ]
+        ],
       );
     }
 
     it("target: a live agent name resolves exactly like targetAgentName", async () => {
       const sender = await createSession({
-        human: "Alex", program: "claude", model: "claude-3-5-sonnet",
+        human: "Alex",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
       const receiver = await createSession({
-        human: "Bob", program: "claude", model: "claude-3-5-sonnet",
+        human: "Bob",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "via unified target",
-        target: receiver.agentName,
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "via unified target",
+          target: receiver.agentName,
+        },
+        tenant,
+      );
 
       const { rows } = await pool.query<{
         target_agent_name: string | null;
@@ -604,15 +688,19 @@ describe.skipIf(!dbAvailable)(
       }>(
         `SELECT target_agent_name, to_admin, target_account_id
          FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       expect(rows[0]!.target_agent_name).toBe(receiver.agentName);
       expect(rows[0]!.to_admin).toBe(false);
       expect(rows[0]!.target_account_id).toBeNull();
 
-      const receiverSession = await getSession(pool, workspaceId, receiver.sessionId);
+      const receiverSession = await getSession(
+        pool,
+        workspaceId,
+        receiver.sessionId,
+      );
       const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, receiverSession)
+        fetchPendingAnnouncements(tx, receiverSession),
       );
       expect(pending).toHaveLength(1);
       expect(pending[0]!.body).toBe("via unified target");
@@ -621,11 +709,14 @@ describe.skipIf(!dbAvailable)(
     it("target: the operator label ('admin', any case) addresses the dashboard collectively", async () => {
       const sender = await createSession();
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "for whoever runs this",
-        target: "Admin",
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "for whoever runs this",
+          target: "Admin",
+        },
+        tenant,
+      );
 
       const { rows } = await pool.query<{
         to_admin: boolean;
@@ -635,7 +726,7 @@ describe.skipIf(!dbAvailable)(
       }>(
         `SELECT to_admin, target_agent_name, target_account_id, target_label
          FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       // Exactly the legacy toAdmin shape: collective, no specific member.
       expect(rows[0]!.to_admin).toBe(true);
@@ -651,17 +742,24 @@ describe.skipIf(!dbAvailable)(
         email: "alice@example.com",
       });
       const sender = await createSession({
-        human: "Alex", program: "claude", model: "claude-3-5-sonnet",
+        human: "Alex",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
       const bystander = await createSession({
-        human: "Bob", program: "claude", model: "claude-3-5-sonnet",
+        human: "Bob",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "review is ready for you",
-        target: "alice chen",
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "review is ready for you",
+          target: "alice chen",
+        },
+        tenant,
+      );
 
       const { rows } = await pool.query<{
         to_admin: boolean;
@@ -671,7 +769,7 @@ describe.skipIf(!dbAvailable)(
       }>(
         `SELECT to_admin, target_agent_name, target_account_id, target_label
          FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       expect(rows[0]!.to_admin).toBe(true); // keeps it out of agent delivery
       expect(rows[0]!.target_agent_name).toBeNull();
@@ -679,18 +777,22 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.target_label).toBe("Alice Chen");
 
       // Leak guard: a member-directed message reaches NO agent.
-      const bystanderSession = await getSession(pool, workspaceId, bystander.sessionId);
+      const bystanderSession = await getSession(
+        pool,
+        workspaceId,
+        bystander.sessionId,
+      );
       const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession)
+        fetchPendingAnnouncements(tx, bystanderSession),
       );
       expect(pending).toHaveLength(0);
 
       // The dashboard feed shows WHO it's for.
       const landscape = await withTransaction(pool, (tx) =>
-        getWorkspaceLandscape(tx, workspaceId, new Date(), 120)
+        getWorkspaceLandscape(tx, workspaceId, new Date(), 120),
       );
       const msg = landscape.announcements.find(
-        (a) => a.body === "review is ready for you"
+        (a) => a.body === "review is ready for you",
       );
       expect(msg).toBeDefined();
       expect(msg!.toAdmin).toBe(true);
@@ -708,11 +810,11 @@ describe.skipIf(!dbAvailable)(
       for (const target of ["alicehub", "ALICE@example.com"]) {
         const result = await announce(
           { sessionId: sender.sessionId, body: `hi via ${target}`, target },
-          tenant
+          tenant,
         );
         const { rows } = await pool.query<{ target_account_id: string | null }>(
           `SELECT target_account_id FROM announcements WHERE id = $1`,
-          [result.announcementId]
+          [result.announcementId],
         );
         expect(rows[0]!.target_account_id).toBe("acct-alice");
       }
@@ -720,25 +822,32 @@ describe.skipIf(!dbAvailable)(
 
     it("target: a live agent shadows a member with the same name (agent wins)", async () => {
       const sender = await createSession({
-        human: "Alex", program: "claude", model: "claude-3-5-sonnet",
+        human: "Alex",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
       const agent = await createSession({
-        human: "Bob", program: "claude", model: "claude-3-5-sonnet",
+        human: "Bob",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
       await addMember("acct-shadow", { displayName: agent.agentName });
 
-      const result = await announce({
-        sessionId: sender.sessionId,
-        body: "who gets this?",
-        target: agent.agentName,
-      }, tenant);
+      const result = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "who gets this?",
+          target: agent.agentName,
+        },
+        tenant,
+      );
 
       const { rows } = await pool.query<{
         target_agent_name: string | null;
         to_admin: boolean;
       }>(
         `SELECT target_agent_name, to_admin FROM announcements WHERE id = $1`,
-        [result.announcementId]
+        [result.announcementId],
       );
       expect(rows[0]!.target_agent_name).toBe(agent.agentName);
       expect(rows[0]!.to_admin).toBe(false);
@@ -747,17 +856,24 @@ describe.skipIf(!dbAvailable)(
     it("target: no live agent, no member → 400 listing BOTH sets, nothing persisted", async () => {
       await addMember("acct-alice", { displayName: "Alice Chen" });
       const sender = await createSession({
-        human: "Alex", program: "claude", model: "claude-3-5-sonnet",
+        human: "Alex",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
       const other = await createSession({
-        human: "Bob", program: "claude", model: "claude-3-5-sonnet",
+        human: "Bob",
+        program: "claude",
+        model: "claude-3-5-sonnet",
       });
 
-      const err = await announce({
-        sessionId: sender.sessionId,
-        body: "hello?",
-        target: "nobody-in-particular",
-      }, tenant).catch((e) => e as Error);
+      const err = await announce(
+        {
+          sessionId: sender.sessionId,
+          body: "hello?",
+          target: "nobody-in-particular",
+        },
+        tenant,
+      ).catch((e) => e as Error);
 
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain("nobody-in-particular");
@@ -765,31 +881,45 @@ describe.skipIf(!dbAvailable)(
       expect((err as Error).message).toContain("Alice Chen"); // members listed
 
       const { rows } = await pool.query<{ n: string }>(
-        `SELECT COUNT(*)::text AS n FROM announcements`
+        `SELECT COUNT(*)::text AS n FROM announcements`,
       );
       expect(rows[0]!.n).toBe("0");
     });
 
     it("target: an ambiguous member name → 400 asking to disambiguate", async () => {
-      await addMember("acct-a1", { displayName: "Alice", githubLogin: "alice-one" });
-      await addMember("acct-a2", { displayName: "Alice", githubLogin: "alice-two" });
+      await addMember("acct-a1", {
+        displayName: "Alice",
+        githubLogin: "alice-one",
+      });
+      await addMember("acct-a2", {
+        displayName: "Alice",
+        githubLogin: "alice-two",
+      });
       const sender = await createSession();
 
       await expect(
         announce(
-          { sessionId: sender.sessionId, body: "which alice?", target: "alice" },
-          tenant
-        )
+          {
+            sessionId: sender.sessionId,
+            body: "which alice?",
+            target: "alice",
+          },
+          tenant,
+        ),
       ).rejects.toThrow(/2 workspace members/);
 
       // The unique identifier still works.
       const ok = await announce(
-        { sessionId: sender.sessionId, body: "that alice", target: "alice-two" },
-        tenant
+        {
+          sessionId: sender.sessionId,
+          body: "that alice",
+          target: "alice-two",
+        },
+        tenant,
       );
       const { rows } = await pool.query<{ target_account_id: string | null }>(
         `SELECT target_account_id FROM announcements WHERE id = $1`,
-        [ok.announcementId]
+        [ok.announcementId],
       );
       expect(rows[0]!.target_account_id).toBe("acct-a2");
     });
@@ -798,22 +928,28 @@ describe.skipIf(!dbAvailable)(
       const sender = await createSession();
 
       await expect(
-        announce({
-          sessionId: sender.sessionId,
-          body: "ambiguous",
-          target: "someone",
-          targetAgentName: "someone-1",
-        }, tenant)
+        announce(
+          {
+            sessionId: sender.sessionId,
+            body: "ambiguous",
+            target: "someone",
+            targetAgentName: "someone-1",
+          },
+          tenant,
+        ),
       ).rejects.toThrow(/target replaces/);
 
       await expect(
-        announce({
-          sessionId: sender.sessionId,
-          body: "ambiguous",
-          target: "someone",
-          toAdmin: true,
-        }, tenant)
+        announce(
+          {
+            sessionId: sender.sessionId,
+            body: "ambiguous",
+            target: "someone",
+            toAdmin: true,
+          },
+          tenant,
+        ),
       ).rejects.toThrow(/target replaces/);
     });
-  }
+  },
 );

@@ -15,12 +15,16 @@
 import type { FeedbackRequestT, FeedbackResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
 import { sendFeedbackEmail } from "../email.js";
-import { findWorkspaceById, getAccountProfile, insertFeedback } from "../repo.js";
+import {
+  findWorkspaceById,
+  getAccountProfile,
+  insertFeedback,
+} from "../repo.js";
 import { NO_ROUTE_WORKSPACE, type TenantContext } from "../tenant.js";
 
 export async function submitFeedback(
   input: FeedbackRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<FeedbackResponseT> {
   const { pool, config } = getContext();
 
@@ -58,7 +62,9 @@ export async function submitFeedback(
     void (async () => {
       const [profile, workspace] = await Promise.all([
         accountId ? getAccountProfile(pool, accountId) : Promise.resolve(null),
-        workspaceId ? findWorkspaceById(pool, workspaceId) : Promise.resolve(null),
+        workspaceId
+          ? findWorkspaceById(pool, workspaceId)
+          : Promise.resolve(null),
       ]);
       await sendFeedbackEmail(
         {
@@ -81,7 +87,7 @@ export async function submitFeedback(
             : null,
           context,
         },
-        emailConfig
+        emailConfig,
       );
     })().catch((err) => {
       console.error("[feedback] notification email failed:", err);

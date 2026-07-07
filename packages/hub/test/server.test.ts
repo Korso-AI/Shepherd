@@ -10,14 +10,7 @@
  * no-DB.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHash, createHmac } from "node:crypto";
 import pg from "pg";
 import {
@@ -65,11 +58,14 @@ function makeFakePool(): pg.Pool {
 }
 
 /** Seed (idempotently) the self-host workspace and return its uuid. */
-async function seedWorkspace(pool: pg.Pool, slug = ALLOWED_WS): Promise<string> {
+async function seedWorkspace(
+  pool: pg.Pool,
+  slug = ALLOWED_WS,
+): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -142,7 +138,10 @@ describe("Dashboard static page (no DB, exempt GETs)", () => {
     // hardcode the build hash (it changes every `vite build`).
     const shell = await app.inject({ method: "GET", url: "/" });
     const m = shell.body.match(/src="(\/assets\/[^"]+\.js)"/);
-    expect(m, "shell should reference a hashed /assets/*.js module").not.toBeNull();
+    expect(
+      m,
+      "shell should reference a hashed /assets/*.js module",
+    ).not.toBeNull();
     const assetUrl = m![1];
 
     const res = await app.inject({ method: "GET", url: assetUrl });
@@ -155,7 +154,10 @@ describe("Dashboard static page (no DB, exempt GETs)", () => {
     // The asset handler must serve only basenames from dist/app/assets — never
     // climb out with `..`. Fastify normalizes most `..`, so also probe a name
     // that does not exist: it must 404, not 200 with foreign bytes.
-    const res = await app.inject({ method: "GET", url: "/assets/does-not-exist.js" });
+    const res = await app.inject({
+      method: "GET",
+      url: "/assets/does-not-exist.js",
+    });
     expect(res.statusCode).toBe(404);
   });
 });
@@ -190,11 +192,22 @@ describe.skipIf(!dbAvailable)(
       await pool.end();
     });
 
-    const routes = ["/join", "/work", "/done", "/announce", "/sync", "/heartbeat"] as const;
+    const routes = [
+      "/join",
+      "/work",
+      "/done",
+      "/announce",
+      "/sync",
+      "/heartbeat",
+    ] as const;
 
     for (const route of routes) {
       it(`POST ${route} with no Authorization → 401`, async () => {
-        const res = await app.inject({ method: "POST", url: route, payload: {} });
+        const res = await app.inject({
+          method: "POST",
+          url: route,
+          payload: {},
+        });
         expect(res.statusCode).toBe(401);
       });
 
@@ -220,7 +233,10 @@ describe.skipIf(!dbAvailable)(
     }
 
     it("GET /workspace/landscape with no Authorization → 401", async () => {
-      const res = await app.inject({ method: "GET", url: "/workspace/landscape" });
+      const res = await app.inject({
+        method: "GET",
+        url: "/workspace/landscape",
+      });
       expect(res.statusCode).toBe(401);
     });
 
@@ -232,7 +248,7 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(401);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -240,7 +256,8 @@ describe.skipIf(!dbAvailable)(
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)(
-  "GET /workspace/landscape (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
+  "GET /workspace/landscape (DB-gated)" +
+    (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
     let app: FastifyInstance;
@@ -267,7 +284,8 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("authenticated → 200 with a contract-valid payload, scoped to the credential's workspace", async () => {
-      const { createAgent, createSession, insertWorkItem } = await import("../src/repo.js");
+      const { createAgent, createSession, insertWorkItem } =
+        await import("../src/repo.js");
       const { withTransaction } = await import("../src/db.js");
       const now = new Date();
 
@@ -335,7 +353,7 @@ describe.skipIf(!dbAvailable)(
       }
       expect(typeof parsed.serverTime).toBe("string");
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -372,7 +390,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/work",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {
           sessionId: "00000000-0000-0000-0000-000000000001",
           intent: "do something",
@@ -389,7 +410,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/join",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: { workspace: "test-ws" }, // missing repo, branch, human, program, model
       });
       expect(res.statusCode).toBe(400);
@@ -399,7 +423,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/join",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {
           workspace: "evil-ws", // not the seeded ALLOWED_WORKSPACE slug
           repo: "org/repo",
@@ -413,7 +440,7 @@ describe.skipIf(!dbAvailable)(
       const body = res.json<{ error: string }>();
       expect(body.error).toMatch(/evil-ws/);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -421,7 +448,8 @@ describe.skipIf(!dbAvailable)(
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)(
-  "Security: token never leaks (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
+  "Security: token never leaks (DB-gated)" +
+    (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
     let app: FastifyInstance;
@@ -472,7 +500,10 @@ describe.skipIf(!dbAvailable)(
       const res = await throwApp.inject({
         method: "POST",
         url: "/force-500",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {},
       });
 
@@ -486,7 +517,7 @@ describe.skipIf(!dbAvailable)(
       // Authorization header value must not be echoed
       expect(res.body).not.toContain("authorization");
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -494,7 +525,8 @@ describe.skipIf(!dbAvailable)(
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)(
-  "POST /join happy path (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
+  "POST /join happy path (DB-gated)" +
+    (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
     let app: FastifyInstance;
@@ -523,7 +555,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/join",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {
           workspace: ALLOWED_WS,
           repo: "org/repo",
@@ -539,10 +574,10 @@ describe.skipIf(!dbAvailable)(
       expect(typeof body.agentName).toBe("string");
       expect(body.agentName.length).toBeGreaterThan(0);
       expect(body.sessionId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -580,7 +615,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/sync",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {
           sessionId: "00000000-0000-0000-0000-000000000099",
         },
@@ -588,7 +626,7 @@ describe.skipIf(!dbAvailable)(
 
       expect(res.statusCode).toBe(404);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -626,7 +664,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/heartbeat",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: { sessionId: "not-a-uuid" },
       });
       expect(res.statusCode).toBe(400);
@@ -656,7 +697,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/heartbeat",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: { sessionId },
       });
 
@@ -670,12 +714,15 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/heartbeat",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: { sessionId: "00000000-0000-0000-0000-000000000099" },
       });
       expect(res.statusCode).toBe(404);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -717,7 +764,10 @@ describe.skipIf(!dbAvailable)(
       const res = await app.inject({
         method: "POST",
         url: "/tokens",
-        headers: { authorization: AUTH_HEADER, "content-type": "application/json" },
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
         payload: {},
       });
       expect(res.statusCode).toBe(401);
@@ -731,7 +781,7 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(401);
     });
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------
@@ -885,5 +935,5 @@ describe.skipIf(!dbAvailable)(
       expect(Array.isArray(body.topWorkspaces)).toBe(true);
       expect(typeof body.generatedAt).toBe("string");
     });
-  }
+  },
 );

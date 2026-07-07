@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, within, waitFor, act, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  within,
+  waitFor,
+  act,
+  fireEvent,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   WorkspaceAgentT,
@@ -35,7 +42,9 @@ async function flush() {
 
 const NOW = "2026-06-28T12:00:00.000Z";
 
-function agent(over: Partial<WorkspaceAgentT> & { name: string }): WorkspaceAgentT {
+function agent(
+  over: Partial<WorkspaceAgentT> & { name: string },
+): WorkspaceAgentT {
   return {
     name: over.name,
     human: over.human ?? "human",
@@ -48,7 +57,9 @@ function agent(over: Partial<WorkspaceAgentT> & { name: string }): WorkspaceAgen
   };
 }
 
-function task(over: Partial<WorkspaceTaskT> & { agentName: string }): WorkspaceTaskT {
+function task(
+  over: Partial<WorkspaceTaskT> & { agentName: string },
+): WorkspaceTaskT {
   return {
     agentName: over.agentName,
     program: over.program ?? "claude",
@@ -122,12 +133,12 @@ function makeSnapshot(): WorkspaceLandscapeResponseT {
  * `getLandscape()` from the supplied `workspaceId`, and the composer picks
  * `announceTo`/`announce` likewise — so the tests assert WHICH route ran.
  */
-function makeClient(
-  snapshot: WorkspaceLandscapeResponseT,
-): ShepherdClient {
+function makeClient(snapshot: WorkspaceLandscapeResponseT): ShepherdClient {
   const ok = { ok: true as const, announcementIds: [1] };
   return {
-    getLandscape: vi.fn<() => Promise<WorkspaceLandscapeResponseT>>().mockResolvedValue(snapshot),
+    getLandscape: vi
+      .fn<() => Promise<WorkspaceLandscapeResponseT>>()
+      .mockResolvedValue(snapshot),
     landscape: vi
       .fn<(id: string) => Promise<WorkspaceLandscapeResponseT>>()
       .mockResolvedValue(snapshot),
@@ -193,15 +204,23 @@ describe("Dashboard", () => {
 
     expect(onLogout).toHaveBeenCalledTimes(1);
     const tablist = screen.getByRole("tablist", { name: "Shepherd views" });
-    expect(within(tablist).getByRole("tab", { name: "Tasks" })).toBeInTheDocument();
-    expect(within(tablist).getByRole("tab", { name: "Chat" })).toBeInTheDocument();
-    expect(within(tablist).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(
+      within(tablist).getByRole("tab", { name: "Tasks" }),
+    ).toBeInTheDocument();
+    expect(
+      within(tablist).getByRole("tab", { name: "Chat" }),
+    ).toBeInTheDocument();
+    expect(
+      within(tablist).queryByRole("button", { name: "Sign out" }),
+    ).not.toBeInTheDocument();
   });
 
   it("omits the Sign out button when no logout callback is supplied", async () => {
     await renderDashboard();
 
-    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign out" }),
+    ).not.toBeInTheDocument();
   });
 
   it("defaults to the newest-active repo's view when >=2 repos and no persisted selection", async () => {
@@ -268,7 +287,9 @@ describe("Dashboard", () => {
     // And back to tasks persists too.
     await user.click(screen.getByRole("tab", { name: "Tasks" }));
     expect(localStorage.getItem("shepherd.tab")).toBe("tasks");
-    expect(document.getElementById("panel-tasks")).not.toHaveAttribute("hidden");
+    expect(document.getElementById("panel-tasks")).not.toHaveAttribute(
+      "hidden",
+    );
   });
 
   it("honors a persisted 'shepherd.tab' of chat on first render", async () => {
@@ -312,7 +333,10 @@ describe("Dashboard", () => {
     await user.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(client.announceTo).toHaveBeenCalledTimes(1));
-    expect(client.announceTo).toHaveBeenCalledWith("ws1", expect.objectContaining({ body: "hello" }));
+    expect(client.announceTo).toHaveBeenCalledWith(
+      "ws1",
+      expect.objectContaining({ body: "hello" }),
+    );
     expect(client.announce).not.toHaveBeenCalled();
   });
 
@@ -354,9 +378,13 @@ describe("Dashboard", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Setup guide" }),
+    ).toBeInTheDocument();
     // The create stage keeps step 2's "Generate token" disabled.
-    expect(screen.getByRole("button", { name: "Generate token" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Generate token" }),
+    ).toBeDisabled();
     // No workspace → the board never polls the hub.
     expect(client.landscape).not.toHaveBeenCalled();
     expect(client.getLandscape).not.toHaveBeenCalled();
@@ -378,9 +406,13 @@ describe("Dashboard", () => {
     );
     await flush();
 
-    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Setup guide" }),
+    ).toBeInTheDocument();
     // The connect stage enables "Generate token".
-    expect(screen.getByRole("button", { name: "Generate token" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Generate token" }),
+    ).toBeEnabled();
     // The board renders BEHIND the dialog — the guide no longer replaces it.
     expect(document.getElementById("crew")).toBeInTheDocument();
   });
@@ -431,7 +463,9 @@ describe("Dashboard", () => {
     );
     await flush();
 
-    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Setup guide" }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
@@ -444,7 +478,9 @@ describe("Dashboard", () => {
 
     // The persistent ? header button re-opens the guide.
     await user.click(screen.getByRole("button", { name: "Setup guide" }));
-    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Setup guide" }),
+    ).toBeInTheDocument();
 
     unmount();
 
@@ -502,8 +538,18 @@ describe("Dashboard", () => {
 // ---------------------------------------------------------------------------
 
 const HUB_URL = "https://hub.example.run.app";
-const WS: WorkspaceSummaryT = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" };
-const WS2: WorkspaceSummaryT = { id: "ws_2", slug: "beta", name: "Beta", role: "admin" };
+const WS: WorkspaceSummaryT = {
+  id: "ws_1",
+  slug: "acme",
+  name: "Acme",
+  role: "admin",
+};
+const WS2: WorkspaceSummaryT = {
+  id: "ws_2",
+  slug: "beta",
+  name: "Beta",
+  role: "admin",
+};
 
 describe("Dashboard setup checklist", () => {
   let client: ReturnType<typeof makeMockClient>;
@@ -548,7 +594,9 @@ describe("Dashboard setup checklist", () => {
 
     // ws_1: the connect-stage checklist renders; skip it.
     await screen.findByRole("dialog", { name: /setup guide/i });
-    await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /skip for now/i }),
+    );
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: /setup guide/i }),
@@ -640,7 +688,9 @@ describe("Dashboard setup checklist", () => {
 
     // ws_2's own (empty) poll landed → the connect-stage checklist, waiting.
     await screen.findByRole("dialog", { name: /setup guide/i });
-    expect(screen.getByText(/waiting for your agent to check in/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/waiting for your agent to check in/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/wolf checked in/)).not.toBeInTheDocument();
   });
 
@@ -676,10 +726,14 @@ describe("Dashboard setup checklist", () => {
 
     // Checklist still up, now showing the success state.
     await screen.findByText(/wolf checked in/i);
-    expect(screen.getByRole("dialog", { name: /setup guide/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: /setup guide/i }),
+    ).toBeInTheDocument();
 
     // Dismiss → the real board.
-    await userEvent.click(screen.getByRole("button", { name: /go to your board/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /go to your board/i }),
+    );
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", { name: /setup guide/i }),
@@ -692,7 +746,9 @@ describe("Dashboard setup checklist", () => {
     renderChecklistDashboard({ workspaceId: "ws_1", workspace: WS });
     await screen.findByRole("dialog", { name: /setup guide/i });
 
-    await userEvent.click(screen.getByRole("button", { name: /close setup guide/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /close setup guide/i }),
+    );
 
     expect(
       screen.queryByRole("dialog", { name: /setup guide/i }),
@@ -717,7 +773,9 @@ describe("Dashboard setup checklist", () => {
 
     // A click INSIDE the dialog must not close it.
     fireEvent.click(dialog);
-    expect(screen.getByRole("dialog", { name: /setup guide/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: /setup guide/i }),
+    ).toBeInTheDocument();
 
     const backdrop = document.querySelector(".shepherd-modal__backdrop");
     expect(backdrop).not.toBeNull();
@@ -734,7 +792,9 @@ describe("Dashboard setup checklist", () => {
 
     // Closing works even before a workspace exists (session-only: there is no
     // workspace id to persist a skip against).
-    await userEvent.click(screen.getByRole("button", { name: /close setup guide/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /close setup guide/i }),
+    );
     expect(
       screen.queryByRole("dialog", { name: /setup guide/i }),
     ).not.toBeInTheDocument();
@@ -743,6 +803,8 @@ describe("Dashboard setup checklist", () => {
     // The ? header button brings it back at the create stage.
     await userEvent.click(screen.getByRole("button", { name: "Setup guide" }));
     const dialog = screen.getByRole("dialog", { name: /setup guide/i });
-    expect(within(dialog).getByLabelText(/workspace name/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByLabelText(/workspace name/i),
+    ).toBeInTheDocument();
   });
 });

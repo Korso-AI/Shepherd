@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { ShepherdClient } from "../src/client.js";
-import {
-  ShepherdClientProvider,
-  useShepherdClient,
-} from "../src/context.js";
+import { ShepherdClientProvider, useShepherdClient } from "../src/context.js";
 
 /**
  * A stub standing in for a real client. Both methods reject because the tests

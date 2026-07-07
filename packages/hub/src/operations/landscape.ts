@@ -38,7 +38,7 @@ export async function buildLandscape(
   session: SessionWithAgent,
   now: Date,
   ownGlobs: string[],
-  config: Config
+  config: Config,
 ): Promise<LandscapeT> {
   // Other sessions' active claims for this workspace+repo. Visibility requires
   // both a live TTL and a live owning session (see repo.listActiveClaims), so a
@@ -49,7 +49,7 @@ export async function buildLandscape(
     session.repo,
     now,
     config.STALE_AFTER_SECONDS,
-    { excludeSessionId: session.id }
+    { excludeSessionId: session.id },
   );
 
   // The caller's OWN active claims, so it can confirm its claim is live
@@ -58,7 +58,7 @@ export async function buildLandscape(
 
   // Advisory conflicts: the claims whose globs overlap the caller's own globs.
   const conflicts = activeClaims.filter((c) =>
-    globsOverlap(c.pathGlobs, ownGlobs)
+    globsOverlap(c.pathGlobs, ownGlobs),
   );
 
   // Pending announcements, marked delivered in the same transaction.
@@ -66,7 +66,7 @@ export async function buildLandscape(
   await recordAnnouncementDeliveries(
     tx,
     session.id,
-    announcements.map((a) => a.id)
+    announcements.map((a) => a.id),
   );
 
   // Other agents' change records for this workspace+repo (presence-enriched by
@@ -81,7 +81,7 @@ export async function buildLandscape(
     session.agentId,
     now,
     config.STALE_AFTER_SECONDS,
-    config.UNCOMMITTED_GRACE_SECONDS ?? DEFAULT_UNCOMMITTED_GRACE_SECONDS
+    config.UNCOMMITTED_GRACE_SECONDS ?? DEFAULT_UNCOMMITTED_GRACE_SECONDS,
   );
   const changeRecords = otherChangeRecords
     .filter((r) => globsOverlap(r.paths, ownGlobs))

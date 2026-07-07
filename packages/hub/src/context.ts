@@ -37,7 +37,7 @@ export function initContext(ctx: HubContext): void {
   if (current !== null) {
     throw new Error(
       "Hub context already initialised — call resetContext() before initContext() again " +
-        "(production boots once; tests reset between suites)."
+        "(production boots once; tests reset between suites).",
     );
   }
   current = ctx;
@@ -52,7 +52,7 @@ export function initContext(ctx: HubContext): void {
 export function getContext(): HubContext {
   if (current === null) {
     throw new Error(
-      "Hub context not initialised — call initContext({ pool, config }) before handling requests."
+      "Hub context not initialised — call initContext({ pool, config }) before handling requests.",
     );
   }
   return current;

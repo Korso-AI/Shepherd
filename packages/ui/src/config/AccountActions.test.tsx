@@ -37,14 +37,20 @@ describe("AccountActions", () => {
 
   it("hides the Sign out row without an onLogout, but keeps Delete account", () => {
     renderActions();
-    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Delete account" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sign out" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Delete account" }),
+    ).toBeInTheDocument();
   });
 
   it("opens the confirm modal and keeps Delete disabled until the phrase matches", async () => {
     renderActions(vi.fn());
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete account" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete account" }),
+    );
     const dialog = screen.getByRole("dialog");
     expect(dialog).toBeInTheDocument();
 
@@ -63,7 +69,9 @@ describe("AccountActions", () => {
     const onLogout = vi.fn();
     renderActions(onLogout);
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete account" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete account" }),
+    );
     await userEvent.type(screen.getByLabelText(/type/i), "delete my account");
 
     const dialog = screen.getByRole("dialog");
@@ -82,11 +90,15 @@ describe("AccountActions", () => {
     client.deleteAccount = vi
       .fn()
       .mockRejectedValue(
-        new Error('HTTP 409: You\'re the last admin of "Acme", which still has other members.'),
+        new Error(
+          'HTTP 409: You\'re the last admin of "Acme", which still has other members.',
+        ),
       );
     renderActions(onLogout);
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete account" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete account" }),
+    );
     await userEvent.type(screen.getByLabelText(/type/i), "delete my account");
     const dialog = screen.getByRole("dialog");
     const modalConfirm = Array.from(
@@ -104,7 +116,9 @@ describe("AccountActions", () => {
   it("cancel closes the modal without deleting", async () => {
     renderActions(vi.fn());
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete account" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete account" }),
+    );
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

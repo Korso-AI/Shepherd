@@ -53,9 +53,12 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
 }
 
 /** Join a session in the test workspace, defaulting repo to org/repo. */
-async function createSession(
-  params: { human: string; program?: string; model?: string; repo?: string }
-): Promise<{ agentName: string; sessionId: string }> {
+async function createSession(params: {
+  human: string;
+  program?: string;
+  model?: string;
+  repo?: string;
+}): Promise<{ agentName: string; sessionId: string }> {
   return join(
     {
       workspace: "test-ws",
@@ -65,7 +68,7 @@ async function createSession(
       program: params.program ?? "claude",
       model: params.model ?? "claude-3-5-sonnet",
     },
-    tenant
+    tenant,
   );
 }
 
@@ -85,7 +88,7 @@ describe.skipIf(!dbAvailable)(
       await runTestMigrations(pool);
       const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-        ["test-ws", "test-ws"]
+        ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
       tenant = { workspaceId };
@@ -107,10 +110,13 @@ describe.skipIf(!dbAvailable)(
       // broadcast repo the same way, so they converge.
       const receiver = await createSession({ human: "Bob", repo: "org/repo" });
 
-      const res = await workspaceAnnounce({
-        body: "Standup in 5 minutes",
-        repo: "org/repo",
-      }, tenant);
+      const res = await workspaceAnnounce(
+        {
+          body: "Standup in 5 minutes",
+          repo: "org/repo",
+        },
+        tenant,
+      );
 
       expect(res.ok).toBe(true);
       expect(res.announcementIds).toHaveLength(1);
@@ -126,7 +132,7 @@ describe.skipIf(!dbAvailable)(
       }>(
         `SELECT from_admin, from_label, from_session_id, target_agent_name, repo
          FROM announcements WHERE id = $1`,
-        [res.announcementIds[0]]
+        [res.announcementIds[0]],
       );
       expect(rows[0]!.from_admin).toBe(true);
       expect(rows[0]!.from_label).toBe(ADMIN_LABEL);
@@ -147,7 +153,10 @@ describe.skipIf(!dbAvailable)(
       const inA = await createSession({ human: "Bob", repo: "repo-a" });
       const inB = await createSession({ human: "Carol", repo: "repo-b" });
 
-      const res = await workspaceAnnounce({ body: "Workspace-wide notice" }, tenant);
+      const res = await workspaceAnnounce(
+        { body: "Workspace-wide notice" },
+        tenant,
+      );
 
       // One row per distinct session repo (repo-a, repo-b).
       expect(res.announcementIds).toHaveLength(2);
@@ -164,10 +173,13 @@ describe.skipIf(!dbAvailable)(
       const target = await createSession({ human: "Bob", repo: "repo-a" });
       const bystander = await createSession({ human: "Carol", repo: "repo-a" });
 
-      const res = await workspaceAnnounce({
-        body: "ping just for you",
-        targetAgentName: target.agentName,
-      }, tenant);
+      const res = await workspaceAnnounce(
+        {
+          body: "ping just for you",
+          targetAgentName: target.agentName,
+        },
+        tenant,
+      );
       expect(res.announcementIds).toHaveLength(1);
 
       const targetPending = await pendingFor(pool, target.sessionId);
@@ -181,7 +193,10 @@ describe.skipIf(!dbAvailable)(
 
     it("DM to an unknown agent throws ValidationError (→ 400)", async () => {
       await expect(
-        workspaceAnnounce({ body: "hi", targetAgentName: "NoSuchAgent" }, tenant)
+        workspaceAnnounce(
+          { body: "hi", targetAgentName: "NoSuchAgent" },
+          tenant,
+        ),
       ).rejects.toBeInstanceOf(ValidationError);
     });
 
@@ -206,7 +221,7 @@ describe.skipIf(!dbAvailable)(
     it("account caller with a profile: message is labelled with the member's name", async () => {
       await pool.query(
         `INSERT INTO account_profiles (account_id, display_name, github_login, email)
-         VALUES ('acct-alice', 'Alice Chen', 'alicehub', 'alice@example.com')`
+         VALUES ('acct-alice', 'Alice Chen', 'alicehub', 'alice@example.com')`,
       );
       const accountTenant: TenantContext = {
         workspaceId,
@@ -218,7 +233,7 @@ describe.skipIf(!dbAvailable)(
 
       await workspaceAnnounce(
         { body: "hi from alice", repo: "org/repo" },
-        accountTenant
+        accountTenant,
       );
 
       const pending = await pendingFor(pool, receiver.sessionId);
@@ -227,7 +242,9 @@ describe.skipIf(!dbAvailable)(
       expect(pending[0]!.fromHuman).toBe("Alice Chen");
 
       const landscape = await workspaceLandscape(tenant);
-      const mine = landscape.announcements.find((a) => a.body === "hi from alice");
+      const mine = landscape.announcements.find(
+        (a) => a.body === "hi from alice",
+      );
       expect(mine!.fromAgentName).toBe("Alice Chen");
       expect(mine!.fromAdmin).toBe(true);
     });
@@ -243,11 +260,11 @@ describe.skipIf(!dbAvailable)(
 
       await workspaceAnnounce(
         { body: "anonymous admin", repo: "org/repo" },
-        accountTenant
+        accountTenant,
       );
 
       const pending = await pendingFor(pool, receiver.sessionId);
       expect(pending[0]!.fromAgentName).toBe(ADMIN_LABEL);
     });
-  }
+  },
 );

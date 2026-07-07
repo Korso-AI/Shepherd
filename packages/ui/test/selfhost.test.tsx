@@ -108,11 +108,15 @@ describe("SelfHostApp", () => {
     await waitFor(() => {
       expect(document.getElementById("board")).not.toBeNull();
     });
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Sign out" }),
+    ).toBeInTheDocument();
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalled();
     });
-    expect(String(fetchMock.mock.calls[0]![0])).toContain("/workspace/landscape");
+    expect(String(fetchMock.mock.calls[0]![0])).toContain(
+      "/workspace/landscape",
+    );
   });
 
   it("clears a pre-stored token and returns to the gate when signing out", async () => {

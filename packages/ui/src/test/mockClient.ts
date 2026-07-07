@@ -13,7 +13,9 @@ import type { ShepherdClient } from "../client.js";
 // ---------------------------------------------------------------------------
 
 export type MockClient = {
-  -readonly [K in keyof ShepherdClient]: ShepherdClient[K] extends (...a: infer A) => infer R
+  -readonly [K in keyof ShepherdClient]: ShepherdClient[K] extends (
+    ...a: infer A
+  ) => infer R
     ? ReturnType<typeof vi.fn<(...a: A) => R>>
     : ShepherdClient[K];
 };
@@ -29,7 +31,9 @@ const EMPTY_LANDSCAPE = {
 /** A schema-valid empty announce result, shared by announce and announceTo. */
 const EMPTY_ANNOUNCE = { ok: true, announcementIds: [] };
 
-export function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
+export function makeMockClient(
+  overrides: Partial<MockClient> = {},
+): MockClient {
   const base: MockClient = {
     baseUrl: "https://hub.example.run.app",
 
@@ -47,7 +51,9 @@ export function makeMockClient(overrides: Partial<MockClient> = {}): MockClient 
     mintToken: vi.fn().mockResolvedValue({ token: "shp_mock", id: "tok_mock" }),
     listTokens: vi.fn().mockResolvedValue({ tokens: [] }),
     revokeToken: vi.fn().mockResolvedValue(undefined),
-    mintAccountToken: vi.fn().mockResolvedValue({ token: "shp_mock", id: "tok_mock" }),
+    mintAccountToken: vi
+      .fn()
+      .mockResolvedValue({ token: "shp_mock", id: "tok_mock" }),
     listAccountTokens: vi.fn().mockResolvedValue({ tokens: [] }),
     revokeAccountToken: vi.fn().mockResolvedValue(undefined),
     createInvite: vi.fn().mockResolvedValue({
@@ -63,7 +69,13 @@ export function makeMockClient(overrides: Partial<MockClient> = {}): MockClient 
     listEmailInvites: vi.fn().mockResolvedValue({ invites: [] }),
     revokeInvite: vi.fn().mockResolvedValue(undefined),
     redeemInvite: vi.fn().mockResolvedValue({
-      workspace: { id: "ws_joined", slug: "joined", name: "Joined", role: "member", isOwner: false },
+      workspace: {
+        id: "ws_joined",
+        slug: "joined",
+        name: "Joined",
+        role: "member",
+        isOwner: false,
+      },
     }),
     listMembers: vi.fn().mockResolvedValue({ members: [] }),
     removeMember: vi.fn().mockResolvedValue(undefined),

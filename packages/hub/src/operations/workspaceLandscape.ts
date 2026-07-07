@@ -20,7 +20,7 @@ import { withTransaction } from "../db.js";
 import { requireWorkspaceId, type TenantContext } from "../tenant.js";
 
 export async function workspaceLandscape(
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<WorkspaceLandscapeResponseT> {
   const { pool, config } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
@@ -29,7 +29,7 @@ export async function workspaceLandscape(
   // One transaction so the three reads share a single consistent snapshot.
   // Scoped to the credential's workspace_id (NOT config.ALLOWED_WORKSPACE).
   const rows = await withTransaction(pool, (tx) =>
-    getWorkspaceLandscape(tx, workspaceId, now, config.STALE_AFTER_SECONDS)
+    getWorkspaceLandscape(tx, workspaceId, now, config.STALE_AFTER_SECONDS),
   );
 
   return {
@@ -40,7 +40,9 @@ export async function workspaceLandscape(
       model: a.model,
       repo: a.repo,
       branch: a.branch,
-      lastHeartbeatAt: a.lastHeartbeatAt ? a.lastHeartbeatAt.toISOString() : null,
+      lastHeartbeatAt: a.lastHeartbeatAt
+        ? a.lastHeartbeatAt.toISOString()
+        : null,
       presence: presenceFor(a.lastHeartbeatAt, now, config),
     })),
     tasks: rows.tasks.map((t) => ({

@@ -69,14 +69,14 @@ export interface ApiTokenRow {
  */
 export async function findApiTokenByHash(
   db: Queryable,
-  tokenHash: string
+  tokenHash: string,
 ): Promise<ApiTokenRow | null> {
   const { rows } = await db.query<ApiTokenRow>(
     `SELECT id, account_id, workspace_id
      FROM   api_tokens
      WHERE  token_hash = $1
        AND  revoked_at IS NULL`,
-    [tokenHash]
+    [tokenHash],
   );
   return rows[0] ?? null;
 }
@@ -89,14 +89,14 @@ export async function findApiTokenByHash(
 export async function findMembership(
   db: Queryable,
   accountId: string,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<{ role: "admin" | "member" } | null> {
   const { rows } = await db.query<{ role: "admin" | "member" }>(
     `SELECT role
      FROM   memberships
      WHERE  account_id   = $1
        AND  workspace_id = $2`,
-    [accountId, workspaceId]
+    [accountId, workspaceId],
   );
   return rows[0] ?? null;
 }
@@ -122,7 +122,7 @@ export async function upsertAccountProfile(
     githubLogin: string | null;
     email: string | null;
     avatarUrl: string | null;
-  }
+  },
 ): Promise<void> {
   const { accountId, displayName, githubLogin, email, avatarUrl } = params;
   await db.query(
@@ -135,18 +135,18 @@ export async function upsertAccountProfile(
        email        = COALESCE(EXCLUDED.email,        account_profiles.email),
        avatar_url   = COALESCE(EXCLUDED.avatar_url,   account_profiles.avatar_url),
        updated_at   = now()`,
-    [accountId, displayName, githubLogin, email, avatarUrl]
+    [accountId, displayName, githubLogin, email, avatarUrl],
   );
 }
 
 /** A workspace row, by its unique slug; null when no workspace has that slug. */
 export async function findWorkspaceBySlug(
   db: Queryable,
-  slug: string
+  slug: string,
 ): Promise<{ id: string; slug: string; name: string } | null> {
   const { rows } = await db.query<{ id: string; slug: string; name: string }>(
     `SELECT id, slug, name FROM workspaces WHERE slug = $1`,
-    [slug]
+    [slug],
   );
   return rows[0] ?? null;
 }
@@ -158,8 +158,13 @@ export async function findWorkspaceBySlug(
  */
 export async function findWorkspaceById(
   db: Queryable,
-  id: string
-): Promise<{ id: string; slug: string; name: string; createdBy: string } | null> {
+  id: string,
+): Promise<{
+  id: string;
+  slug: string;
+  name: string;
+  createdBy: string;
+} | null> {
   const { rows } = await db.query<{
     id: string;
     slug: string;
@@ -167,7 +172,7 @@ export async function findWorkspaceById(
     createdBy: string;
   }>(
     `SELECT id, slug, name, created_by AS "createdBy" FROM workspaces WHERE id = $1`,
-    [id]
+    [id],
   );
   return rows[0] ?? null;
 }
@@ -180,7 +185,7 @@ export async function findWorkspaceById(
  */
 export async function getAccountProfile(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<{
   display_name: string | null;
   github_login: string | null;
@@ -192,7 +197,7 @@ export async function getAccountProfile(
     email: string | null;
   }>(
     `SELECT display_name, github_login, email FROM account_profiles WHERE account_id = $1`,
-    [accountId]
+    [accountId],
   );
   return rows[0] ?? null;
 }
@@ -203,9 +208,11 @@ export async function getAccountProfile(
  */
 export async function touchApiTokenLastUsed(
   db: Queryable,
-  tokenId: string
+  tokenId: string,
 ): Promise<void> {
-  await db.query(`UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, [tokenId]);
+  await db.query(`UPDATE api_tokens SET last_used_at = now() WHERE id = $1`, [
+    tokenId,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,14 +260,14 @@ export function slugifyWorkspaceName(name: string): string {
  */
 export async function createWorkspace(
   db: Queryable,
-  params: { slug: string; name: string; createdBy: string }
+  params: { slug: string; name: string; createdBy: string },
 ): Promise<WorkspaceRow> {
   const { slug, name, createdBy } = params;
   const { rows } = await db.query<WorkspaceRow>(
     `INSERT INTO workspaces (slug, name, created_by)
      VALUES ($1, $2, $3)
      RETURNING id, slug, name, created_by AS "createdBy", created_at AS "createdAt"`,
-    [slug, name, createdBy]
+    [slug, name, createdBy],
   );
   return rows[0]!;
 }
@@ -289,19 +296,31 @@ export async function createWorkspace(
  */
 export async function deleteWorkspaceCascade(
   tx: pg.PoolClient,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<void> {
   await tx.query(
     `DELETE FROM announcement_deliveries
      WHERE session_id IN (SELECT id FROM sessions WHERE workspace_id = $1)`,
-    [workspaceId]
+    [workspaceId],
   );
-  await tx.query(`DELETE FROM announcements  WHERE workspace_id = $1`, [workspaceId]);
-  await tx.query(`DELETE FROM work_items     WHERE workspace_id = $1`, [workspaceId]);
-  await tx.query(`DELETE FROM change_records WHERE workspace_id = $1`, [workspaceId]);
-  await tx.query(`DELETE FROM sessions       WHERE workspace_id = $1`, [workspaceId]);
-  await tx.query(`DELETE FROM agents         WHERE workspace_id = $1`, [workspaceId]);
-  await tx.query(`DELETE FROM api_tokens     WHERE workspace_id = $1`, [workspaceId]);
+  await tx.query(`DELETE FROM announcements  WHERE workspace_id = $1`, [
+    workspaceId,
+  ]);
+  await tx.query(`DELETE FROM work_items     WHERE workspace_id = $1`, [
+    workspaceId,
+  ]);
+  await tx.query(`DELETE FROM change_records WHERE workspace_id = $1`, [
+    workspaceId,
+  ]);
+  await tx.query(`DELETE FROM sessions       WHERE workspace_id = $1`, [
+    workspaceId,
+  ]);
+  await tx.query(`DELETE FROM agents         WHERE workspace_id = $1`, [
+    workspaceId,
+  ]);
+  await tx.query(`DELETE FROM api_tokens     WHERE workspace_id = $1`, [
+    workspaceId,
+  ]);
   await tx.query(`DELETE FROM workspaces     WHERE id = $1`, [workspaceId]);
 }
 
@@ -314,14 +333,14 @@ export async function deleteWorkspaceCascade(
  */
 export async function addMembership(
   db: Queryable,
-  params: { workspaceId: string; accountId: string; role: RoleT }
+  params: { workspaceId: string; accountId: string; role: RoleT },
 ): Promise<void> {
   const { workspaceId, accountId, role } = params;
   await db.query(
     `INSERT INTO memberships (account_id, workspace_id, role)
      VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -333,7 +352,7 @@ export async function addMembership(
  */
 export async function listWorkspacesForAccount(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<WorkspaceSummaryT[]> {
   const { rows } = await db.query<{
     id: string;
@@ -348,7 +367,7 @@ export async function listWorkspacesForAccount(
      JOIN   workspaces  w ON w.id = m.workspace_id
      WHERE  m.account_id = $1
      ORDER BY w.name`,
-    [accountId]
+    [accountId],
   );
   return rows.map((r) => ({
     id: r.id,
@@ -366,11 +385,11 @@ export async function listWorkspacesForAccount(
  */
 export async function countWorkspacesCreatedBy(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<number> {
   const { rows } = await db.query<{ count: string }>(
     `SELECT count(*) AS count FROM workspaces WHERE created_by = $1`,
-    [accountId]
+    [accountId],
   );
   return Number(rows[0]!.count);
 }
@@ -390,7 +409,7 @@ export async function insertApiToken(
     accountId: string;
     tokenHash: string;
     name?: string | null;
-  }
+  },
 ): Promise<TokenSummaryT> {
   const { workspaceId, accountId, tokenHash, name } = params;
   const { rows } = await db.query<{
@@ -403,7 +422,7 @@ export async function insertApiToken(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES ($1, $2, $3, $4)
      RETURNING id, name, last_used_at, created_at, revoked_at`,
-    [workspaceId, accountId, tokenHash, name ?? null]
+    [workspaceId, accountId, tokenHash, name ?? null],
   );
   return tokenSummaryFromRow(rows[0]!);
 }
@@ -417,7 +436,7 @@ export async function insertApiToken(
  */
 export async function listApiTokens(
   db: Queryable,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<TokenSummaryT[]> {
   const { rows } = await db.query<{
     id: string;
@@ -431,7 +450,7 @@ export async function listApiTokens(
      WHERE  workspace_id = $1 AND revoked_at IS NULL
      ORDER BY created_at DESC
      LIMIT  200`,
-    [workspaceId]
+    [workspaceId],
   );
   return rows.map(tokenSummaryFromRow);
 }
@@ -447,7 +466,7 @@ export async function listApiTokens(
  */
 export async function listApiTokensForAccount(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<TokenSummaryT[]> {
   const { rows } = await db.query<{
     id: string;
@@ -461,7 +480,7 @@ export async function listApiTokensForAccount(
      WHERE  account_id = $1 AND revoked_at IS NULL
      ORDER BY created_at DESC
      LIMIT  200`,
-    [accountId]
+    [accountId],
   );
   return rows.map(tokenSummaryFromRow);
 }
@@ -493,7 +512,7 @@ function tokenSummaryFromRow(row: {
 export async function revokeApiToken(
   db: Queryable,
   workspaceId: string,
-  tokenId: string
+  tokenId: string,
 ): Promise<boolean> {
   const result = await db.query(
     `UPDATE api_tokens
@@ -501,7 +520,7 @@ export async function revokeApiToken(
      WHERE  id           = $1
        AND  workspace_id = $2
        AND  revoked_at IS NULL`,
-    [tokenId, workspaceId]
+    [tokenId, workspaceId],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -523,7 +542,7 @@ export async function revokeApiToken(
 export async function revokeOwnApiToken(
   db: Queryable,
   accountId: string,
-  tokenId: string
+  tokenId: string,
 ): Promise<boolean> {
   const result = await db.query(
     `UPDATE api_tokens
@@ -531,7 +550,7 @@ export async function revokeOwnApiToken(
      WHERE  id         = $1
        AND  account_id = $2
        AND  revoked_at IS NULL`,
-    [tokenId, accountId]
+    [tokenId, accountId],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -552,7 +571,7 @@ export async function revokeOwnApiToken(
 export async function revokeApiTokensForMember(
   db: Queryable,
   workspaceId: string,
-  accountId: string
+  accountId: string,
 ): Promise<number> {
   const result = await db.query(
     `UPDATE api_tokens
@@ -560,7 +579,7 @@ export async function revokeApiTokensForMember(
      WHERE  workspace_id = $1
        AND  account_id   = $2
        AND  revoked_at IS NULL`,
-    [workspaceId, accountId]
+    [workspaceId, accountId],
   );
   return result.rowCount ?? 0;
 }
@@ -573,14 +592,14 @@ export async function revokeApiTokensForMember(
  */
 export async function revokeAllApiTokensForAccount(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<number> {
   const result = await db.query(
     `UPDATE api_tokens
      SET    revoked_at = now()
      WHERE  account_id = $1
        AND  revoked_at IS NULL`,
-    [accountId]
+    [accountId],
   );
   return result.rowCount ?? 0;
 }
@@ -591,9 +610,11 @@ export async function revokeAllApiTokensForAccount(
  */
 export async function deleteAccountProfile(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<void> {
-  await db.query(`DELETE FROM account_profiles WHERE account_id = $1`, [accountId]);
+  await db.query(`DELETE FROM account_profiles WHERE account_id = $1`, [
+    accountId,
+  ]);
 }
 
 /** A full invites row (migration 011 + 018), with camelCase fields. */
@@ -643,15 +664,31 @@ export async function createInvite(
     maxUses: number | null;
     expiresAt?: Date | null;
     email?: string | null;
-  }
+  },
 ): Promise<InviteRow> {
-  const { workspaceId, code, createdBy, roleGranted, maxUses, expiresAt, email } = params;
+  const {
+    workspaceId,
+    code,
+    createdBy,
+    roleGranted,
+    maxUses,
+    expiresAt,
+    email,
+  } = params;
   const { rows } = await db.query<InviteRow>(
     `INSERT INTO invites
        (workspace_id, code, created_by, role_granted, max_uses, expires_at, email)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${INVITE_COLUMNS}`,
-    [workspaceId, code, createdBy, roleGranted, maxUses, expiresAt ?? null, email ?? null]
+    [
+      workspaceId,
+      code,
+      createdBy,
+      roleGranted,
+      maxUses,
+      expiresAt ?? null,
+      email ?? null,
+    ],
   );
   return rows[0]!;
 }
@@ -666,7 +703,7 @@ export async function createInvite(
  */
 export async function listPendingEmailInvites(
   db: Queryable,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<InviteRow[]> {
   const { rows } = await db.query<InviteRow>(
     `SELECT ${INVITE_COLUMNS}
@@ -678,7 +715,7 @@ export async function listPendingEmailInvites(
        AND  (expires_at IS NULL OR expires_at > now())
      ORDER BY created_at DESC
      LIMIT  200`,
-    [workspaceId]
+    [workspaceId],
   );
   return rows;
 }
@@ -692,14 +729,14 @@ export async function listPendingEmailInvites(
  */
 export async function findInviteByCode(
   db: Queryable,
-  code: string
+  code: string,
 ): Promise<InviteRow | null> {
   const { rows } = await db.query<InviteRow>(
     `SELECT ${INVITE_COLUMNS}
      FROM   invites
      WHERE  code = $1
        AND  revoked_at IS NULL`,
-    [code]
+    [code],
   );
   return rows[0] ?? null;
 }
@@ -721,7 +758,7 @@ export async function findInviteByCode(
  */
 export async function incrementInviteUse(
   db: Queryable,
-  code: string
+  code: string,
 ): Promise<InviteRow | null> {
   const { rows } = await db.query<InviteRow>(
     `UPDATE invites
@@ -731,7 +768,7 @@ export async function incrementInviteUse(
        AND  (max_uses IS NULL OR use_count < max_uses)
        AND  (expires_at IS NULL OR expires_at > now())
      RETURNING ${INVITE_COLUMNS}`,
-    [code]
+    [code],
   );
   return rows[0] ?? null;
 }
@@ -744,7 +781,7 @@ export async function incrementInviteUse(
 export async function revokeInvite(
   db: Queryable,
   workspaceId: string,
-  inviteId: string
+  inviteId: string,
 ): Promise<boolean> {
   const result = await db.query(
     `UPDATE invites
@@ -752,7 +789,7 @@ export async function revokeInvite(
      WHERE  id           = $1
        AND  workspace_id = $2
        AND  revoked_at IS NULL`,
-    [inviteId, workspaceId]
+    [inviteId, workspaceId],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -770,7 +807,7 @@ export async function revokeInvite(
 export async function revokeInviteByCode(
   db: Queryable,
   workspaceId: string,
-  code: string
+  code: string,
 ): Promise<boolean> {
   const result = await db.query(
     `UPDATE invites
@@ -778,7 +815,7 @@ export async function revokeInviteByCode(
      WHERE  code         = $1
        AND  workspace_id = $2
        AND  revoked_at IS NULL`,
-    [code, workspaceId]
+    [code, workspaceId],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -791,7 +828,7 @@ export async function revokeInviteByCode(
  */
 export async function listMembers(
   db: Queryable,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<MemberSummaryT[]> {
   const { rows } = await db.query<{
     account_id: string;
@@ -815,7 +852,7 @@ export async function listMembers(
      WHERE  m.workspace_id = $1
      ORDER BY p.display_name NULLS LAST, m.account_id
      LIMIT  1000`,
-    [workspaceId]
+    [workspaceId],
   );
   return rows.map((r) => ({
     accountId: r.account_id,
@@ -836,7 +873,7 @@ export async function listMembers(
  */
 export async function accountLabel(
   db: Queryable,
-  accountId: string
+  accountId: string,
 ): Promise<string | null> {
   const { rows } = await db.query<{
     display_name: string | null;
@@ -846,7 +883,7 @@ export async function accountLabel(
     `SELECT display_name, github_login, email
      FROM   account_profiles
      WHERE  account_id = $1`,
-    [accountId]
+    [accountId],
   );
   const p = rows[0];
   if (!p) return null;
@@ -862,13 +899,13 @@ export async function accountLabel(
 export async function removeMembership(
   db: Queryable,
   workspaceId: string,
-  accountId: string
+  accountId: string,
 ): Promise<boolean> {
   const result = await db.query(
     `DELETE FROM memberships
      WHERE  workspace_id = $1
        AND  account_id   = $2`,
-    [workspaceId, accountId]
+    [workspaceId, accountId],
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -879,14 +916,14 @@ export async function removeMembership(
  */
 export async function countAdmins(
   db: Queryable,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<number> {
   const { rows } = await db.query<{ count: string }>(
     `SELECT count(*) AS count
      FROM   memberships
      WHERE  workspace_id = $1
        AND  role = 'admin'`,
-    [workspaceId]
+    [workspaceId],
   );
   return Number(rows[0]!.count);
 }
@@ -898,13 +935,13 @@ export async function countAdmins(
  */
 export async function countMembers(
   db: Queryable,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<number> {
   const { rows } = await db.query<{ count: string }>(
     `SELECT count(*) AS count
      FROM   memberships
      WHERE  workspace_id = $1`,
-    [workspaceId]
+    [workspaceId],
   );
   return Number(rows[0]!.count);
 }
@@ -918,14 +955,14 @@ export async function setRole(
   db: Queryable,
   workspaceId: string,
   accountId: string,
-  role: RoleT
+  role: RoleT,
 ): Promise<void> {
   await db.query(
     `UPDATE memberships
      SET    role = $3
      WHERE  workspace_id = $1
        AND  account_id   = $2`,
-    [workspaceId, accountId, role]
+    [workspaceId, accountId, role],
   );
 }
 
@@ -938,13 +975,13 @@ export async function setRole(
 export async function setWorkspaceOwner(
   db: Queryable,
   workspaceId: string,
-  accountId: string
+  accountId: string,
 ): Promise<void> {
   await db.query(
     `UPDATE workspaces
      SET    created_by = $2
      WHERE  id = $1`,
-    [workspaceId, accountId]
+    [workspaceId, accountId],
   );
 }
 
@@ -979,14 +1016,14 @@ export async function createAgent(
     human: string;
     program: string;
     model?: string | null;
-  }
+  },
 ): Promise<AgentRow> {
   const { workspaceId, name, human, program, model } = params;
   const { rows } = await tx.query<AgentRow>(
     `INSERT INTO agents (workspace_id, name, human, program, model)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id, workspace_id AS "workspaceId", name, human, program, model, created_at`,
-    [workspaceId, name, human, program, model ?? null]
+    [workspaceId, name, human, program, model ?? null],
   );
   return rows[0]!;
 }
@@ -1000,14 +1037,14 @@ export async function createAgent(
 export async function findAgentByName(
   db: Queryable,
   workspaceId: string,
-  name: string
+  name: string,
 ): Promise<AgentRow | null> {
   const { rows } = await db.query<AgentRow>(
     `SELECT id, workspace_id AS "workspaceId", name, human, program, model, created_at
      FROM agents
      WHERE workspace_id = $1
        AND name         = $2`,
-    [workspaceId, name]
+    [workspaceId, name],
   );
   return rows[0] ?? null;
 }
@@ -1030,7 +1067,7 @@ export async function reservedAgentNamesForHandle(
   now: Date,
   staleAfterSeconds: number,
   changeRecordTtlSeconds: number,
-  graceSeconds: number
+  graceSeconds: number,
 ): Promise<string[]> {
   // A name in `handle`'s ordinal family is RESERVED (its ordinal must not be
   // recycled) while the agent still has ANY live footprint, so a freshly-joined
@@ -1079,7 +1116,14 @@ export async function reservedAgentNamesForHandle(
              )
          )
        )`,
-    [workspaceId, handle, now, staleAfterSeconds, changeRecordTtlSeconds, graceSeconds]
+    [
+      workspaceId,
+      handle,
+      now,
+      staleAfterSeconds,
+      changeRecordTtlSeconds,
+      graceSeconds,
+    ],
   );
   return rows.map((r) => r.name);
 }
@@ -1099,7 +1143,7 @@ export async function liveAgentNamesInRepo(
   workspaceId: string,
   repo: string,
   now: Date,
-  staleAfterSeconds: number
+  staleAfterSeconds: number,
 ): Promise<string[]> {
   const { rows } = await db.query<{ name: string }>(
     `SELECT DISTINCT a.name
@@ -1109,7 +1153,7 @@ export async function liveAgentNamesInRepo(
        AND  s.repo         = $2
        AND  s.last_heartbeat_at > $3::timestamptz - ($4 * interval '1 second')
      ORDER BY a.name`,
-    [workspaceId, repo, now, staleAfterSeconds]
+    [workspaceId, repo, now, staleAfterSeconds],
   );
   return rows.map((r) => r.name);
 }
@@ -1148,14 +1192,14 @@ export async function createSession(
     agentId: string;
     repo: string;
     branch: string;
-  }
+  },
 ): Promise<SessionRow> {
   const { workspaceId, agentId, repo, branch } = params;
   const { rows } = await tx.query<SessionRow>(
     `INSERT INTO sessions (workspace_id, agent_id, repo, branch)
      VALUES ($1, $2, $3, $4)
      RETURNING id, workspace_id AS "workspaceId", agent_id, repo, branch, last_heartbeat_at, created_at`,
-    [workspaceId, agentId, repo, branch]
+    [workspaceId, agentId, repo, branch],
   );
   return rows[0]!;
 }
@@ -1168,7 +1212,7 @@ export async function createSession(
 export async function getSession(
   db: Queryable,
   workspaceId: string,
-  sessionId: string
+  sessionId: string,
 ): Promise<SessionWithAgent> {
   const { rows } = await db.query<{
     id: string;
@@ -1190,7 +1234,7 @@ export async function getSession(
      JOIN agents   a ON a.id = s.agent_id
      WHERE s.id = $1
        AND s.workspace_id = $2`,
-    [sessionId, workspaceId]
+    [sessionId, workspaceId],
   );
 
   if (rows.length === 0) {
@@ -1224,7 +1268,7 @@ export async function getSession(
  */
 export async function getSessionById(
   db: Queryable,
-  sessionId: string
+  sessionId: string,
 ): Promise<SessionWithAgent | null> {
   const { rows } = await db.query<{
     id: string;
@@ -1245,7 +1289,7 @@ export async function getSessionById(
      FROM sessions s
      JOIN agents   a ON a.id = s.agent_id
      WHERE s.id = $1`,
-    [sessionId]
+    [sessionId],
   );
 
   if (rows.length === 0) {
@@ -1270,9 +1314,12 @@ export async function getSessionById(
 export async function updateSessionBranch(
   tx: pg.PoolClient,
   sessionId: string,
-  branch: string
+  branch: string,
 ): Promise<void> {
-  await tx.query(`UPDATE sessions SET branch = $2 WHERE id = $1`, [sessionId, branch]);
+  await tx.query(`UPDATE sessions SET branch = $2 WHERE id = $1`, [
+    sessionId,
+    branch,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -1292,13 +1339,13 @@ export async function updateSessionBranch(
 export async function touchPresence(
   tx: pg.PoolClient,
   sessionId: string,
-  now: Date
+  now: Date,
 ): Promise<void> {
   await tx.query(
     `UPDATE sessions
      SET last_heartbeat_at = $1
      WHERE id = $2`,
-    [now, sessionId]
+    [now, sessionId],
   );
 }
 
@@ -1319,14 +1366,14 @@ export async function expireSessionPresence(
   tx: pg.PoolClient,
   workspaceId: string,
   sessionId: string,
-  asOf: Date
+  asOf: Date,
 ): Promise<void> {
   await tx.query(
     `UPDATE sessions
      SET last_heartbeat_at = $1
      WHERE id = $2
        AND workspace_id = $3`,
-    [asOf, sessionId, workspaceId]
+    [asOf, sessionId, workspaceId],
   );
 }
 
@@ -1342,7 +1389,7 @@ export async function expireSessionPresence(
 export async function touchHeartbeat(
   tx: pg.PoolClient,
   sessionId: string,
-  now: Date
+  now: Date,
 ): Promise<void> {
   // Presence half: bump the session's heartbeat timestamp.
   await touchPresence(tx, sessionId, now);
@@ -1353,7 +1400,7 @@ export async function touchHeartbeat(
      SET expires_at = $1::timestamptz + (ttl_seconds * interval '1 second')
      WHERE session_id = $2
        AND status = 'active'`,
-    [now, sessionId]
+    [now, sessionId],
   );
 }
 
@@ -1374,16 +1421,31 @@ export async function insertWorkItem(
     pathGlobs: string[];
     ttlSeconds: number;
     expiresAt: Date;
-  }
+  },
 ): Promise<string> {
-  const { workspaceId, sessionId, repo, intentText, pathGlobs, ttlSeconds, expiresAt } =
-    params;
+  const {
+    workspaceId,
+    sessionId,
+    repo,
+    intentText,
+    pathGlobs,
+    ttlSeconds,
+    expiresAt,
+  } = params;
   const { rows } = await tx.query<{ id: string }>(
     `INSERT INTO work_items
        (workspace_id, session_id, repo, intent_text, path_globs, ttl_seconds, expires_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING id`,
-    [workspaceId, sessionId, repo, intentText, pathGlobs, ttlSeconds, expiresAt]
+    [
+      workspaceId,
+      sessionId,
+      repo,
+      intentText,
+      pathGlobs,
+      ttlSeconds,
+      expiresAt,
+    ],
   );
   return rows[0]!.id;
 }
@@ -1417,7 +1479,7 @@ export async function listActiveClaims(
   repo: string,
   now: Date,
   staleAfterSeconds: number,
-  options: { excludeSessionId: string }
+  options: { excludeSessionId: string },
 ): Promise<ClaimT[]> {
   const { excludeSessionId } = options;
 
@@ -1444,7 +1506,7 @@ export async function listActiveClaims(
        AND  wi.expires_at > $3::timestamptz
        AND  wi.session_id <> $4
        AND  s.last_heartbeat_at > $3::timestamptz - ($5 * interval '1 second')`,
-    [workspaceId, repo, now, excludeSessionId, staleAfterSeconds]
+    [workspaceId, repo, now, excludeSessionId, staleAfterSeconds],
   );
 
   return rows.map((r) => ({
@@ -1471,7 +1533,7 @@ export async function listActiveClaims(
 export async function listSessionActiveGlobs(
   db: Queryable,
   sessionId: string,
-  now: Date
+  now: Date,
 ): Promise<string[]> {
   const { rows } = await db.query<{ path_globs: string[] }>(
     `SELECT wi.path_globs
@@ -1479,7 +1541,7 @@ export async function listSessionActiveGlobs(
      WHERE  wi.session_id = $1
        AND  wi.status     = 'active'
        AND  wi.expires_at > $2::timestamptz`,
-    [sessionId, now]
+    [sessionId, now],
   );
   return rows.flatMap((r) => r.path_globs);
 }
@@ -1496,7 +1558,7 @@ export async function listSessionActiveGlobs(
 export async function listSessionClaims(
   db: Queryable,
   sessionId: string,
-  now: Date
+  now: Date,
 ): Promise<ClaimT[]> {
   const { rows } = await db.query<{
     work_item_id: string;
@@ -1518,7 +1580,7 @@ export async function listSessionClaims(
      WHERE  wi.session_id = $1
        AND  wi.status     = 'active'
        AND  wi.expires_at > $2::timestamptz`,
-    [sessionId, now]
+    [sessionId, now],
   );
 
   return rows.map((r) => ({
@@ -1539,7 +1601,7 @@ export async function releaseWorkItem(
   tx: pg.PoolClient,
   sessionId: string,
   workItemId: string,
-  now: Date
+  now: Date,
 ): Promise<number> {
   const result = await tx.query(
     `UPDATE work_items
@@ -1548,7 +1610,7 @@ export async function releaseWorkItem(
      WHERE  id          = $2
        AND  session_id  = $3
        AND  status      = 'active'`,
-    [now, workItemId, sessionId]
+    [now, workItemId, sessionId],
   );
   return result.rowCount ?? 0;
 }
@@ -1578,7 +1640,7 @@ export async function insertAnnouncement(
     // collective "to the operators" message.
     targetAccountId?: string | null;
     targetLabel?: string | null;
-  }
+  },
 ): Promise<number> {
   const { workspaceId, repo, fromSessionId, targetAgentName, body } = params;
   const toAdmin = params.toAdmin ?? false;
@@ -1596,7 +1658,7 @@ export async function insertAnnouncement(
       toAdmin,
       params.targetAccountId ?? null,
       params.targetLabel ?? null,
-    ]
+    ],
   );
   // BIGINT identity comes back as string from pg driver; coerce to number.
   return Number(rows[0]!.id);
@@ -1615,7 +1677,7 @@ export async function insertAdminAnnouncement(
     targetAgentName: string | null;
     body: string;
     fromLabel: string;
-  }
+  },
 ): Promise<number> {
   const { workspaceId, repo, targetAgentName, body, fromLabel } = params;
   const { rows } = await tx.query<{ id: string }>(
@@ -1623,7 +1685,7 @@ export async function insertAdminAnnouncement(
        (workspace_id, repo, from_session_id, target_agent_name, body, from_admin, from_label)
      VALUES ($1, $2, NULL, $3, $4, true, $5)
      RETURNING id`,
-    [workspaceId, repo, targetAgentName, body, fromLabel]
+    [workspaceId, repo, targetAgentName, body, fromLabel],
   );
   return Number(rows[0]!.id);
 }
@@ -1637,7 +1699,7 @@ export async function insertAdminAnnouncement(
 export async function findAgentRepoForDelivery(
   db: Queryable,
   workspaceId: string,
-  agentName: string
+  agentName: string,
 ): Promise<string | null> {
   const { rows } = await db.query<{ repo: string }>(
     `SELECT s.repo
@@ -1647,7 +1709,7 @@ export async function findAgentRepoForDelivery(
        AND  a.name      = $2
      ORDER BY s.last_heartbeat_at DESC
      LIMIT 1`,
-    [workspaceId, agentName]
+    [workspaceId, agentName],
   );
   return rows[0]?.repo ?? null;
 }
@@ -1659,11 +1721,11 @@ export async function findAgentRepoForDelivery(
  */
 export async function listWorkspaceRepos(
   db: Queryable,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<string[]> {
   const { rows } = await db.query<{ repo: string }>(
     `SELECT DISTINCT repo FROM sessions WHERE workspace_id = $1 ORDER BY repo`,
-    [workspaceId]
+    [workspaceId],
   );
   return rows.map((r) => r.repo);
 }
@@ -1693,7 +1755,7 @@ export async function listWorkspaceRepos(
  */
 export async function fetchPendingAnnouncements(
   tx: pg.PoolClient,
-  session: SessionWithAgent
+  session: SessionWithAgent,
 ): Promise<AnnouncementT[]> {
   // LEFT JOIN (not JOIN) so admin-sent rows — which have a NULL from_session_id
   // and therefore no session/agent to join — are still returned. Their sender is
@@ -1735,7 +1797,7 @@ export async function fetchPendingAnnouncements(
            )
      ORDER BY ann.id
      LIMIT ${DELIVERY_BATCH_LIMIT}`,
-    [session.workspaceId, session.repo, session.agentName, session.id]
+    [session.workspaceId, session.repo, session.agentName, session.id],
   );
 
   return rows.map((r) => ({
@@ -1756,7 +1818,7 @@ export async function fetchPendingAnnouncements(
 export async function recordAnnouncementDeliveries(
   tx: pg.PoolClient,
   sessionId: string,
-  announcementIds: number[]
+  announcementIds: number[],
 ): Promise<void> {
   if (announcementIds.length === 0) return;
 
@@ -1770,7 +1832,7 @@ export async function recordAnnouncementDeliveries(
     `INSERT INTO announcement_deliveries (session_id, announcement_id)
      VALUES ${valuePlaceholders}
      ON CONFLICT DO NOTHING`,
-    [sessionId, ...announcementIds]
+    [sessionId, ...announcementIds],
   );
 }
 
@@ -1823,7 +1885,7 @@ export async function replaceChangeRecords(
       message: string | null;
       paths: string[];
     }>;
-  }
+  },
 ): Promise<void> {
   const { agentId, agentName, workspaceId, repo, branch, entries } = params;
 
@@ -1831,7 +1893,7 @@ export async function replaceChangeRecords(
   // them).
   await tx.query(
     `DELETE FROM change_records WHERE agent_id = $1 AND kind = 'uncommitted'`,
-    [agentId]
+    [agentId],
   );
 
   const committed = entries.filter((e) => e.kind === "committed");
@@ -1852,7 +1914,7 @@ export async function replaceChangeRecords(
      WHERE agent_id = $1
        AND kind = 'committed'
        AND NOT (commit_sha = ANY($2::text[]))`,
-    [agentId, committedShas]
+    [agentId, committedShas],
   );
 
   // Committed: dedup per COMMIT across reporters and branches (migration 009's
@@ -1868,7 +1930,16 @@ export async function replaceChangeRecords(
        VALUES ($1, $2, $3, $4, $5, 'committed', $6, $7, $8)
        ON CONFLICT (workspace_id, repo, commit_sha) WHERE kind = 'committed'
        DO UPDATE SET updated_at = now()`,
-      [workspaceId, repo, agentId, agentName, branch, e.commitSha, e.message, e.paths]
+      [
+        workspaceId,
+        repo,
+        agentId,
+        agentName,
+        branch,
+        e.commitSha,
+        e.message,
+        e.paths,
+      ],
     );
   }
 
@@ -1891,7 +1962,7 @@ export async function replaceChangeRecords(
       `INSERT INTO change_records
          (workspace_id, repo, agent_id, agent_name, branch, kind, commit_sha, message, path_globs)
        VALUES ${valuePlaceholders}`,
-      [workspaceId, repo, agentId, agentName, branch, ...entryParams]
+      [workspaceId, repo, agentId, agentName, branch, ...entryParams],
     );
   }
 }
@@ -1940,7 +2011,7 @@ export async function listOtherChangeRecords(
   excludeAgentId: string,
   now: Date,
   staleAfterSeconds: number,
-  graceSeconds: number
+  graceSeconds: number,
 ): Promise<ChangeRecordT[]> {
   const { rows } = await db.query<{
     agent_name: string;
@@ -1988,7 +2059,7 @@ export async function listOtherChangeRecords(
             )
      ORDER BY cr.updated_at DESC
      LIMIT 200`,
-    [workspaceId, repo, excludeAgentId, now, staleAfterSeconds, graceSeconds]
+    [workspaceId, repo, excludeAgentId, now, staleAfterSeconds, graceSeconds],
   );
 
   return rows.map((r) => ({
@@ -2094,7 +2165,7 @@ export async function getWorkspaceLandscape(
   db: Queryable,
   workspaceId: string,
   now: Date,
-  staleAfterSeconds: number
+  staleAfterSeconds: number,
 ): Promise<WorkspaceLandscapeRows> {
   // Agents joined to their most-recent session. LEFT JOIN LATERAL so an agent
   // with no session still appears, with NULL repo/branch/last_heartbeat_at.
@@ -2132,7 +2203,7 @@ export async function getWorkspaceLandscape(
        LIMIT  500
      ) recent
      ORDER BY name`,
-    [workspaceId]
+    [workspaceId],
   );
 
   // Active tasks: status='active' AND owner session LIVE (mirrors listActiveClaims'
@@ -2141,8 +2212,13 @@ export async function getWorkspaceLandscape(
   // listActiveClaims does — a live owner's claim shows as active regardless of TTL,
   // since a live session renews well inside the staleness window anyway.
   const activeResult = await db.query<{
-    agent_name: string; program: string; model: string | null; repo: string;
-    intent_text: string; path_globs: string[]; created_at: Date;
+    agent_name: string;
+    program: string;
+    model: string | null;
+    repo: string;
+    intent_text: string;
+    path_globs: string[];
+    created_at: Date;
   }>(
     `SELECT a.name AS agent_name, a.program, a.model, wi.repo,
             wi.intent_text, wi.path_globs, wi.created_at
@@ -2153,15 +2229,21 @@ export async function getWorkspaceLandscape(
        AND  wi.status = 'active'
        AND  s.last_heartbeat_at > $2::timestamptz - ($3 * interval '1 second')
      ORDER BY wi.created_at DESC`,
-    [workspaceId, now, staleAfterSeconds]
+    [workspaceId, now, staleAfterSeconds],
   );
 
   // History tasks: released (done) OR active-but-owner-stale (dropped).
   // endedAt = released_at for done, owner's last heartbeat for dropped.
   const historyResult = await db.query<{
-    agent_name: string; program: string; model: string | null; repo: string;
-    intent_text: string; path_globs: string[]; created_at: Date;
-    released_at: Date | null; owner_last_heartbeat_at: Date;
+    agent_name: string;
+    program: string;
+    model: string | null;
+    repo: string;
+    intent_text: string;
+    path_globs: string[];
+    created_at: Date;
+    released_at: Date | null;
+    owner_last_heartbeat_at: Date;
   }>(
     `SELECT a.name AS agent_name, a.program, a.model, wi.repo,
             wi.intent_text, wi.path_globs, wi.created_at,
@@ -2175,19 +2257,30 @@ export async function getWorkspaceLandscape(
                   AND s.last_heartbeat_at <= $2::timestamptz - ($3 * interval '1 second')) )
      ORDER BY COALESCE(wi.released_at, s.last_heartbeat_at) DESC
      LIMIT 100`,
-    [workspaceId, now, staleAfterSeconds]
+    [workspaceId, now, staleAfterSeconds],
   );
 
   const tasks = [
     ...activeResult.rows.map((r) => ({
-      agentName: r.agent_name, program: r.program, model: r.model, repo: r.repo,
-      intent: r.intent_text, pathGlobs: r.path_globs,
-      status: "active" as const, createdAt: r.created_at, endedAt: null,
+      agentName: r.agent_name,
+      program: r.program,
+      model: r.model,
+      repo: r.repo,
+      intent: r.intent_text,
+      pathGlobs: r.path_globs,
+      status: "active" as const,
+      createdAt: r.created_at,
+      endedAt: null,
     })),
     ...historyResult.rows.map((r) => ({
-      agentName: r.agent_name, program: r.program, model: r.model, repo: r.repo,
-      intent: r.intent_text, pathGlobs: r.path_globs,
-      status: (r.released_at !== null ? "done" : "dropped") as "done" | "dropped",
+      agentName: r.agent_name,
+      program: r.program,
+      model: r.model,
+      repo: r.repo,
+      intent: r.intent_text,
+      pathGlobs: r.path_globs,
+      status: (r.released_at !== null ? "done" : "dropped") as
+        "done" | "dropped",
       createdAt: r.created_at,
       endedAt: r.released_at ?? r.owner_last_heartbeat_at,
     })),
@@ -2222,7 +2315,7 @@ export async function getWorkspaceLandscape(
      WHERE  ann.workspace_id = $1
      ORDER BY ann.id DESC
      LIMIT ${WORKSPACE_ANNOUNCEMENTS_LIMIT}`,
-    [workspaceId]
+    [workspaceId],
   );
 
   return {
@@ -2260,14 +2353,14 @@ export async function pruneChangeRecords(
   workspaceId: string,
   repo: string,
   now: Date,
-  ttlSeconds: number
+  ttlSeconds: number,
 ): Promise<void> {
   await tx.query(
     `DELETE FROM change_records
      WHERE workspace_id = $1
        AND repo      = $2
        AND updated_at < $3::timestamptz - ($4 * interval '1 second')`,
-    [workspaceId, repo, now, ttlSeconds]
+    [workspaceId, repo, now, ttlSeconds],
   );
 }
 
@@ -2292,14 +2385,14 @@ export async function insertFeedback(
      * validated + length-capped by FeedbackRequest. NULL when the (older)
      * client sent none. */
     context: FeedbackContextT | null;
-  }
+  },
 ): Promise<string> {
   const { workspaceId, accountId, type, body, context } = params;
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO feedback (workspace_id, account_id, type, body, context)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [workspaceId, accountId, type, body, context]
+    [workspaceId, accountId, type, body, context],
   );
   return rows[0]!.id;
 }
@@ -2332,7 +2425,7 @@ async function dailyTrend(
   table: string,
   tsColumn: string,
   since: Date,
-  extraWhere = ""
+  extraWhere = "",
 ): Promise<TrendPoint[]> {
   const { rows } = await db.query<{ date: string; count: string }>(
     `SELECT to_char(d, 'YYYY-MM-DD') AS date, COALESCE(b.count, 0) AS count
@@ -2346,7 +2439,7 @@ async function dailyTrend(
           GROUP BY 1
        ) AS b ON b.day = d
       ORDER BY d`,
-    [since]
+    [since],
   );
   return rows.map((r) => ({ date: r.date, count: Number(r.count) }));
 }
@@ -2368,7 +2461,7 @@ async function scalarCount(db: Queryable, sql: string): Promise<number> {
  */
 export async function getShepherdAnalytics(
   db: Queryable,
-  opts: { liveWindowSeconds: number; trendDays: number }
+  opts: { liveWindowSeconds: number; trendDays: number },
 ): Promise<ShepherdAnalytics> {
   const { liveWindowSeconds, trendDays } = opts;
   const since = new Date(Date.now() - trendDays * 24 * 60 * 60 * 1000);
@@ -2392,17 +2485,29 @@ export async function getShepherdAnalytics(
     scalarCount(db, `SELECT count(*) AS count FROM workspaces`),
     scalarCount(db, `SELECT count(*) AS count FROM memberships`),
     scalarCount(db, `SELECT count(*) AS count FROM agents`),
-    scalarCount(db, `SELECT count(*) AS count FROM sessions WHERE last_heartbeat_at > ${live}`),
-    scalarCount(db, `SELECT count(*) AS count FROM api_tokens WHERE revoked_at IS NULL`),
-    scalarCount(db, `SELECT count(*) AS count FROM api_tokens WHERE revoked_at IS NOT NULL`),
+    scalarCount(
+      db,
+      `SELECT count(*) AS count FROM sessions WHERE last_heartbeat_at > ${live}`,
+    ),
+    scalarCount(
+      db,
+      `SELECT count(*) AS count FROM api_tokens WHERE revoked_at IS NULL`,
+    ),
+    scalarCount(
+      db,
+      `SELECT count(*) AS count FROM api_tokens WHERE revoked_at IS NOT NULL`,
+    ),
     scalarCount(
       db,
       `SELECT count(*) AS count FROM invites
-        WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`
+        WHERE revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`,
     ),
     scalarCount(db, `SELECT count(*) AS count FROM feedback`),
     scalarCount(db, `SELECT count(*) AS count FROM change_records`),
-    scalarCount(db, `SELECT count(*) AS count FROM work_items WHERE status = 'active'`),
+    scalarCount(
+      db,
+      `SELECT count(*) AS count FROM work_items WHERE status = 'active'`,
+    ),
   ]);
 
   // Batch 2: engagement rollups + the feedback and workspace leaderboards.
@@ -2416,21 +2521,21 @@ export async function getShepherdAnalytics(
     scalarCount(
       db,
       `SELECT count(DISTINCT workspace_id) AS count FROM change_records
-        WHERE updated_at > now() - interval '7 days'`
+        WHERE updated_at > now() - interval '7 days'`,
     ),
     scalarCount(
       db,
       `SELECT count(DISTINCT workspace_id) AS count FROM change_records
-        WHERE updated_at > now() - interval '30 days'`
+        WHERE updated_at > now() - interval '30 days'`,
     ),
     scalarCount(
       db,
       `SELECT COALESCE(max(c), 0) AS count FROM (
          SELECT count(*) AS c FROM memberships GROUP BY workspace_id
-       ) AS m`
+       ) AS m`,
     ),
     db.query<{ type: string; count: string }>(
-      `SELECT type, count(*) AS count FROM feedback GROUP BY type ORDER BY count DESC`
+      `SELECT type, count(*) AS count FROM feedback GROUP BY type ORDER BY count DESC`,
     ),
     db.query<{
       name: string;
@@ -2446,7 +2551,7 @@ export async function getShepherdAnalytics(
                  WHERE s.workspace_id = w.id AND s.last_heartbeat_at > ${live}) AS live_sessions
          FROM workspaces w
         ORDER BY members DESC, w.name ASC
-        LIMIT 10`
+        LIMIT 10`,
     ),
   ]);
 
@@ -2458,7 +2563,8 @@ export async function getShepherdAnalytics(
     dailyTrend(db, "change_records", "updated_at", since, "kind = 'committed'"),
   ]);
 
-  const avgMembersPerWorkspace = workspaces === 0 ? 0 : memberships / workspaces;
+  const avgMembersPerWorkspace =
+    workspaces === 0 ? 0 : memberships / workspaces;
 
   return {
     generatedAt: new Date().toISOString(),

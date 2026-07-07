@@ -37,7 +37,9 @@ import {
 import { withTransaction } from "../db.js";
 
 /** True when the pg error is a unique-constraint violation (SQLSTATE 23505). */
-function isUniqueViolation(e: unknown): e is { code: string; constraint?: string } {
+function isUniqueViolation(
+  e: unknown,
+): e is { code: string; constraint?: string } {
   return (
     typeof e === "object" &&
     e !== null &&
@@ -104,7 +106,7 @@ function lowestFreeOrdinal(handle: string, reservedNames: string[]): number {
 
 export async function join(
   input: JoinRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<JoinResponseT> {
   const { pool, config } = getContext();
 
@@ -152,12 +154,12 @@ export async function join(
     if (ws === null || input.workspace !== ws.slug) {
       if (tenant.accountId === undefined) {
         throw new ValidationError(
-          `Workspace '${input.workspace}' is not allowed. Expected '${ws?.slug ?? "<unknown>"}'.`
+          `Workspace '${input.workspace}' is not allowed. Expected '${ws?.slug ?? "<unknown>"}'.`,
         );
       }
       throw new AuthError(
         403,
-        `Workspace '${input.workspace}' does not match this credential's workspace.`
+        `Workspace '${input.workspace}' does not match this credential's workspace.`,
       );
     }
   }
@@ -206,8 +208,9 @@ export async function join(
                 now,
                 config.STALE_AFTER_SECONDS,
                 config.CHANGE_RECORD_TTL_SECONDS,
-                config.UNCOMMITTED_GRACE_SECONDS ?? DEFAULT_UNCOMMITTED_GRACE_SECONDS
-              )
+                config.UNCOMMITTED_GRACE_SECONDS ??
+                  DEFAULT_UNCOMMITTED_GRACE_SECONDS,
+              ),
             )}`;
 
       // Reclaim a dead-but-undeleted row at this name, if one exists. A still-
@@ -257,7 +260,7 @@ export async function join(
         if (isUniqueViolation(e)) {
           await tx.query("ROLLBACK TO SAVEPOINT join_create");
           throw new HubError(
-            "Could not allocate a unique agent name after retries"
+            "Could not allocate a unique agent name after retries",
           );
         }
         throw e;

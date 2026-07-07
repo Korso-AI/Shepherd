@@ -59,7 +59,10 @@ export function defaultInboxDir(): string {
 export function inboxFilePath(dir: string, cwd: string): string {
   let normalized = resolve(cwd);
   if (process.platform === "win32") normalized = normalized.toLowerCase();
-  const hash = createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+  const hash = createHash("sha256")
+    .update(normalized)
+    .digest("hex")
+    .slice(0, 16);
   return join(dir, `${hash}.jsonl`);
 }
 
@@ -67,11 +70,15 @@ export function inboxFilePath(dir: string, cwd: string): string {
  * Append announcements to the inbox as JSON lines. Creates the directory if
  * needed. No-op for an empty list. Fail-open: any error is swallowed.
  */
-export function appendAnnouncements(filePath: string, announcements: AnnouncementT[]): void {
+export function appendAnnouncements(
+  filePath: string,
+  announcements: AnnouncementT[],
+): void {
   if (!announcements || announcements.length === 0) return;
   try {
     mkdirSync(dirname(filePath), { recursive: true });
-    const payload = announcements.map((a) => JSON.stringify(a)).join("\n") + "\n";
+    const payload =
+      announcements.map((a) => JSON.stringify(a)).join("\n") + "\n";
     appendFileSync(filePath, payload, "utf8");
   } catch {
     // Fail-open: a missed inbox write is no worse than the old no-delivery path.
@@ -163,7 +170,9 @@ export function indentContinuation(text: string): string {
  * tool-path "Messages for you" formatting, with a header that flags it as an
  * out-of-band Shepherd delivery.
  */
-export function formatInboxAnnouncements(announcements: AnnouncementT[]): string {
+export function formatInboxAnnouncements(
+  announcements: AnnouncementT[],
+): string {
   if (!announcements || announcements.length === 0) return "";
   const count = announcements.length;
   const lines = [
@@ -172,8 +181,12 @@ export function formatInboxAnnouncements(announcements: AnnouncementT[]): string
   for (const a of announcements) {
     // Names are teammate-controlled free-text too (see oneLine's note); collapse
     // newlines so they can't forge structure in this injected context block.
-    const target = a.targetAgentName ? ` → ${oneLine(a.targetAgentName)}` : " (broadcast)";
-    lines.push(`  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`);
+    const target = a.targetAgentName
+      ? ` → ${oneLine(a.targetAgentName)}`
+      : " (broadcast)";
+    lines.push(
+      `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+    );
   }
   lines.push(REPLY_ROUTING_HINT);
   return lines.join("\n");
@@ -244,7 +257,7 @@ export function buildHookOutput(
   rawStdin: string,
   inboxDir: string | undefined,
   drain: (file: string) => AnnouncementT[] = drainInbox,
-  nudge: (cwd: string, toolName?: string) => string = buildLinkNudge
+  nudge: (cwd: string, toolName?: string) => string = buildLinkNudge,
 ): string {
   let input: HookInput;
   try {
@@ -261,8 +274,11 @@ export function buildHookOutput(
   // converges on the same inbox file the MCP server (launched by Cursor with
   // the workspace as cwd) writes to.
   const isCursor =
-    typeof input.cursor_version === "string" || Array.isArray(input.workspace_roots);
-  const firstRoot = Array.isArray(input.workspace_roots) ? input.workspace_roots[0] : undefined;
+    typeof input.cursor_version === "string" ||
+    Array.isArray(input.workspace_roots);
+  const firstRoot = Array.isArray(input.workspace_roots)
+    ? input.workspace_roots[0]
+    : undefined;
   const cwd =
     typeof input.cwd === "string" && input.cwd.length > 0
       ? input.cwd
@@ -275,7 +291,7 @@ export function buildHookOutput(
 
   const nudgeText = nudge(
     cwd,
-    typeof input.tool_name === "string" ? input.tool_name : undefined
+    typeof input.tool_name === "string" ? input.tool_name : undefined,
   );
   if (nudgeText) parts.push(nudgeText);
 

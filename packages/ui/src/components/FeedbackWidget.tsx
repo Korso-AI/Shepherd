@@ -53,7 +53,8 @@ export function FeedbackWidget({ workspaceId }: FeedbackWidgetProps) {
 
   const canSubmit = body.trim() !== "" && !busy;
   const isMac =
-    typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.platform);
 
   useEffect(() => {
     if (open) textareaRef.current?.focus();
@@ -104,7 +105,8 @@ export function FeedbackWidget({ workspaceId }: FeedbackWidgetProps) {
     e.preventDefault();
     const next = (index + delta + TYPES.length) % TYPES.length;
     setType(TYPES[next]!.id);
-    const radios = rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    const radios =
+      rootRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
     radios?.[next]?.focus();
   }
 
@@ -194,7 +196,11 @@ export function FeedbackWidget({ workspaceId }: FeedbackWidgetProps) {
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canSubmit) {
+                  if (
+                    e.key === "Enter" &&
+                    (e.ctrlKey || e.metaKey) &&
+                    canSubmit
+                  ) {
                     void submit();
                   }
                 }}
@@ -212,7 +218,11 @@ export function FeedbackWidget({ workspaceId }: FeedbackWidgetProps) {
                 <span className="shepherd-feedback__hint" aria-hidden="true">
                   {isMac ? "⌘↵" : "Ctrl↵"} to send
                 </span>
-                <button type="button" onClick={() => void submit()} disabled={!canSubmit}>
+                <button
+                  type="button"
+                  onClick={() => void submit()}
+                  disabled={!canSubmit}
+                >
                   Submit
                 </button>
               </div>

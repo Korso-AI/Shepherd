@@ -38,7 +38,9 @@ import { buildLandscape } from "./landscape.js";
  * the same claim, so they must canonicalize identically.
  */
 function normalizeGlobs(globs: string[]): string[] {
-  return [...new Set(globs.map((g) => g.trim()).filter((g) => g.length > 0))].sort();
+  return [
+    ...new Set(globs.map((g) => g.trim()).filter((g) => g.length > 0)),
+  ].sort();
 }
 
 /** Whether two already-normalized glob lists are equal element-for-element. */
@@ -48,7 +50,7 @@ function globsEqual(a: string[], b: string[]): boolean {
 
 export async function work(
   input: WorkRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<WorkResponseT> {
   const { pool, config } = getContext();
 
@@ -68,10 +70,10 @@ export async function work(
     // released automatically at COMMIT/ROLLBACK — no explicit unlock needed.
     // The two-arg form keys on (workspace, repo) independently, widening the
     // keyspace to 2^64 so distinct repos cannot collide on a single hashtext.
-    await tx.query(
-      "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
-      [session.workspaceId, session.repo]
-    );
+    await tx.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+      session.workspaceId,
+      session.repo,
+    ]);
 
     const now = new Date();
 
@@ -103,7 +105,7 @@ export async function work(
       session.workspaceId,
       session.repo,
       now,
-      config.CHANGE_RECORD_TTL_SECONDS
+      config.CHANGE_RECORD_TTL_SECONDS,
     );
 
     // 2. Idempotency: a repeated `work` for the SAME (intent + normalized
@@ -118,7 +120,9 @@ export async function work(
     const ownClaims = await listSessionClaims(tx, session.id, now);
     const wantGlobs = normalizeGlobs(input.pathGlobs);
     const existing = ownClaims.find(
-      (c) => c.intent === input.intent && globsEqual(normalizeGlobs(c.pathGlobs), wantGlobs)
+      (c) =>
+        c.intent === input.intent &&
+        globsEqual(normalizeGlobs(c.pathGlobs), wantGlobs),
     );
 
     let workItemId: string;
@@ -143,7 +147,13 @@ export async function work(
     // 4. Build the landscape on the SAME tx: conflicts are computed against the
     //    globs just requested. listActiveClaims excludes this session, so the
     //    row we just inserted is not reported back to its owner.
-    const landscape = await buildLandscape(tx, session, now, input.pathGlobs, config);
+    const landscape = await buildLandscape(
+      tx,
+      session,
+      now,
+      input.pathGlobs,
+      config,
+    );
 
     return { workItemId, landscape };
   });

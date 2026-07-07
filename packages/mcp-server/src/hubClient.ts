@@ -59,60 +59,60 @@ export function createHubClient({
     path: string,
     body?: unknown,
   ): Promise<unknown> {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-      const headers: Record<string, string> = {
-        "Authorization": `Bearer ${token}`,
-      };
-      if (method === "POST") {
-        headers["Content-Type"] = "application/json";
-      }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+    };
+    if (method === "POST") {
+      headers["Content-Type"] = "application/json";
+    }
 
-      let response: Response;
+    let response: Response;
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers,
+        ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      const message =
+        err instanceof DOMException && err.name === "AbortError"
+          ? `Hub request timed out after ${timeoutMs}ms (${path})`
+          : `Hub unreachable at ${baseUrl}${path}: ${String(err)}`;
+      throw new HubUnreachable(message, err);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!response.ok) {
+      // Surface the hub's own error message (e.g. "No live agent named …")
+      // so the calling agent can self-correct instead of seeing a bare status
+      // code. A non-JSON or bodyless response degrades to just the status.
+      let detail = "";
       try {
-        response = await fetch(`${baseUrl}${path}`, {
-          method,
-          headers,
-          ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
-          signal: controller.signal,
-        });
-      } catch (err) {
-        clearTimeout(timer);
-        const message =
-          err instanceof DOMException && err.name === "AbortError"
-            ? `Hub request timed out after ${timeoutMs}ms (${path})`
-            : `Hub unreachable at ${baseUrl}${path}: ${String(err)}`;
-        throw new HubUnreachable(message, err);
-      } finally {
-        clearTimeout(timer);
-      }
-
-      if (!response.ok) {
-        // Surface the hub's own error message (e.g. "No live agent named …")
-        // so the calling agent can self-correct instead of seeing a bare status
-        // code. A non-JSON or bodyless response degrades to just the status.
-        let detail = "";
-        try {
-          const data = (await response.json()) as unknown;
-          if (
-            data &&
-            typeof data === "object" &&
-            "error" in data &&
-            typeof (data as { error: unknown }).error === "string"
-          ) {
-            detail = `: ${(data as { error: string }).error}`;
-          }
-        } catch {
-          // Ignore — the body wasn't JSON; the status code is still informative.
+        const data = (await response.json()) as unknown;
+        if (
+          data &&
+          typeof data === "object" &&
+          "error" in data &&
+          typeof (data as { error: unknown }).error === "string"
+        ) {
+          detail = `: ${(data as { error: string }).error}`;
         }
-        throw new HubRequestError(
-          response.status,
-          `Hub returned HTTP ${response.status} for ${path}${detail}`
-        );
+      } catch {
+        // Ignore — the body wasn't JSON; the status code is still informative.
       }
+      throw new HubRequestError(
+        response.status,
+        `Hub returned HTTP ${response.status} for ${path}${detail}`,
+      );
+    }
 
-      return response.json() as Promise<unknown>;
+    return response.json() as Promise<unknown>;
   }
 
   return {

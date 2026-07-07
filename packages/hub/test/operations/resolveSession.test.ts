@@ -42,125 +42,183 @@ import { UnknownSessionError } from "../../src/errors.js";
 
 const UNKNOWN_ID = "00000000-0000-0000-0000-000000000000";
 
-describe.skipIf(!dbAvailable)("resolveSession (session scope, Task 2.1)", () => {
-  let pool: pg.Pool;
+describe.skipIf(!dbAvailable)(
+  "resolveSession (session scope, Task 2.1)",
+  () => {
+    let pool: pg.Pool;
 
-  beforeAll(async () => {
-    pool = createTestPool();
-    await runTestMigrations(pool);
-  });
-
-  afterEach(async () => {
-    await truncateAll(pool);
-    await truncateTenancy(pool);
-  });
-
-  afterAll(async () => {
-    await pool.end();
-  });
-
-  /** Mint an agent + session in `workspaceId`; returns the session id. */
-  async function mintSession(workspaceId: string, human: string): Promise<string> {
-    return withTransaction(pool, async (tx) => {
-      const agent = await createAgent(tx, {
-        workspaceId,
-        name: `agent-${human}`,
-        human,
-        program: "claude",
-        model: null,
-      });
-      const session = await createSession(tx, {
-        workspaceId,
-        agentId: agent.id,
-        repo: "org/repo",
-        branch: "main",
-      });
-      return session.id;
+    beforeAll(async () => {
+      pool = createTestPool();
+      await runTestMigrations(pool);
     });
-  }
 
-  /** Run resolveSession inside a transaction (its real call context). */
-  async function resolve(
-    tenant: TenantContext,
-    sessionId: string
-  ): Promise<Awaited<ReturnType<typeof resolveSession>>> {
-    return withTransaction(pool, (tx) => resolveSession(tx, tenant, sessionId));
-  }
+    afterEach(async () => {
+      await truncateAll(pool);
+      await truncateTenancy(pool);
+    });
 
-  const accountTenant = (accountId: string): TenantContext => ({
-    workspaceId: NO_ROUTE_WORKSPACE,
-    accountId,
-    via: "agent",
-  });
+    afterAll(async () => {
+      await pool.end();
+    });
 
-  it("account-scoped MEMBER resolves a session in its workspace", async () => {
-    const w = await createWorkspace(pool, { slug: "w", name: "W", createdBy: "acct-a" });
-    await addMembership(pool, { workspaceId: w.id, accountId: "acct-a", role: "member" });
-    const sessionId = await mintSession(w.id, "alice");
+    /** Mint an agent + session in `workspaceId`; returns the session id. */
+    async function mintSession(
+      workspaceId: string,
+      human: string,
+    ): Promise<string> {
+      return withTransaction(pool, async (tx) => {
+        const agent = await createAgent(tx, {
+          workspaceId,
+          name: `agent-${human}`,
+          human,
+          program: "claude",
+          model: null,
+        });
+        const session = await createSession(tx, {
+          workspaceId,
+          agentId: agent.id,
+          repo: "org/repo",
+          branch: "main",
+        });
+        return session.id;
+      });
+    }
 
-    const session = await resolve(accountTenant("acct-a"), sessionId);
-    expect(session.id).toBe(sessionId);
-    expect(session.workspaceId).toBe(w.id);
-    expect(session.agentName).toBe("agent-alice");
-  });
+    /** Run resolveSession inside a transaction (its real call context). */
+    async function resolve(
+      tenant: TenantContext,
+      sessionId: string,
+    ): Promise<Awaited<ReturnType<typeof resolveSession>>> {
+      return withTransaction(pool, (tx) =>
+        resolveSession(tx, tenant, sessionId),
+      );
+    }
 
-  it("account-scoped NON-member → 404, SAME error as unknown (no existence disclosure)", async () => {
-    // acct-a is a member of W but NOT of X; the session lives in X.
-    const w = await createWorkspace(pool, { slug: "w", name: "W", createdBy: "acct-a" });
-    await addMembership(pool, { workspaceId: w.id, accountId: "acct-a", role: "member" });
-    const x = await createWorkspace(pool, { slug: "x", name: "X", createdBy: "acct-b" });
-    await addMembership(pool, { workspaceId: x.id, accountId: "acct-b", role: "admin" });
-    const sessionIdX = await mintSession(x.id, "bob");
+    const accountTenant = (accountId: string): TenantContext => ({
+      workspaceId: NO_ROUTE_WORKSPACE,
+      accountId,
+      via: "agent",
+    });
 
-    // The non-member attempt must throw UnknownSessionError...
-    await expect(resolve(accountTenant("acct-a"), sessionIdX)).rejects.toBeInstanceOf(
-      UnknownSessionError
-    );
+    it("account-scoped MEMBER resolves a session in its workspace", async () => {
+      const w = await createWorkspace(pool, {
+        slug: "w",
+        name: "W",
+        createdBy: "acct-a",
+      });
+      await addMembership(pool, {
+        workspaceId: w.id,
+        accountId: "acct-a",
+        role: "member",
+      });
+      const sessionId = await mintSession(w.id, "alice");
 
-    // ...and it must be INDISTINGUISHABLE from an unknown session id: same error
-    // type AND same message (which names only the supplied id, never the ws it
-    // lives in). This is the no-existence-disclosure property.
-    const nonMemberErr = await resolve(accountTenant("acct-a"), sessionIdX).catch((e) => e);
-    const unknownErr = await resolve(accountTenant("acct-a"), UNKNOWN_ID).catch((e) => e);
-    expect(nonMemberErr).toBeInstanceOf(UnknownSessionError);
-    expect(unknownErr).toBeInstanceOf(UnknownSessionError);
-    expect(nonMemberErr.message).toBe(`Session not found: ${sessionIdX}`);
-    expect(unknownErr.message).toBe(`Session not found: ${UNKNOWN_ID}`);
-  });
+      const session = await resolve(accountTenant("acct-a"), sessionId);
+      expect(session.id).toBe(sessionId);
+      expect(session.workspaceId).toBe(w.id);
+      expect(session.agentName).toBe("agent-alice");
+    });
 
-  it("legacy/self-host (concrete workspaceId): a session in ANOTHER workspace → 404", async () => {
-    // Credential resolved to workspace W; the session lives in X. getSession's
-    // workspace_id predicate is the existing cross-tenant gate — unchanged.
-    const w = await createWorkspace(pool, { slug: "w", name: "W", createdBy: "acct-a" });
-    const x = await createWorkspace(pool, { slug: "x", name: "X", createdBy: "acct-b" });
-    const sessionIdX = await mintSession(x.id, "bob");
+    it("account-scoped NON-member → 404, SAME error as unknown (no existence disclosure)", async () => {
+      // acct-a is a member of W but NOT of X; the session lives in X.
+      const w = await createWorkspace(pool, {
+        slug: "w",
+        name: "W",
+        createdBy: "acct-a",
+      });
+      await addMembership(pool, {
+        workspaceId: w.id,
+        accountId: "acct-a",
+        role: "member",
+      });
+      const x = await createWorkspace(pool, {
+        slug: "x",
+        name: "X",
+        createdBy: "acct-b",
+      });
+      await addMembership(pool, {
+        workspaceId: x.id,
+        accountId: "acct-b",
+        role: "admin",
+      });
+      const sessionIdX = await mintSession(x.id, "bob");
 
-    const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
-    await expect(resolve(teamTenant, sessionIdX)).rejects.toBeInstanceOf(
-      UnknownSessionError
-    );
-  });
+      // The non-member attempt must throw UnknownSessionError...
+      await expect(
+        resolve(accountTenant("acct-a"), sessionIdX),
+      ).rejects.toBeInstanceOf(UnknownSessionError);
 
-  it("legacy/self-host: resolves a session in its OWN workspace", async () => {
-    const w = await createWorkspace(pool, { slug: "w", name: "W", createdBy: "acct-a" });
-    const sessionId = await mintSession(w.id, "alice");
+      // ...and it must be INDISTINGUISHABLE from an unknown session id: same error
+      // type AND same message (which names only the supplied id, never the ws it
+      // lives in). This is the no-existence-disclosure property.
+      const nonMemberErr = await resolve(
+        accountTenant("acct-a"),
+        sessionIdX,
+      ).catch((e) => e);
+      const unknownErr = await resolve(
+        accountTenant("acct-a"),
+        UNKNOWN_ID,
+      ).catch((e) => e);
+      expect(nonMemberErr).toBeInstanceOf(UnknownSessionError);
+      expect(unknownErr).toBeInstanceOf(UnknownSessionError);
+      expect(nonMemberErr.message).toBe(`Session not found: ${sessionIdX}`);
+      expect(unknownErr.message).toBe(`Session not found: ${UNKNOWN_ID}`);
+    });
 
-    const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
-    const session = await resolve(teamTenant, sessionId);
-    expect(session.id).toBe(sessionId);
-    expect(session.workspaceId).toBe(w.id);
-  });
+    it("legacy/self-host (concrete workspaceId): a session in ANOTHER workspace → 404", async () => {
+      // Credential resolved to workspace W; the session lives in X. getSession's
+      // workspace_id predicate is the existing cross-tenant gate — unchanged.
+      const w = await createWorkspace(pool, {
+        slug: "w",
+        name: "W",
+        createdBy: "acct-a",
+      });
+      const x = await createWorkspace(pool, {
+        slug: "x",
+        name: "X",
+        createdBy: "acct-b",
+      });
+      const sessionIdX = await mintSession(x.id, "bob");
 
-  it("unknown session id → 404 for BOTH credential kinds", async () => {
-    const w = await createWorkspace(pool, { slug: "w", name: "W", createdBy: "acct-a" });
-    await addMembership(pool, { workspaceId: w.id, accountId: "acct-a", role: "member" });
+      const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
+      await expect(resolve(teamTenant, sessionIdX)).rejects.toBeInstanceOf(
+        UnknownSessionError,
+      );
+    });
 
-    await expect(resolve(accountTenant("acct-a"), UNKNOWN_ID)).rejects.toBeInstanceOf(
-      UnknownSessionError
-    );
-    const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
-    await expect(resolve(teamTenant, UNKNOWN_ID)).rejects.toBeInstanceOf(
-      UnknownSessionError
-    );
-  });
-});
+    it("legacy/self-host: resolves a session in its OWN workspace", async () => {
+      const w = await createWorkspace(pool, {
+        slug: "w",
+        name: "W",
+        createdBy: "acct-a",
+      });
+      const sessionId = await mintSession(w.id, "alice");
+
+      const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
+      const session = await resolve(teamTenant, sessionId);
+      expect(session.id).toBe(sessionId);
+      expect(session.workspaceId).toBe(w.id);
+    });
+
+    it("unknown session id → 404 for BOTH credential kinds", async () => {
+      const w = await createWorkspace(pool, {
+        slug: "w",
+        name: "W",
+        createdBy: "acct-a",
+      });
+      await addMembership(pool, {
+        workspaceId: w.id,
+        accountId: "acct-a",
+        role: "member",
+      });
+
+      await expect(
+        resolve(accountTenant("acct-a"), UNKNOWN_ID),
+      ).rejects.toBeInstanceOf(UnknownSessionError);
+      const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
+      await expect(resolve(teamTenant, UNKNOWN_ID)).rejects.toBeInstanceOf(
+        UnknownSessionError,
+      );
+    });
+  },
+);

@@ -19,9 +19,9 @@ describe("canonicalizeRepo", () => {
   });
 
   it("is idempotent on an already-canonical bare name", () => {
-    expect(canonicalizeRepo(canonicalizeRepo("git@github.com:Acme/widgets.git"))).toBe(
-      "widgets",
-    );
+    expect(
+      canonicalizeRepo(canonicalizeRepo("git@github.com:Acme/widgets.git")),
+    ).toBe("widgets");
   });
 
   it("converges an origin clone and a no-origin basename clone on one key", () => {

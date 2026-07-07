@@ -57,7 +57,7 @@ const TEST_CONFIG: Config = {
 
 async function seedAgentAndSession(
   pool: pg.Pool,
-  opts: { suffix?: string } = {}
+  opts: { suffix?: string } = {},
 ): Promise<{ agentId: string; agentName: string; sessionId: string }> {
   const suffix = opts.suffix ?? Math.random().toString(36).slice(2, 8);
   return withTransaction(pool, async (tx) => {
@@ -90,7 +90,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     await runTestMigrations(pool);
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      ["test-ws", "test-ws"]
+      ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
     tenant = { workspaceId };
@@ -120,7 +120,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
         pathGlobs: ["src/auth/**"],
         ttlSeconds: 1800,
         expiresAt: secsFromNow(now, 1800),
-      })
+      }),
     );
 
     // Visible before leaving (owner is freshly heart-beaten).
@@ -130,7 +130,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
       "my-repo",
       now,
       STALE_AFTER_SECONDS,
-      { excludeSessionId: peer.sessionId }
+      { excludeSessionId: peer.sessionId },
     );
     expect(before).toHaveLength(1);
 
@@ -144,7 +144,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
       "my-repo",
       now,
       STALE_AFTER_SECONDS,
-      { excludeSessionId: peer.sessionId }
+      { excludeSessionId: peer.sessionId },
     );
     expect(after).toHaveLength(0);
   });
@@ -162,14 +162,14 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
         pathGlobs: ["src/auth/**"],
         ttlSeconds: 1800,
         expiresAt: secsFromNow(now, 1800),
-      })
+      }),
     );
 
     await leave({ sessionId: owner.sessionId }, tenant);
 
     const { rows } = await pool.query<{ status: string }>(
       "SELECT status FROM work_items WHERE id = $1",
-      [workItemId]
+      [workItemId],
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]!.status).toBe("active");
@@ -193,14 +193,14 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
             paths: ["src/auth/**"],
           },
         ],
-      })
+      }),
     );
 
     await leave({ sessionId: owner.sessionId }, tenant);
 
     const { rows } = await pool.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM change_records WHERE agent_id = $1",
-      [owner.agentId]
+      [owner.agentId],
     );
     expect(Number(rows[0]!.count)).toBe(1);
   });
@@ -212,7 +212,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
   // idempotency guarantee for a non-existent session is intentionally dropped.
   it("unknown session → UnknownSessionError (404), NOT a silent no-op (was idempotent pre-2.2)", async () => {
     await expect(
-      leave({ sessionId: "00000000-0000-0000-0000-000000000000" }, tenant)
+      leave({ sessionId: "00000000-0000-0000-0000-000000000000" }, tenant),
     ).rejects.toThrow(UnknownSessionError);
   });
 
@@ -221,8 +221,12 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
   // genuinely non-existent id 404s.
   it("leaving a real session twice still returns ok (the row exists both times)", async () => {
     const owner = await seedAgentAndSession(pool, { suffix: "twice" });
-    expect(await leave({ sessionId: owner.sessionId }, tenant)).toEqual({ ok: true });
-    expect(await leave({ sessionId: owner.sessionId }, tenant)).toEqual({ ok: true });
+    expect(await leave({ sessionId: owner.sessionId }, tenant)).toEqual({
+      ok: true,
+    });
+    expect(await leave({ sessionId: owner.sessionId }, tenant)).toEqual({
+      ok: true,
+    });
   });
 
   // Account-scoped credential: a member of the session's workspace can leave via
@@ -230,7 +234,11 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
   // session's OWN workspace.
   it("account-scoped member: leave expires presence for the session's workspace", async () => {
     await withTransaction(pool, (tx) =>
-      addMembership(tx, { workspaceId, accountId: "acct-member", role: "member" })
+      addMembership(tx, {
+        workspaceId,
+        accountId: "acct-member",
+        role: "member",
+      }),
     );
     const now = new Date();
     const owner = await seedAgentAndSession(pool, { suffix: "acct" });
@@ -243,7 +251,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
         pathGlobs: ["src/auth/**"],
         ttlSeconds: 1800,
         expiresAt: secsFromNow(now, 1800),
-      })
+      }),
     );
     const accountTenant: TenantContext = {
       workspaceId: NO_ROUTE_WORKSPACE,
@@ -261,7 +269,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
       "my-repo",
       now,
       STALE_AFTER_SECONDS,
-      { excludeSessionId: "00000000-0000-0000-0000-000000000000" }
+      { excludeSessionId: "00000000-0000-0000-0000-000000000000" },
     );
     expect(after).toHaveLength(0);
   });
@@ -270,7 +278,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     const { rows: wsRows } = await pool.query<{ id: string }>(
       `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
        ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      ["leave-other-ws", "leave-other-ws"]
+      ["leave-other-ws", "leave-other-ws"],
     );
     const otherWs = wsRows[0]!.id;
     // Seed an agent + session directly under the OTHER workspace.
@@ -292,7 +300,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     });
     const before = await pool.query<{ last_heartbeat_at: Date }>(
       `SELECT last_heartbeat_at FROM sessions WHERE id = $1`,
-      [otherSessionId]
+      [otherSessionId],
     );
     const accountTenant: TenantContext = {
       workspaceId: NO_ROUTE_WORKSPACE,
@@ -301,16 +309,16 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     };
 
     await expect(
-      leave({ sessionId: otherSessionId }, accountTenant)
+      leave({ sessionId: otherSessionId }, accountTenant),
     ).rejects.toThrow(UnknownSessionError);
 
     // Presence untouched — resolveSession 404s before expireSessionPresence runs.
     const after = await pool.query<{ last_heartbeat_at: Date }>(
       `SELECT last_heartbeat_at FROM sessions WHERE id = $1`,
-      [otherSessionId]
+      [otherSessionId],
     );
     expect(after.rows[0]!.last_heartbeat_at.getTime()).toBe(
-      before.rows[0]!.last_heartbeat_at.getTime()
+      before.rows[0]!.last_heartbeat_at.getTime(),
     );
   });
 });

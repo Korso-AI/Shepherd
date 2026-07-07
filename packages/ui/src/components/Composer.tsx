@@ -54,7 +54,12 @@ interface MentionRange {
  * @param props - The agents, repo filter, and post-send callback.
  * @returns The composer element (autocomplete popup + form).
  */
-export function Composer({ agents, selectedRepo, workspaceId, onSent }: ComposerProps): ReactNode {
+export function Composer({
+  agents,
+  selectedRepo,
+  workspaceId,
+  onSent,
+}: ComposerProps): ReactNode {
   const client = useShepherdClient();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -71,7 +76,11 @@ export function Composer({ agents, selectedRepo, workspaceId, onSent }: Composer
   // equals a real repo (mentionable only in All-repos, via matchesRepo's
   // short-circuit) — exactly the original app.js behavior.
   const names = mentionableAgents(
-    agents.map((a) => ({ name: a.name, presence: a.presence, repo: a.repo ?? "" })),
+    agents.map((a) => ({
+      name: a.name,
+      presence: a.presence,
+      repo: a.repo ?? "",
+    })),
     selectedRepo,
   );
 
@@ -109,7 +118,8 @@ export function Composer({ agents, selectedRepo, workspaceId, onSent }: Composer
     (name: string) => {
       if (!range) return;
       const insert = "@" + name + " ";
-      const next = value.slice(0, range.start) + insert + value.slice(range.end);
+      const next =
+        value.slice(0, range.start) + insert + value.slice(range.end);
       const caret = range.start + insert.length;
       setValue(next);
       closePop();
@@ -162,7 +172,10 @@ export function Composer({ agents, selectedRepo, workspaceId, onSent }: Composer
       // The first @mention matching a live agent directs the message; otherwise
       // it broadcasts to the selected repo (null repo => fan out to all repos).
       const targetAgentName = extractTarget(body, names);
-      const repo = selectedRepo === null || selectedRepo === "__all__" ? null : selectedRepo;
+      const repo =
+        selectedRepo === null || selectedRepo === "__all__"
+          ? null
+          : selectedRepo;
       setSending(true);
       setFailed(false);
       try {
@@ -240,7 +253,12 @@ export function Composer({ agents, selectedRepo, workspaceId, onSent }: Composer
           onChange={(e) => onInput(e.target.value)}
           onKeyDown={onKeyDown}
         />
-        <button id="chat-send" className="chat-send" type="submit" disabled={sending}>
+        <button
+          id="chat-send"
+          className="chat-send"
+          type="submit"
+          disabled={sending}
+        >
           Send
         </button>
       </form>

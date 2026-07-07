@@ -30,7 +30,11 @@
  * awareness) only, announcements untouched.
  */
 
-import type { HeartbeatRequestT, HeartbeatResponseT, AnnouncementT } from "@shepherd/shared";
+import type {
+  HeartbeatRequestT,
+  HeartbeatResponseT,
+  AnnouncementT,
+} from "@shepherd/shared";
 import { getContext } from "../context.js";
 import {
   touchPresence,
@@ -46,7 +50,7 @@ import { type TenantContext } from "../tenant.js";
 
 export async function heartbeat(
   input: HeartbeatRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<HeartbeatResponseT> {
   const { pool, config } = getContext();
 
@@ -83,7 +87,7 @@ export async function heartbeat(
         session.workspaceId,
         session.repo,
         now,
-        config.CHANGE_RECORD_TTL_SECONDS
+        config.CHANGE_RECORD_TTL_SECONDS,
       );
     }
 
@@ -93,7 +97,11 @@ export async function heartbeat(
     // previous batch and fetch a fresh one; the client uses two separate beats,
     // so in practice only one branch fires per request.
     if (input.ackAnnouncementIds && input.ackAnnouncementIds.length > 0) {
-      await recordAnnouncementDeliveries(tx, session.id, input.ackAnnouncementIds);
+      await recordAnnouncementDeliveries(
+        tx,
+        session.id,
+        input.ackAnnouncementIds,
+      );
     }
 
     // FETCH phase: hand over pending announcements but DO NOT mark them

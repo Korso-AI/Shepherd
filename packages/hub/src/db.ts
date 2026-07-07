@@ -9,7 +9,7 @@ export function createPool(connString?: string): pg.Pool {
   const connectionString = connString ?? process.env["DATABASE_URL"];
   if (!connectionString) {
     throw new Error(
-      "No database connection string provided and DATABASE_URL is not set."
+      "No database connection string provided and DATABASE_URL is not set.",
     );
   }
   return new pg.Pool({
@@ -35,7 +35,7 @@ export function createPool(connString?: string): pg.Pool {
  */
 export async function withTransaction<T>(
   pool: pg.Pool,
-  fn: (client: pg.PoolClient) => Promise<T>
+  fn: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
   try {

@@ -145,7 +145,9 @@ describe("ShepherdRoot routing / landing", () => {
     // Connect stage: step 1's create form is gone (replaced by the checked
     // workspace summary) and step 2 waits for the first agent.
     await waitFor(() =>
-      expect(screen.queryByLabelText(/workspace name/i)).not.toBeInTheDocument(),
+      expect(
+        screen.queryByLabelText(/workspace name/i),
+      ).not.toBeInTheDocument(),
     );
     expect(
       screen.getByText(/waiting for your agent to check in/i),
@@ -209,9 +211,16 @@ describe("ShepherdRoot routing / landing", () => {
     // A dynamic list so the re-list after create includes the new workspace —
     // ShepherdRoot preserves a still-present selection across the re-list.
     let list = [WS, WS2];
-    client.listWorkspaces = vi.fn().mockImplementation(async () => ({ workspaces: list }));
+    client.listWorkspaces = vi
+      .fn()
+      .mockImplementation(async () => ({ workspaces: list }));
     client.createWorkspace = vi.fn().mockImplementation(async () => {
-      const ws = { id: "ws_new", slug: "gamma", name: "Gamma", role: "admin" as const };
+      const ws = {
+        id: "ws_new",
+        slug: "gamma",
+        name: "Gamma",
+        role: "admin" as const,
+      };
       list = [...list, ws];
       return ws;
     });
@@ -222,7 +231,9 @@ describe("ShepherdRoot routing / landing", () => {
     // Go to Settings, then create a workspace through the switcher's menu.
     await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: /acme/i }));
-    await userEvent.click(screen.getByRole("menuitem", { name: /create workspace/i }));
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: /create workspace/i }),
+    );
     await userEvent.type(screen.getByLabelText(/new workspace name/i), "Gamma");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
@@ -230,7 +241,9 @@ describe("ShepherdRoot routing / landing", () => {
     // create never re-lands us off Settings.
     await waitFor(() => expect(client.createWorkspace).toHaveBeenCalled());
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /gamma/i })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: /gamma/i }),
+      ).toBeInTheDocument(),
     );
     expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
       "aria-selected",

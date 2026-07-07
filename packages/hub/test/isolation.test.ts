@@ -32,14 +32,7 @@
  * createSession (the op layer here only ever knows A's or B's own tenant).
  */
 
-import {
-  describe,
-  it,
-  expect,
-  beforeAll,
-  afterAll,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
 import {
   dbAvailable,
@@ -51,11 +44,7 @@ import {
 import { initContext, resetContext } from "../src/context.js";
 import { buildServer } from "../src/server.js";
 import { __resetRateLimiter, hashToken } from "../src/tenant.js";
-import {
-  createAgent,
-  createSession,
-  insertWorkItem,
-} from "../src/repo.js";
+import { createAgent, createSession, insertWorkItem } from "../src/repo.js";
 import { withTransaction } from "../src/db.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
@@ -145,7 +134,7 @@ async function seedWorkspace(pool: pg.Pool, slug: string): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester')
      ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-    [slug, slug]
+    [slug, slug],
   );
   return rows[0]!.id;
 }
@@ -154,12 +143,12 @@ async function seedMembership(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  role: "admin" | "member" = "admin"
+  role: "admin" | "member" = "admin",
 ): Promise<void> {
   await pool.query(
     `INSERT INTO memberships (account_id, workspace_id, role) VALUES ($1, $2, $3)
      ON CONFLICT (account_id, workspace_id) DO UPDATE SET role = EXCLUDED.role`,
-    [accountId, workspaceId, role]
+    [accountId, workspaceId, role],
   );
 }
 
@@ -167,7 +156,7 @@ async function seedProfile(pool: pg.Pool, accountId: string): Promise<void> {
   await pool.query(
     `INSERT INTO account_profiles (account_id, display_name, github_login)
      VALUES ($1, $1, $1) ON CONFLICT (account_id) DO NOTHING`,
-    [accountId]
+    [accountId],
   );
 }
 
@@ -176,12 +165,12 @@ async function seedToken(
   pool: pg.Pool,
   accountId: string,
   workspaceId: string,
-  raw: string
+  raw: string,
 ): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES ($1, $2, $3, NULL) RETURNING id`,
-    [workspaceId, accountId, hashToken(raw)]
+    [workspaceId, accountId, hashToken(raw)],
   );
   return rows[0]!.id;
 }
@@ -194,12 +183,12 @@ async function seedToken(
 async function seedAccountToken(
   pool: pg.Pool,
   accountId: string,
-  raw: string
+  raw: string,
 ): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
     `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
      VALUES (NULL, $1, $2, NULL) RETURNING id`,
-    [accountId, hashToken(raw)]
+    [accountId, hashToken(raw)],
   );
   return rows[0]!.id;
 }
@@ -211,7 +200,7 @@ async function seedAccountToken(
 async function mintSession(
   pool: pg.Pool,
   workspaceId: string,
-  human: string
+  human: string,
 ): Promise<string> {
   return withTransaction(pool, async (tx) => {
     const agent = await createAgent(tx, {
@@ -235,7 +224,7 @@ async function mintSession(
 async function mintSessionWithClaim(
   pool: pg.Pool,
   workspaceId: string,
-  human: string
+  human: string,
 ): Promise<{ sessionId: string; workItemId: string }> {
   return withTransaction(pool, async (tx) => {
     const agent = await createAgent(tx, {
@@ -269,59 +258,62 @@ async function mintSessionWithClaim(
 
 async function countWorkItems(pool: pg.Pool): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
-    `SELECT COUNT(*)::int AS n FROM work_items`
+    `SELECT COUNT(*)::int AS n FROM work_items`,
   );
   return Number(rows[0]!.n);
 }
 
 async function countAnnouncements(
   pool: pg.Pool,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
     `SELECT COUNT(*)::int AS n FROM announcements WHERE workspace_id = $1`,
-    [workspaceId]
+    [workspaceId],
   );
   return Number(rows[0]!.n);
 }
 
 async function countAgents(
   pool: pg.Pool,
-  workspaceId: string
+  workspaceId: string,
 ): Promise<number> {
   const { rows } = await pool.query<{ n: string }>(
     `SELECT COUNT(*)::int AS n FROM agents WHERE workspace_id = $1`,
-    [workspaceId]
+    [workspaceId],
   );
   return Number(rows[0]!.n);
 }
 
-async function sessionHeartbeat(pool: pg.Pool, sessionId: string): Promise<Date> {
+async function sessionHeartbeat(
+  pool: pg.Pool,
+  sessionId: string,
+): Promise<Date> {
   const { rows } = await pool.query<{ last_heartbeat_at: Date }>(
     `SELECT last_heartbeat_at FROM sessions WHERE id = $1`,
-    [sessionId]
+    [sessionId],
   );
   return rows[0]!.last_heartbeat_at;
 }
 
 async function workItemStatus(
   pool: pg.Pool,
-  workItemId: string
+  workItemId: string,
 ): Promise<string> {
   const { rows } = await pool.query<{ status: string }>(
     `SELECT status FROM work_items WHERE id = $1`,
-    [workItemId]
+    [workItemId],
   );
   return rows[0]!.status;
 }
 
 async function workItemExpiry(
   pool: pg.Pool,
-  workItemId: string
+  workItemId: string,
 ): Promise<Date> {
   const { rows } = await pool.query<{ expires_at: Date }>(
     `SELECT expires_at FROM work_items WHERE id = $1`,
-    [workItemId]
+    [workItemId],
   );
   return rows[0]!.expires_at;
 }
@@ -416,7 +408,9 @@ describe.skipIf(!dbAvailable)(
         },
       });
       expect(res.statusCode).toBe(404);
-      expect(res.json<{ error: string }>().error).toBe(`Session not found: ${sessionIdB}`);
+      expect(res.json<{ error: string }>().error).toBe(
+        `Session not found: ${sessionIdB}`,
+      );
       // Nothing written anywhere.
       expect(await countWorkItems(pool)).toBe(0);
     });
@@ -425,7 +419,7 @@ describe.skipIf(!dbAvailable)(
       const { sessionId: sessionIdB, workItemId } = await mintSessionWithClaim(
         pool,
         wsB,
-        "dave"
+        "dave",
       );
       // Capture the renewal-bearing fields BEFORE the replay. sync renews via
       // touchHeartbeat, which mutates the claim's expires_at and the session's
@@ -448,10 +442,10 @@ describe.skipIf(!dbAvailable)(
       expect(await workItemStatus(pool, workItemId)).toBe("active");
       // Renewal fields untouched: getSession 404s before touchHeartbeat runs.
       expect((await workItemExpiry(pool, workItemId)).getTime()).toBe(
-        expiryBefore.getTime()
+        expiryBefore.getTime(),
       );
       expect((await sessionHeartbeat(pool, sessionIdB)).getTime()).toBe(
-        heartbeatBefore.getTime()
+        heartbeatBefore.getTime(),
       );
     });
 
@@ -473,7 +467,7 @@ describe.skipIf(!dbAvailable)(
       const { sessionId: sessionIdB, workItemId } = await mintSessionWithClaim(
         pool,
         wsB,
-        "dave"
+        "dave",
       );
 
       const res = await app.inject({
@@ -494,7 +488,7 @@ describe.skipIf(!dbAvailable)(
       const backdated = new Date(Date.now() - 300_000);
       await pool.query(
         `UPDATE sessions SET last_heartbeat_at = $1 WHERE id = $2`,
-        [backdated, sessionIdB]
+        [backdated, sessionIdB],
       );
 
       const res = await app.inject({
@@ -524,7 +518,9 @@ describe.skipIf(!dbAvailable)(
       // old idempotent 200 no-op). B's presence is untouched either way — the
       // resolve 404s before expireSessionPresence would run.
       expect(res.statusCode).toBe(404);
-      expect(res.json<{ error: string }>().error).toBe(`Session not found: ${sessionIdB}`);
+      expect(res.json<{ error: string }>().error).toBe(
+        `Session not found: ${sessionIdB}`,
+      );
       const after = await sessionHeartbeat(pool, sessionIdB);
       expect(after.getTime()).toBe(before.getTime());
     });
@@ -554,7 +550,9 @@ describe.skipIf(!dbAvailable)(
         },
       });
       expect(res.statusCode).toBe(404);
-      expect(res.json<{ error: string }>().error).toBe(`Session not found: ${sessionIdB}`);
+      expect(res.json<{ error: string }>().error).toBe(
+        `Session not found: ${sessionIdB}`,
+      );
       expect(await countWorkItems(pool)).toBe(0);
     });
 
@@ -562,7 +560,7 @@ describe.skipIf(!dbAvailable)(
       const { sessionId: sessionIdB, workItemId } = await mintSessionWithClaim(
         pool,
         wsB,
-        "dave"
+        "dave",
       );
       const expiryBefore = await workItemExpiry(pool, workItemId);
       const heartbeatBefore = await sessionHeartbeat(pool, sessionIdB);
@@ -577,10 +575,10 @@ describe.skipIf(!dbAvailable)(
       expect(await countWorkItems(pool)).toBe(1);
       expect(await workItemStatus(pool, workItemId)).toBe("active");
       expect((await workItemExpiry(pool, workItemId)).getTime()).toBe(
-        expiryBefore.getTime()
+        expiryBefore.getTime(),
       );
       expect((await sessionHeartbeat(pool, sessionIdB)).getTime()).toBe(
-        heartbeatBefore.getTime()
+        heartbeatBefore.getTime(),
       );
     });
 
@@ -601,7 +599,7 @@ describe.skipIf(!dbAvailable)(
       const { sessionId: sessionIdB, workItemId } = await mintSessionWithClaim(
         pool,
         wsB,
-        "dave"
+        "dave",
       );
       const res = await app.inject({
         method: "POST",
@@ -618,7 +616,7 @@ describe.skipIf(!dbAvailable)(
       const backdated = new Date(Date.now() - 300_000);
       await pool.query(
         `UPDATE sessions SET last_heartbeat_at = $1 WHERE id = $2`,
-        [backdated, sessionIdB]
+        [backdated, sessionIdB],
       );
       const res = await app.inject({
         method: "POST",
@@ -704,7 +702,7 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(404);
       const { rows } = await pool.query<{ revoked_at: Date | null }>(
         `SELECT revoked_at FROM api_tokens WHERE id = $1`,
-        [tokenBId]
+        [tokenBId],
       );
       expect(rows[0]!.revoked_at).toBeNull();
     });
@@ -719,7 +717,7 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(404);
       const { rows } = await pool.query<{ n: string }>(
         `SELECT COUNT(*)::int AS n FROM invites WHERE workspace_id = $1`,
-        [wsB]
+        [wsB],
       );
       expect(Number(rows[0]!.n)).toBe(0);
     });
@@ -729,7 +727,7 @@ describe.skipIf(!dbAvailable)(
       const { rows: invRows } = await pool.query<{ code: string }>(
         `INSERT INTO invites (workspace_id, code, role_granted, created_by, max_uses)
          VALUES ($1, 'bcode123', 'member', $2, 1) RETURNING code`,
-        [wsB, ACCOUNT_B]
+        [wsB, ACCOUNT_B],
       );
       const code = invRows[0]!.code;
 
@@ -742,7 +740,7 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(404);
       const { rows } = await pool.query<{ revoked_at: Date | null }>(
         `SELECT revoked_at FROM invites WHERE workspace_id = $1 AND code = $2`,
-        [wsB, code]
+        [wsB, code],
       );
       expect(rows[0]!.revoked_at).toBeNull();
     });
@@ -766,7 +764,7 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(404);
       const { rows } = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        [ACCOUNT_B, wsB]
+        [ACCOUNT_B, wsB],
       );
       expect(rows.length).toBe(1);
     });
@@ -782,7 +780,7 @@ describe.skipIf(!dbAvailable)(
       // A is not a member of B, so there is nothing to leave; B's own admin stays.
       const { rows } = await pool.query(
         `SELECT 1 FROM memberships WHERE account_id = $1 AND workspace_id = $2`,
-        [ACCOUNT_B, wsB]
+        [ACCOUNT_B, wsB],
       );
       expect(rows.length).toBe(1);
     });
@@ -868,7 +866,7 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(200);
       const body = res.json<{ sessionId: string }>();
       expect(body.sessionId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
     });
 
@@ -920,5 +918,5 @@ describe.skipIf(!dbAvailable)(
       });
       expect(res.statusCode).toBe(401);
     });
-  }
+  },
 );

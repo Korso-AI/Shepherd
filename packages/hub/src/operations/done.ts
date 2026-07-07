@@ -29,7 +29,7 @@ import { withTransaction } from "../db.js";
 
 export async function done(
   input: DoneRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<DoneResponseT> {
   const { pool } = getContext();
 
@@ -55,7 +55,7 @@ export async function done(
     await recordAnnouncementDeliveries(
       tx,
       session.id,
-      announcements.map((a) => a.id)
+      announcements.map((a) => a.id),
     );
 
     return { ok: true, announcements };

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -150,16 +156,19 @@ function setup(opts?: {
   const hubClient = { post, get } as unknown as HubClient;
   const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };
   const { server, tools } = makeFakeServer();
-  const { ready } = registerTools(server as any, {
-    hubClient,
-    config: opts?.config ?? hostedConfig,
-    context: opts?.context ?? unlinkedContext,
-    heartbeat,
-    // The link tools must resolve the marker against THIS dir, not process.cwd().
-    cwd,
-    // Per-repo declined store isolated to a temp dir (never touches ~/.shepherd).
-    declinedDir,
-  } as any);
+  const { ready } = registerTools(
+    server as any,
+    {
+      hubClient,
+      config: opts?.config ?? hostedConfig,
+      context: opts?.context ?? unlinkedContext,
+      heartbeat,
+      // The link tools must resolve the marker against THIS dir, not process.cwd().
+      cwd,
+      // Per-repo declined store isolated to a temp dir (never touches ~/.shepherd).
+      declinedDir,
+    } as any,
+  );
   return { tools, post, get, heartbeat, ready, cwd, declinedDir };
 }
 
@@ -231,7 +240,10 @@ describe("link / unlink tools", () => {
     expect(text).not.toMatch(/restart|next launch|next session/);
     expect(readMarker(cwd)).toEqual({ workspace: "foo" });
     // Activated in-process: /join was POSTed and the heartbeat started.
-    expect(post).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "foo" }));
+    expect(post).toHaveBeenCalledWith(
+      "/join",
+      expect.objectContaining({ workspace: "foo" }),
+    );
     expect(heartbeat.start).toHaveBeenCalledOnce();
   });
 
@@ -289,7 +301,10 @@ describe("link / unlink tools", () => {
     expect(text.toLowerCase()).toContain("coordinat");
     expect(readMarker(cwd)).toEqual({ workspace: "team-alpha" });
     // Activated hot: /join POSTed with the sole workspace, heartbeat started.
-    expect(post).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "team-alpha" }));
+    expect(post).toHaveBeenCalledWith(
+      "/join",
+      expect.objectContaining({ workspace: "team-alpha" }),
+    );
     expect(heartbeat.start).toHaveBeenCalledOnce();
   });
 
@@ -328,7 +343,10 @@ describe("link / unlink tools", () => {
     // Single workspace → auto-picked, never asks the user to choose.
     expect(text).not.toContain("which");
     expect(readMarker(cwd)).toEqual({ workspace: "solo" });
-    expect(post).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "solo" }));
+    expect(post).toHaveBeenCalledWith(
+      "/join",
+      expect.objectContaining({ workspace: "solo" }),
+    );
     expect(heartbeat.start).toHaveBeenCalledOnce();
   });
 
@@ -359,7 +377,10 @@ describe("link / unlink tools", () => {
     const { tools, post, ready, cwd } = setup({
       get: async () => workspacesResponse("foo"),
       post: async () => {
-        throw new HubRequestError(503, "Hub returned HTTP 503 for /join: Service Unavailable");
+        throw new HubRequestError(
+          503,
+          "Hub returned HTTP 503 for /join: Service Unavailable",
+        );
       },
     });
     await ready;
@@ -368,7 +389,10 @@ describe("link / unlink tools", () => {
 
     // The marker is written despite the failed hot activation.
     expect(readMarker(cwd)).toEqual({ workspace: "foo" });
-    expect(post).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "foo" }));
+    expect(post).toHaveBeenCalledWith(
+      "/join",
+      expect.objectContaining({ workspace: "foo" }),
+    );
     // Fail-open advisory, never a crash.
     expect(result.isError).toBeUndefined();
   });
@@ -423,12 +447,17 @@ describe("link / unlink tools", () => {
   // ---- hot activation opens the gate in the SAME process ---------------------
 
   it("link <slug> activates hot: a subsequent `work` succeeds in the same process (no restart)", async () => {
-    const workLandscape = { conflicts: [], activeClaims: [], announcements: [] };
+    const workLandscape = {
+      conflicts: [],
+      activeClaims: [],
+      announcements: [],
+    };
     const { tools, post, ready } = setup({
       get: async () => workspacesResponse("foo"),
       post: async (path: string) => {
         if (path === "/join") return JOIN_OK;
-        if (path === "/work") return { workItemId: "wi", landscape: workLandscape };
+        if (path === "/work")
+          return { workItemId: "wi", landscape: workLandscape };
         throw new Error(`unexpected post ${path}`);
       },
     });
@@ -438,10 +467,16 @@ describe("link / unlink tools", () => {
     expect(linkResult.isError).toBeUndefined();
 
     // No restart: the gate is now open, so work coordinates against the live session.
-    const workResult = await tools["work"].handler({ intent: "hot", pathGlobs: ["src/**"] });
+    const workResult = await tools["work"].handler({
+      intent: "hot",
+      pathGlobs: ["src/**"],
+    });
     expect(workResult.isError).toBeUndefined();
     expect(workResult.content[0].text).not.toContain("isn't linked");
-    expect(post).toHaveBeenCalledWith("/work", expect.objectContaining({ intent: "hot" }));
+    expect(post).toHaveBeenCalledWith(
+      "/work",
+      expect.objectContaining({ intent: "hot" }),
+    );
   });
 
   // ---- unlink tears the live session down (symmetric to activate) ------------
@@ -460,7 +495,10 @@ describe("link / unlink tools", () => {
     await ready;
 
     // Booted active: /join happened and the heartbeat started.
-    expect(post).toHaveBeenCalledWith("/join", expect.objectContaining({ workspace: "foo" }));
+    expect(post).toHaveBeenCalledWith(
+      "/join",
+      expect.objectContaining({ workspace: "foo" }),
+    );
     expect(heartbeat.start).toHaveBeenCalledOnce();
 
     await tools["unlink"].handler({});
@@ -471,7 +509,10 @@ describe("link / unlink tools", () => {
 
     // Session cleared: a subsequent coordination tool no longer POSTs /work.
     post.mockClear();
-    const work = await tools["work"].handler({ intent: "x", pathGlobs: ["src/**"] });
+    const work = await tools["work"].handler({
+      intent: "x",
+      pathGlobs: ["src/**"],
+    });
     expect(work.isError).toBeUndefined();
     expect(post).not.toHaveBeenCalledWith("/work", expect.anything());
   });
@@ -510,7 +551,9 @@ describe("link / unlink tools", () => {
     const result = await tools["link"].handler({});
     expect(result.isError).toBeUndefined();
     // Fail-open advisory: surfaces the reach failure, link unchanged, no crash.
-    expect(result.content[0].text.toLowerCase()).toMatch(/couldn't reach|unreachable|link not changed/);
+    expect(result.content[0].text.toLowerCase()).toMatch(
+      /couldn't reach|unreachable|link not changed/,
+    );
     expect(readMarker(cwd)).toBeNull();
   });
 });

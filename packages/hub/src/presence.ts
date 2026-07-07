@@ -1,4 +1,4 @@
-import type { Config } from './config.js';
+import type { Config } from "./config.js";
 
 /**
  * Resolve the TTL (in seconds) for a claim.

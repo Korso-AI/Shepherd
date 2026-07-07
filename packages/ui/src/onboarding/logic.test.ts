@@ -34,7 +34,9 @@ describe("deriveSetupStage", () => {
     });
 
     it("workspace + agents never seen + not skipped → connect (invited user)", () => {
-      expect(deriveSetupStage(input(true, false, false, false))).toBe("connect");
+      expect(deriveSetupStage(input(true, false, false, false))).toBe(
+        "connect",
+      );
     });
 
     it("workspace + agents seen → hidden (returning user with working setup)", () => {
@@ -54,26 +56,38 @@ describe("deriveSetupStage", () => {
     });
 
     it("engaged holds connect across the post-create snapshot gap (agents null)", () => {
-      expect(deriveSetupStage(input(true, null, false, false, true))).toBe("connect");
+      expect(deriveSetupStage(input(true, null, false, false, true))).toBe(
+        "connect",
+      );
     });
 
     it("engaged holds connect after the first agent checks in (agents seen)", () => {
-      expect(deriveSetupStage(input(true, true, false, false, true))).toBe("connect");
+      expect(deriveSetupStage(input(true, true, false, false, true))).toBe(
+        "connect",
+      );
     });
 
     it("skip beats engaged: dismissing an engaged guide hides it", () => {
-      expect(deriveSetupStage(input(true, true, true, false, true))).toBe("hidden");
-      expect(deriveSetupStage(input(true, false, true, false, true))).toBe("hidden");
+      expect(deriveSetupStage(input(true, true, true, false, true))).toBe(
+        "hidden",
+      );
+      expect(deriveSetupStage(input(true, false, true, false, true))).toBe(
+        "hidden",
+      );
     });
 
     it("engaged with no workspace still derives create (never block)", () => {
-      expect(deriveSetupStage(input(false, null, false, false, true))).toBe("create");
+      expect(deriveSetupStage(input(false, null, false, false, true))).toBe(
+        "create",
+      );
     });
   });
 
   describe("full 4-tuple matrix (engaged=false)", () => {
     // [hasWorkspace, agentsEverSeen, skipped, forcedOpen] → expected
-    const cases: Array<[boolean, boolean | null, boolean, boolean, SetupStage]> = [
+    const cases: Array<
+      [boolean, boolean | null, boolean, boolean, SetupStage]
+    > = [
       // forcedOpen = false ---------------------------------------------------
       // no workspace → create unless dismissed (the overlay is closable; the
       // board's empty state still carries an "Open setup guide" CTA)
@@ -110,11 +124,19 @@ describe("deriveSetupStage", () => {
       [true, true, true, true, "connect"],
     ];
 
-    for (const [hasWorkspace, agentsEverSeen, skipped, forcedOpen, expected] of cases) {
+    for (const [
+      hasWorkspace,
+      agentsEverSeen,
+      skipped,
+      forcedOpen,
+      expected,
+    ] of cases) {
       it(`{hasWorkspace:${hasWorkspace}, agentsEverSeen:${agentsEverSeen}, skipped:${skipped}, forcedOpen:${forcedOpen}} → ${expected}`, () => {
-        expect(deriveSetupStage(input(hasWorkspace, agentsEverSeen, skipped, forcedOpen))).toBe(
-          expected,
-        );
+        expect(
+          deriveSetupStage(
+            input(hasWorkspace, agentsEverSeen, skipped, forcedOpen),
+          ),
+        ).toBe(expected);
       });
     }
   });
@@ -123,7 +145,9 @@ describe("deriveSetupStage", () => {
     // engaged only changes outcomes for a workspace that is NOT skipped and
     // NOT already connect: those rows hold at "connect" instead of "hidden".
     // Skips still win — including with no workspace (dismissed overlay).
-    const cases: Array<[boolean, boolean | null, boolean, boolean, SetupStage]> = [
+    const cases: Array<
+      [boolean, boolean | null, boolean, boolean, SetupStage]
+    > = [
       [false, null, false, false, "create"],
       [false, null, true, false, "hidden"],
       [false, true, false, true, "create"],
@@ -136,10 +160,18 @@ describe("deriveSetupStage", () => {
       [true, true, true, true, "connect"], // forcedOpen beats skip
     ];
 
-    for (const [hasWorkspace, agentsEverSeen, skipped, forcedOpen, expected] of cases) {
+    for (const [
+      hasWorkspace,
+      agentsEverSeen,
+      skipped,
+      forcedOpen,
+      expected,
+    ] of cases) {
       it(`engaged {hasWorkspace:${hasWorkspace}, agentsEverSeen:${agentsEverSeen}, skipped:${skipped}, forcedOpen:${forcedOpen}} → ${expected}`, () => {
         expect(
-          deriveSetupStage(input(hasWorkspace, agentsEverSeen, skipped, forcedOpen, true)),
+          deriveSetupStage(
+            input(hasWorkspace, agentsEverSeen, skipped, forcedOpen, true),
+          ),
         ).toBe(expected);
       });
     }

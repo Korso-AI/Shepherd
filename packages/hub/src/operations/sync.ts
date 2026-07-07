@@ -27,7 +27,7 @@ import { buildLandscape } from "./landscape.js";
 
 export async function sync(
   input: SyncRequestT,
-  tenant: TenantContext
+  tenant: TenantContext,
 ): Promise<SyncResponseT> {
   const { pool, config } = getContext();
 
@@ -69,7 +69,7 @@ export async function sync(
       session.workspaceId,
       session.repo,
       now,
-      config.CHANGE_RECORD_TTL_SECONDS
+      config.CHANGE_RECORD_TTL_SECONDS,
     );
 
     // 2. Read this session's own active path globs to detect collisions that
