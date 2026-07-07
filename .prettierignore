@@ -1,0 +1,13 @@
+# Mirrors the ESLint ignores (see eslint.config.js).
+**/dist/**
+**/node_modules/**
+**/*.d.ts
+coverage
+**/coverage/**
+package-lock.json
+
+# Gitignored local dev-harness files (see .gitignore).
+packages/ui/vite.config.dev.ts
+packages/ui/devFull.html
+packages/ui/src/devFull.tsx
+seed-dev.sh

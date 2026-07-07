@@ -4,6 +4,9 @@
   "type": "module",
   "license": "AGPL-3.0-only",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "dependencies": {
