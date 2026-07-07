@@ -42,11 +42,14 @@
       .header-signout:hover { color:var(--ink); border-color:var(--ink3); background:rgba(255,250,238,.35); }
       .header-signout:focus-visible { outline:none; border-color:var(--terr);
         box-shadow:0 0 0 3px rgba(122,106,72,.14); }
-      .header-setup-guide { font:inherit; font-size:13px; color:var(--ink2); cursor:pointer;
-        border:1px solid var(--line); border-radius:8px; padding:5px 11px;
-        background:transparent; transition:color .12s ease, border-color .12s ease, background .12s ease; }
-      .header-setup-guide:hover { color:var(--ink); border-color:var(--ink3); background:rgba(255,250,238,.35); }
-      .header-setup-guide:focus-visible { outline:none; border-color:var(--terr);
+      /* The ? help button that re-opens the setup guide overlay. */
+      .header-help { display:inline-flex; align-items:center; justify-content:center;
+        width:26px; height:26px; font:inherit; font-size:13px; font-weight:600;
+        color:var(--ink2); cursor:pointer; border:1px solid var(--line);
+        border-radius:50%; padding:0; background:transparent;
+        transition:color .12s ease, border-color .12s ease, background .12s ease; }
+      .header-help:hover { color:var(--ink); border-color:var(--ink3); background:rgba(255,250,238,.35); }
+      .header-help:focus-visible { outline:none; border-color:var(--terr);
         box-shadow:0 0 0 3px rgba(122,106,72,.14); }
 
       /* Repo selector (hidden when <2 repos; populated by app.js) */
@@ -563,6 +566,28 @@
       .shepherd-modal__actions button.danger:hover:not(:disabled) {
         background:var(--drop); color:var(--bg); }
       .shepherd-modal__actions button:disabled { opacity:.55; cursor:default; }
+
+      /* Setup-guide variant — a wider, scrollable panel whose checklist steps
+         read as cards (steps flip to the tan canvas so they contrast with the
+         panel; the inner feature cards flip the other way for the same reason). */
+      .shepherd-modal--setup { max-width:640px; max-height:85vh; overflow-y:auto; gap:16px; }
+      .shepherd-modal__head { display:flex; align-items:center; justify-content:space-between; }
+      .shepherd-modal__title { margin:0; font-size:13px; font-weight:600;
+        letter-spacing:.04em; text-transform:uppercase; color:var(--ink2); }
+      .shepherd-modal__close { display:inline-flex; align-items:center; justify-content:center;
+        width:26px; height:26px; font:inherit; font-size:13px; color:var(--ink2);
+        cursor:pointer; border:1px solid transparent; border-radius:50%; padding:0;
+        background:transparent; transition:color .12s ease, border-color .12s ease, background .12s ease; }
+      .shepherd-modal__close:hover { color:var(--ink); border-color:var(--ink3);
+        background:rgba(255,250,238,.35); }
+      .shepherd-modal__close:focus-visible { outline:none; border-color:var(--terr);
+        box-shadow:0 0 0 3px rgba(122,106,72,.14); }
+      /* Un-inherit the modal's uppercase h3 chrome: the checklist's step
+         headings keep their own styling inside the panel. */
+      .shepherd-modal--setup .shepherd-setup h3 {
+        text-transform:none; letter-spacing:normal; color:var(--ink); }
+      .shepherd-modal--setup .shepherd-setup__step { background:var(--bg); }
+      .shepherd-modal--setup .shepherd-setup__cards .card { background:var(--card); }
 
       /* Join workspace — the invite-link landing surface (/shepherd/join/:code).
          A single centered card on the tan canvas; states: joining / joined /

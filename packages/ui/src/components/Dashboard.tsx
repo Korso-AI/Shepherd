@@ -16,7 +16,7 @@ import { Chat } from "./Chat.js";
 import { Composer } from "./Composer.js";
 import { EmptyState } from "../config/EmptyState.js";
 import { FeedbackWidget } from "./FeedbackWidget.js";
-import { SetupChecklist } from "../onboarding/SetupChecklist.js";
+import { SetupGuideDialog } from "../onboarding/SetupGuideDialog.js";
 import { useSetupStage } from "../onboarding/useSetupStage.js";
 import { readStored, writeStored } from "../storage.js";
 
@@ -154,8 +154,8 @@ export interface DashboardProps {
   /**
    * Whether the account currently belongs to a workspace. Only meaningful in
    * the hosted shell (paired with {@link config}). When `false`, the view lands
-   * on Tasks showing the first-run setup checklist (create stage), the Chat
-   * panel shows an {@link EmptyState} prompt, and the board does not poll.
+   * on Tasks with the first-run setup guide dialog open (create stage), the
+   * Chat panel shows an {@link EmptyState} prompt, and the board does not poll.
    * Defaults to "yes" (self-host always has its implicit team workspace).
    */
   hasWorkspace?: boolean;
@@ -225,9 +225,9 @@ export function Dashboard({
       enabled: !noWorkspace,
     });
 
-  // The first-run setup checklist policy: stage derivation (stale-snapshot
-  // gated), the per-workspace skip, the engaged latch, and the header
-  // "Setup guide" re-open all live in the hook.
+  // The first-run setup guide policy: stage derivation (stale-snapshot
+  // gated), the per-workspace skip, the engaged latch, and the header ?
+  // button's re-open all live in the hook.
   const setup = useSetupStage({
     hosted,
     hasWorkspace: !noWorkspace,
@@ -237,8 +237,8 @@ export function Dashboard({
   });
 
   const [activeTab, setActiveTab] = useState<Tab>(() => {
-    // A no-workspace hosted account lands on Tasks so the setup checklist is the
-    // first thing a new user sees (Config stays reachable via its tab).
+    // A no-workspace hosted account lands on Tasks; the setup guide dialog
+    // opens over it (Config stays reachable via its tab).
     const stored = readStored(TAB_KEY);
     if (stored === "chat") return "chat";
     if (stored === "config" && hasConfig) return "config";
@@ -328,12 +328,12 @@ export function Dashboard({
     setDoneShown((n) => n + DONE_PAGE);
   }, []);
 
-  // Re-open the setup guide from the persistent header button: force it open and
-  // route to the Tasks panel where it renders.
+  // Re-open the setup guide from the persistent ? header button. The guide is
+  // a modal overlay now, so it floats over whichever tab is active — no need
+  // to route to Tasks first.
   const openSetupGuide = useCallback(() => {
     setup.openSetupGuide();
-    onTab("tasks");
-  }, [setup.openSetupGuide, onTab]);
+  }, [setup.openSetupGuide]);
 
   // The checklist created a workspace: latch the guide engaged across the
   // switch onto the new workspace (so it doesn't vanish until the first poll),
@@ -412,14 +412,10 @@ export function Dashboard({
   const stage = setup.stage;
 
   // The poll-driven header chrome (repo filter, vitals, status, freshness) only
-  // makes sense for a live board — hide it on the Config tab, when there is no
-  // workspace to poll, and on the Tasks tab while the setup checklist replaces
-  // the board there. The Chat tab still shows a live board during the connect
-  // stage, so it keeps its chrome. The brand and tab strip stay in every state.
-  const showBoardChrome =
-    !noWorkspace &&
-    activeTab !== "config" &&
-    !(activeTab === "tasks" && stage !== "hidden");
+  // makes sense for a live board — hide it on the Config tab and when there is
+  // no workspace to poll. The setup guide is an overlay now, so it never
+  // suppresses the chrome. The brand and tab strip stay in every state.
+  const showBoardChrome = !noWorkspace && activeTab !== "config";
 
   return (
     <div id="board" className={activeTab === "chat" ? "board--chat-active" : undefined}>
@@ -466,10 +462,12 @@ export function Dashboard({
         {hosted && (
           <button
             type="button"
-            className="header-setup-guide"
+            className="header-help"
+            aria-label="Setup guide"
+            title="Setup guide"
             onClick={openSetupGuide}
           >
-            Setup guide
+            <span aria-hidden="true">?</span>
           </button>
         )}
         {onLogout && (
@@ -507,54 +505,54 @@ export function Dashboard({
         aria-labelledby="tab-tasks"
         hidden={activeTab !== "tasks"}
       >
-        {stage !== "hidden" ? (
-          <SetupChecklist
-            stage={stage}
-            workspace={workspace ?? null}
-            // Stale-snapshot gate: never show another workspace's agents in
-            // the check-in indicator during a switch.
-            agents={
-              snapshot && snapshotWorkspaceId === workspaceId
-                ? snapshot.agents
-                : null
-            }
-            hubUrl={hubUrl}
-            onWorkspacesChanged={onChecklistWorkspaceCreated}
-            onSkip={setup.skip}
-          />
-        ) : (
-          <>
-            <Crew agents={agents} tasks={tasks} selectedRepo={effectiveRepo} />
-            <div className="board">
-              <div className="col">
-                <div className="colhead">
-                  <h2>Active</h2>
-                  <span className="n" id="active-count">
-                    {activeCount}
-                  </span>
-                </div>
-                <ActiveList tasks={tasks} nowMs={nowMs} selectedRepo={effectiveRepo} />
-              </div>
-              <div className="board__rule" />
-              <div className="col">
-                <div className="colhead">
-                  <h2>Done</h2>
-                  <span className="n" id="done-count">
-                    {doneCount}
-                  </span>
-                </div>
-                <DoneList
-                  tasks={tasks}
-                  nowMs={nowMs}
-                  selectedRepo={effectiveRepo}
-                  doneShown={doneShown}
-                  onLoadMore={onLoadMore}
-                />
-              </div>
+        <Crew agents={agents} tasks={tasks} selectedRepo={effectiveRepo} />
+        <div className="board">
+          <div className="col">
+            <div className="colhead">
+              <h2>Active</h2>
+              <span className="n" id="active-count">
+                {activeCount}
+              </span>
             </div>
-          </>
-        )}
+            <ActiveList tasks={tasks} nowMs={nowMs} selectedRepo={effectiveRepo} />
+          </div>
+          <div className="board__rule" />
+          <div className="col">
+            <div className="colhead">
+              <h2>Done</h2>
+              <span className="n" id="done-count">
+                {doneCount}
+              </span>
+            </div>
+            <DoneList
+              tasks={tasks}
+              nowMs={nowMs}
+              selectedRepo={effectiveRepo}
+              doneShown={doneShown}
+              onLoadMore={onLoadMore}
+            />
+          </div>
+        </div>
       </section>
+
+      {/* The first-run setup guide, as a modal overlay above the board (any
+          tab). Same stage policy as before — only the presentation moved. */}
+      {stage !== "hidden" && (
+        <SetupGuideDialog
+          stage={stage}
+          workspace={workspace ?? null}
+          // Stale-snapshot gate: never show another workspace's agents in
+          // the check-in indicator during a switch.
+          agents={
+            snapshot && snapshotWorkspaceId === workspaceId
+              ? snapshot.agents
+              : null
+          }
+          hubUrl={hubUrl}
+          onWorkspacesChanged={onChecklistWorkspaceCreated}
+          onSkip={setup.skip}
+        />
+      )}
 
       <section
         id="panel-chat"

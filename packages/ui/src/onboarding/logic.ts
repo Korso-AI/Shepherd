@@ -50,10 +50,12 @@ interface SetupStageInput {
 /**
  * Decide which setup-checklist stage (if any) should render.
  *
- * No workspace always wins: the operator is guided to create one regardless of
- * every other flag (never block signup). With a workspace, `forcedOpen` wins
- * over skips (the component renders the guide with completed steps checked),
- * then the base matrix applies:
+ * No workspace derives `"create"` unless the operator dismissed the guide —
+ * the guide is an overlay, so closing it must work even before a workspace
+ * exists (the board's empty state keeps an "Open setup guide" CTA, and with no
+ * workspace id to persist against the dismissal is session-only, so a fresh
+ * session guides again). `forcedOpen` wins over skips in both branches. With a
+ * workspace, the base matrix applies:
  *
  * - `engaged` (the guide was already visible this session) + not skipped →
  *   `"connect"` — holds the guide open across the post-create snapshot gap and
@@ -66,7 +68,8 @@ export function deriveSetupStage(input: SetupStageInput): SetupStage {
   const { hasWorkspace, agentsEverSeen, skipped, forcedOpen, engaged } = input;
 
   if (!hasWorkspace) {
-    return "create";
+    if (forcedOpen) return "create";
+    return skipped ? "hidden" : "create";
   }
 
   if (forcedOpen) {

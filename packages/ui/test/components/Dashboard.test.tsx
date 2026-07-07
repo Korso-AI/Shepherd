@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, within, waitFor, act } from "@testing-library/react";
+import { render, screen, within, waitFor, act, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   WorkspaceAgentT,
@@ -334,7 +334,7 @@ describe("Dashboard", () => {
     expect(client.announceTo).not.toHaveBeenCalled();
   });
 
-  it("hosted with no workspace lands on Tasks showing the create-stage setup checklist and never polls", async () => {
+  it("hosted with no workspace lands on Tasks with the create-stage setup dialog open and never polls", async () => {
     const client = makeMockClient({
       landscape: vi.fn().mockResolvedValue(emptyLandscape()),
     });
@@ -349,12 +349,12 @@ describe("Dashboard", () => {
     );
     await flush();
 
-    // Lands on Tasks (not Config), with the checklist in the Tasks panel.
+    // Lands on Tasks (not Config), with the checklist in an open dialog.
     expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
     // The create stage keeps step 2's "Generate token" disabled.
     expect(screen.getByRole("button", { name: "Generate token" })).toBeDisabled();
     // No workspace → the board never polls the hub.
@@ -362,7 +362,7 @@ describe("Dashboard", () => {
     expect(client.getLandscape).not.toHaveBeenCalled();
   });
 
-  it("hosted with a workspace and no agents yet shows the connect-stage checklist over the board", async () => {
+  it("hosted with a workspace and no agents yet shows the connect-stage dialog over the board", async () => {
     const client = makeMockClient({
       landscape: vi.fn().mockResolvedValue(emptyLandscape()),
     });
@@ -378,11 +378,11 @@ describe("Dashboard", () => {
     );
     await flush();
 
-    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
     // The connect stage enables "Generate token".
     expect(screen.getByRole("button", { name: "Generate token" })).toBeEnabled();
-    // The board itself is replaced by the checklist.
-    expect(document.getElementById("crew")).not.toBeInTheDocument();
+    // The board renders BEHIND the dialog — the guide no longer replaces it.
+    expect(document.getElementById("crew")).toBeInTheDocument();
   });
 
   it("hosted with agents present shows the board and never flashes the checklist", async () => {
@@ -399,21 +399,21 @@ describe("Dashboard", () => {
         />
       </ShepherdClientProvider>,
     );
-    // First render (snapshot still null) must not show the checklist.
+    // First render (snapshot still null) must not show the dialog.
     expect(
-      screen.queryByRole("region", { name: "Setup guide" }),
+      screen.queryByRole("dialog", { name: "Setup guide" }),
     ).not.toBeInTheDocument();
 
     await flush();
 
     expect(
-      screen.queryByRole("region", { name: "Setup guide" }),
+      screen.queryByRole("dialog", { name: "Setup guide" }),
     ).not.toBeInTheDocument();
     expect(document.getElementById("crew")).toBeInTheDocument();
     expect(screen.getByText("wire the b feature")).toBeInTheDocument();
   });
 
-  it("skips to the board, persists per-workspace, and reopens via the Setup guide button", async () => {
+  it("skips to the board, persists per-workspace, and reopens via the ? header button", async () => {
     const user = userEvent.setup();
     const props = {
       workspaceId: "ws1",
@@ -431,20 +431,20 @@ describe("Dashboard", () => {
     );
     await flush();
 
-    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
 
-    // Board revealed, checklist gone, skip persisted for THIS workspace.
+    // Dialog closed, skip persisted for THIS workspace, board still up.
     expect(
-      screen.queryByRole("region", { name: "Setup guide" }),
+      screen.queryByRole("dialog", { name: "Setup guide" }),
     ).not.toBeInTheDocument();
     expect(document.getElementById("crew")).toBeInTheDocument();
     expect(localStorage.getItem("shepherd.setup.skipped.ws1")).not.toBeNull();
 
-    // The persistent header button re-opens the guide.
+    // The persistent ? header button re-opens the guide.
     await user.click(screen.getByRole("button", { name: "Setup guide" }));
-    expect(screen.getByRole("region", { name: "Setup guide" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Setup guide" })).toBeInTheDocument();
 
     unmount();
 
@@ -459,16 +459,16 @@ describe("Dashboard", () => {
     );
     await flush();
     expect(
-      screen.queryByRole("region", { name: "Setup guide" }),
+      screen.queryByRole("dialog", { name: "Setup guide" }),
     ).not.toBeInTheDocument();
     expect(document.getElementById("crew")).toBeInTheDocument();
   });
 
-  it("self-host (no hasWorkspace) renders no checklist or Setup guide button", async () => {
+  it("self-host (no hasWorkspace) renders no setup dialog or ? header button", async () => {
     await renderDashboard();
 
     expect(
-      screen.queryByRole("region", { name: "Setup guide" }),
+      screen.queryByRole("dialog", { name: "Setup guide" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Setup guide" }),
@@ -547,11 +547,11 @@ describe("Dashboard setup checklist", () => {
     });
 
     // ws_1: the connect-stage checklist renders; skip it.
-    await screen.findByRole("region", { name: /setup guide/i });
+    await screen.findByRole("dialog", { name: /setup guide/i });
     await userEvent.click(screen.getByRole("button", { name: /skip for now/i }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("region", { name: /setup guide/i }),
+        screen.queryByRole("dialog", { name: /setup guide/i }),
       ).not.toBeInTheDocument(),
     );
 
@@ -570,7 +570,7 @@ describe("Dashboard setup checklist", () => {
       </ShepherdClientProvider>,
     );
 
-    await screen.findByRole("region", { name: /setup guide/i });
+    await screen.findByRole("dialog", { name: /setup guide/i });
     expect(screen.getByText("Beta")).toBeInTheDocument();
   });
 
@@ -609,7 +609,7 @@ describe("Dashboard setup checklist", () => {
     // ws_1 is established (has an agent): no checklist.
     await flush();
     expect(
-      screen.queryByRole("region", { name: /setup guide/i }),
+      screen.queryByRole("dialog", { name: /setup guide/i }),
     ).not.toBeInTheDocument();
 
     // Switch to the empty ws_2; its poll has NOT resolved yet.
@@ -631,7 +631,7 @@ describe("Dashboard setup checklist", () => {
     // no "checked in" indicator names ws_1's agent while ws_2's first poll is
     // in flight.
     expect(
-      screen.queryByRole("region", { name: /setup guide/i }),
+      screen.queryByRole("dialog", { name: /setup guide/i }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText(/wolf checked in/)).not.toBeInTheDocument();
 
@@ -639,7 +639,7 @@ describe("Dashboard setup checklist", () => {
     await flush();
 
     // ws_2's own (empty) poll landed → the connect-stage checklist, waiting.
-    await screen.findByRole("region", { name: /setup guide/i });
+    await screen.findByRole("dialog", { name: /setup guide/i });
     expect(screen.getByText(/waiting for your agent to check in/i)).toBeInTheDocument();
     expect(screen.queryByText(/wolf checked in/)).not.toBeInTheDocument();
   });
@@ -676,15 +676,73 @@ describe("Dashboard setup checklist", () => {
 
     // Checklist still up, now showing the success state.
     await screen.findByText(/wolf checked in/i);
-    expect(screen.getByRole("region", { name: /setup guide/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /setup guide/i })).toBeInTheDocument();
 
     // Dismiss → the real board.
     await userEvent.click(screen.getByRole("button", { name: /go to your board/i }));
     await waitFor(() =>
       expect(
-        screen.queryByRole("region", { name: /setup guide/i }),
+        screen.queryByRole("dialog", { name: /setup guide/i }),
       ).not.toBeInTheDocument(),
     );
     expect(document.getElementById("crew")).toBeInTheDocument();
+  });
+
+  it("the ✕ close button dismisses the dialog and persists the per-workspace skip", async () => {
+    renderChecklistDashboard({ workspaceId: "ws_1", workspace: WS });
+    await screen.findByRole("dialog", { name: /setup guide/i });
+
+    await userEvent.click(screen.getByRole("button", { name: /close setup guide/i }));
+
+    expect(
+      screen.queryByRole("dialog", { name: /setup guide/i }),
+    ).not.toBeInTheDocument();
+    expect(localStorage.getItem("shepherd.setup.skipped.ws_1")).not.toBeNull();
+  });
+
+  it("Escape dismisses the dialog", async () => {
+    renderChecklistDashboard({ workspaceId: "ws_1", workspace: WS });
+    await screen.findByRole("dialog", { name: /setup guide/i });
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(
+      screen.queryByRole("dialog", { name: /setup guide/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("a backdrop click dismisses the dialog; clicks inside do not", async () => {
+    renderChecklistDashboard({ workspaceId: "ws_1", workspace: WS });
+    const dialog = await screen.findByRole("dialog", { name: /setup guide/i });
+
+    // A click INSIDE the dialog must not close it.
+    fireEvent.click(dialog);
+    expect(screen.getByRole("dialog", { name: /setup guide/i })).toBeInTheDocument();
+
+    const backdrop = document.querySelector(".shepherd-modal__backdrop");
+    expect(backdrop).not.toBeNull();
+    fireEvent.click(backdrop!);
+
+    expect(
+      screen.queryByRole("dialog", { name: /setup guide/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("the create stage (no workspace) is dismissible and re-openable via the ? button", async () => {
+    renderChecklistDashboard({ hasWorkspace: false });
+    await screen.findByRole("dialog", { name: /setup guide/i });
+
+    // Closing works even before a workspace exists (session-only: there is no
+    // workspace id to persist a skip against).
+    await userEvent.click(screen.getByRole("button", { name: /close setup guide/i }));
+    expect(
+      screen.queryByRole("dialog", { name: /setup guide/i }),
+    ).not.toBeInTheDocument();
+    expect(localStorage.length).toBe(0);
+
+    // The ? header button brings it back at the create stage.
+    await userEvent.click(screen.getByRole("button", { name: "Setup guide" }));
+    const dialog = screen.getByRole("dialog", { name: /setup guide/i });
+    expect(within(dialog).getByLabelText(/workspace name/i)).toBeInTheDocument();
   });
 });

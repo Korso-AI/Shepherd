@@ -25,6 +25,14 @@ describe("deriveSetupStage", () => {
       expect(deriveSetupStage(input(false, null, false, false))).toBe("create");
     });
 
+    it("no workspace + skipped → hidden (the overlay was dismissed this session)", () => {
+      expect(deriveSetupStage(input(false, null, true, false))).toBe("hidden");
+    });
+
+    it("no workspace + skipped + forcedOpen → create (the ? re-opens the guide)", () => {
+      expect(deriveSetupStage(input(false, null, true, true))).toBe("create");
+    });
+
     it("workspace + agents never seen + not skipped → connect (invited user)", () => {
       expect(deriveSetupStage(input(true, false, false, false))).toBe("connect");
     });
@@ -67,13 +75,14 @@ describe("deriveSetupStage", () => {
     // [hasWorkspace, agentsEverSeen, skipped, forcedOpen] → expected
     const cases: Array<[boolean, boolean | null, boolean, boolean, SetupStage]> = [
       // forcedOpen = false ---------------------------------------------------
-      // no workspace always → create (never block signup)
+      // no workspace → create unless dismissed (the overlay is closable; the
+      // board's empty state still carries an "Open setup guide" CTA)
       [false, null, false, false, "create"],
-      [false, null, true, false, "create"],
+      [false, null, true, false, "hidden"],
       [false, false, false, false, "create"],
-      [false, false, true, false, "create"],
+      [false, false, true, false, "hidden"],
       [false, true, false, false, "create"],
-      [false, true, true, false, "create"],
+      [false, true, true, false, "hidden"],
       // workspace + agents pending (null) → hidden (avoid flash)
       [true, null, false, false, "hidden"],
       [true, null, true, false, "hidden"],
@@ -113,10 +122,10 @@ describe("deriveSetupStage", () => {
   describe("full matrix with engaged=true", () => {
     // engaged only changes outcomes for a workspace that is NOT skipped and
     // NOT already connect: those rows hold at "connect" instead of "hidden".
-    // Skips still win; no-workspace still always derives "create".
+    // Skips still win — including with no workspace (dismissed overlay).
     const cases: Array<[boolean, boolean | null, boolean, boolean, SetupStage]> = [
       [false, null, false, false, "create"],
-      [false, null, true, false, "create"],
+      [false, null, true, false, "hidden"],
       [false, true, false, true, "create"],
       [true, null, false, false, "connect"],
       [true, null, true, false, "hidden"],
