@@ -103,8 +103,15 @@ export async function findMembership(
 /**
  * Insert-or-refresh an account's display profile. The browser-via-BFF path
  * upserts trusted profile headers on every request so the snapshot stays fresh.
- * All five display fields are overwritten on conflict (account_id is the PK);
- * `updated_at` is bumped to now().
+ *
+ * On conflict each field is COALESCEd — a NEW non-null value overwrites, but a
+ * null (an ABSENT header) preserves the existing value rather than wiping it.
+ * The header being absent means "no news", NOT "clear this field": a single
+ * header-less-but-authenticated request must not erase a good snapshot and
+ * collapse the roster to the raw accountId. `updated_at` is always bumped.
+ * (The trade-off: a field cannot be cleared back to null via this path — an
+ * acceptable cost for a best-effort display snapshot vs. losing a known-good
+ * name.)
  */
 export async function upsertAccountProfile(
   db: Queryable,
@@ -122,10 +129,10 @@ export async function upsertAccountProfile(
        (account_id, display_name, github_login, email, avatar_url)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (account_id) DO UPDATE SET
-       display_name = EXCLUDED.display_name,
-       github_login = EXCLUDED.github_login,
-       email        = EXCLUDED.email,
-       avatar_url   = EXCLUDED.avatar_url,
+       display_name = COALESCE(EXCLUDED.display_name, account_profiles.display_name),
+       github_login = COALESCE(EXCLUDED.github_login, account_profiles.github_login),
+       email        = COALESCE(EXCLUDED.email,        account_profiles.email),
+       avatar_url   = COALESCE(EXCLUDED.avatar_url,   account_profiles.avatar_url),
        updated_at   = now()`,
     [accountId, displayName, githubLogin, email, avatarUrl]
   );
