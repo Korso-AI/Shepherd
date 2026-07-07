@@ -1076,6 +1076,43 @@ describe("FeedbackRequest", () => {
   });
 });
 
+describe("FeedbackRequest context", () => {
+  it("parses without context (old clients keep working)", () => {
+    const parsed = FeedbackRequest.parse({ type: "bug", body: "x" });
+    expect(parsed.context).toBeUndefined();
+  });
+
+  it("parses a full context object", () => {
+    const context = {
+      route: "/shepherd",
+      appVersion: "0.14.0",
+      userAgent: "Mozilla/5.0",
+      viewport: "1280x720",
+    };
+    const parsed = FeedbackRequest.parse({ type: "bug", body: "x", context });
+    expect(parsed.context).toEqual(context);
+  });
+
+  it("accepts a partial context and strips unknown fields", () => {
+    const parsed = FeedbackRequest.parse({
+      type: "bug",
+      body: "x",
+      context: { route: "/x", extra: "nope" },
+    });
+    expect(parsed.context).toEqual({ route: "/x" });
+  });
+
+  it("rejects an oversized userAgent", () => {
+    expect(() =>
+      FeedbackRequest.parse({
+        type: "bug",
+        body: "x",
+        context: { userAgent: "u".repeat(513) },
+      })
+    ).toThrow();
+  });
+});
+
 describe("FeedbackResponse", () => {
   it("parses { ok: true, id }", () => {
     const r = FeedbackResponse.parse({ ok: true, id: VALID_UUID });

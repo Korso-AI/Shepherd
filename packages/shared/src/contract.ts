@@ -623,13 +623,24 @@ export const TransferOwnershipResponse = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// submitFeedback({ type, body }) -> { ok: true, id }
+// submitFeedback({ type, body, context? }) -> { ok: true, id }
 // ---------------------------------------------------------------------------
 export const FeedbackType = z.enum(["bug", "suggestion", "other"]);
+
+// Optional client-gathered context attached by the feedback widget. Every
+// field optional and length-capped: old clients that omit `context` entirely
+// keep working, and no field is trusted beyond being a short string.
+export const FeedbackContext = z.object({
+  route: z.string().max(256).optional(),
+  appVersion: z.string().max(256).optional(),
+  userAgent: z.string().max(512).optional(),
+  viewport: z.string().max(256).optional(),
+});
 
 export const FeedbackRequest = z.object({
   type: FeedbackType,
   body: z.string().trim().min(1).max(4000),
+  context: FeedbackContext.optional(),
 });
 
 export const FeedbackResponse = z.object({

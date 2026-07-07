@@ -63,6 +63,7 @@ export {
   TransferOwnershipRequest,
   TransferOwnershipResponse,
   FeedbackType,
+  FeedbackContext,
   FeedbackRequest,
   FeedbackResponse,
   TrendPoint,
@@ -129,6 +130,7 @@ import type {
   TransferOwnershipRequest,
   TransferOwnershipResponse,
   FeedbackType,
+  FeedbackContext,
   FeedbackRequest,
   FeedbackResponse,
   TrendPoint,
@@ -203,6 +205,7 @@ export type SetMemberRoleResponseT = z.infer<typeof SetMemberRoleResponse>;
 export type TransferOwnershipRequestT = z.infer<typeof TransferOwnershipRequest>;
 export type TransferOwnershipResponseT = z.infer<typeof TransferOwnershipResponse>;
 export type FeedbackTypeT = z.infer<typeof FeedbackType>;
+export type FeedbackContextT = z.infer<typeof FeedbackContext>;
 export type FeedbackRequestT = z.infer<typeof FeedbackRequest>;
 export type FeedbackResponseT = z.infer<typeof FeedbackResponse>;
 
