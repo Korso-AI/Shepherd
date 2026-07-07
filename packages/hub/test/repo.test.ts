@@ -33,6 +33,8 @@ import {
   pruneChangeRecords,
   updateSessionBranch,
   getWorkspaceLandscape,
+  upsertAccountProfile,
+  getAccountProfile,
   type SessionWithAgent,
 } from "../src/repo.js";
 import { withTransaction } from "../src/db.js";
@@ -2288,6 +2290,123 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       expect(result.announcements[0]!.body).toBe("msg-54");
       expect(result.announcements.some((a) => a.body === "msg-0")).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// account_profiles — the BFF display snapshot
+//
+// The snapshot is refreshed on every browser-via-BFF request from trusted
+// x-display-name / x-email / x-github-login / x-avatar-url headers. A request
+// that authenticates the account but happens to omit one of those headers must
+// NOT wipe the previously-good value: an absent header means "no news", not
+// "erase it". Regression guard for the member roster collapsing to the raw
+// accountId after a header-less request clobbered a good profile with NULLs.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () => {
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
+
+  afterEach(async () => {
+    await pool.query(`DELETE FROM account_profiles WHERE account_id LIKE 'prof-%'`);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("inserts a fresh profile row from the supplied headers", async () => {
+    await upsertAccountProfile(pool, {
+      accountId: "prof-new",
+      displayName: "Korso Admin",
+      githubLogin: null,
+      email: null,
+      avatarUrl: null,
+    });
+
+    const p = await getAccountProfile(pool, "prof-new");
+    expect(p).toEqual({
+      display_name: "Korso Admin",
+      github_login: null,
+      email: null,
+    });
+  });
+
+  it("does NOT clobber a good display_name when a later request omits the header", async () => {
+    // First request: the trusted BFF snapshot lands with a real name.
+    await upsertAccountProfile(pool, {
+      accountId: "prof-keep",
+      displayName: "Korso Admin",
+      githubLogin: null,
+      email: null,
+      avatarUrl: null,
+    });
+
+    // Second request authenticates the same account but arrives WITHOUT any
+    // display headers (all null). The good name must survive.
+    await upsertAccountProfile(pool, {
+      accountId: "prof-keep",
+      displayName: null,
+      githubLogin: null,
+      email: null,
+      avatarUrl: null,
+    });
+
+    const p = await getAccountProfile(pool, "prof-keep");
+    expect(p?.display_name).toBe("Korso Admin");
+  });
+
+  it("still overwrites with a NEW non-null value (updates are not blocked)", async () => {
+    await upsertAccountProfile(pool, {
+      accountId: "prof-update",
+      displayName: "Old Name",
+      githubLogin: "old-login",
+      email: "old@example.com",
+      avatarUrl: null,
+    });
+
+    await upsertAccountProfile(pool, {
+      accountId: "prof-update",
+      displayName: "New Name",
+      githubLogin: null, // omitted this time — must be preserved
+      email: "new@example.com",
+      avatarUrl: null,
+    });
+
+    const p = await getAccountProfile(pool, "prof-update");
+    expect(p).toEqual({
+      display_name: "New Name",
+      github_login: "old-login", // preserved from the first request
+      email: "new@example.com",
+    });
+  });
+
+  it("preserves avatar_url too when a later request omits it", async () => {
+    await upsertAccountProfile(pool, {
+      accountId: "prof-avatar",
+      displayName: "Korso Admin",
+      githubLogin: null,
+      email: null,
+      avatarUrl: "https://example.com/a.png",
+    });
+    await upsertAccountProfile(pool, {
+      accountId: "prof-avatar",
+      displayName: null,
+      githubLogin: null,
+      email: null,
+      avatarUrl: null,
+    });
+
+    const { rows } = await pool.query<{ avatar_url: string | null }>(
+      `SELECT avatar_url FROM account_profiles WHERE account_id = $1`,
+      ["prof-avatar"]
+    );
+    expect(rows[0]?.avatar_url).toBe("https://example.com/a.png");
   });
 });
 
