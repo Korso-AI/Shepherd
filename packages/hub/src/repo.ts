@@ -14,6 +14,7 @@ import type {
   ClaimT,
   AnnouncementT,
   ChangeRecordT,
+  FeedbackContextT,
   RoleT,
   WorkspaceSummaryT,
   TokenSummaryT,
@@ -2279,14 +2280,18 @@ export async function insertFeedback(
     accountId: string | null;
     type: string;
     body: string;
+    /** Client-gathered context (route/appVersion/userAgent/viewport), already
+     * validated + length-capped by FeedbackRequest. NULL when the (older)
+     * client sent none. */
+    context: FeedbackContextT | null;
   }
 ): Promise<string> {
-  const { workspaceId, accountId, type, body } = params;
+  const { workspaceId, accountId, type, body, context } = params;
   const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO feedback (workspace_id, account_id, type, body)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO feedback (workspace_id, account_id, type, body, context)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [workspaceId, accountId, type, body]
+    [workspaceId, accountId, type, body, context]
   );
   return rows[0]!.id;
 }

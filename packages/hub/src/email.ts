@@ -63,3 +63,63 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+// ---------------------------------------------------------------------------
+// Feedback notifications
+// ---------------------------------------------------------------------------
+
+import type { FeedbackContextT } from "@shepherd/shared";
+
+export interface SendFeedbackEmailParams {
+  id: string;
+  type: string;
+  body: string;
+  accountId: string | null;
+  workspaceId: string | null;
+  context: FeedbackContextT | null;
+}
+
+/**
+ * Email one feedback-widget submission to the configured inbox. Same contract
+ * as sendInviteEmail: the caller checks configuration BEFORE calling, and this
+ * throws on a Resend rejection — but unlike invites, the feedback caller fires
+ * and forgets (operations/feedback.ts), so a throw is logged, never surfaced.
+ */
+export async function sendFeedbackEmail(
+  params: SendFeedbackEmailParams,
+  config: { RESEND_API_KEY: string; INVITE_EMAIL_FROM: string; FEEDBACK_EMAIL_TO: string }
+): Promise<void> {
+  const { id, type, body, accountId, workspaceId, context } = params;
+
+  const snippet = body.length > 60 ? `${body.slice(0, 60)}…` : body;
+  const text = [
+    body,
+    "",
+    `type: ${type}`,
+    `account: ${accountId ?? "—"}`,
+    `workspace: ${workspaceId ?? "—"}`,
+    ...Object.entries(context ?? {})
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}: ${value}`),
+    `feedback id: ${id}`,
+  ].join("\n");
+
+  const res = await fetch(RESEND_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: config.INVITE_EMAIL_FROM,
+      to: config.FEEDBACK_EMAIL_TO,
+      subject: `[Feedback] ${type} — ${snippet}`,
+      text,
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Resend API error (${res.status}): ${detail || res.statusText}`);
+  }
+}

@@ -515,24 +515,43 @@
         text-transform:uppercase; color:var(--ink2); }
       .shepherd-feedback__panel [role="status"] { margin:0; font-size:13px; color:var(--ink2); }
       .shepherd-feedback__panel [role="alert"] { margin:0; font-size:13px; color:var(--drop); }
-      .shepherd-feedback__types { display:flex; gap:6px; }
+      .shepherd-feedback__header { display:flex; align-items:center; justify-content:space-between; }
+      .shepherd-feedback__close {
+        padding:0 4px; border:none; background:none; color:var(--ink3);
+        font:inherit; font-size:16px; line-height:1; cursor:pointer; }
+      .shepherd-feedback__close:hover { color:var(--ink); }
+      /* Segmented control: one connected pill, dividers between segments. */
+      .shepherd-feedback__types {
+        display:flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
       .shepherd-feedback__types button {
-        flex:1; padding:6px 0; border-radius:8px; border:1px solid var(--line);
-        background:transparent; color:var(--ink2); font-size:12.5px; font:inherit;
-        cursor:pointer; transition:background .12s ease, color .12s ease; }
-      .shepherd-feedback__types button[aria-pressed="true"] {
-        background:var(--ink); color:var(--bg); border-color:var(--ink); font-weight:600; }
+        flex:1; padding:6px 0; border:none; background:transparent; color:var(--ink2);
+        font:inherit; font-size:12.5px; cursor:pointer;
+        transition:background .12s ease, color .12s ease; }
+      .shepherd-feedback__types button + button { border-left:1px solid var(--line); }
+      .shepherd-feedback__types button[aria-checked="true"] {
+        background:var(--ink); color:var(--bg); font-weight:600; }
       .shepherd-feedback__panel textarea {
         min-height:80px; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
         background:var(--bg); color:var(--ink); font:inherit; resize:vertical; }
       .shepherd-feedback__panel textarea::placeholder { color:var(--ink3); }
       .shepherd-feedback__panel textarea:focus {
         outline:none; border-color:var(--terr); box-shadow:0 0 0 3px rgba(122,106,72,.14); }
-      .shepherd-feedback__panel > button {
+      .shepherd-feedback__count { margin:0; font-size:11.5px; color:var(--ink3); text-align:right; }
+      .shepherd-feedback__footer {
+        display:flex; align-items:center; justify-content:space-between; gap:10px; }
+      .shepherd-feedback__hint { font-size:11.5px; color:var(--ink3); }
+      .shepherd-feedback__footer button {
         padding:9px 16px; border-radius:8px; border:1px solid var(--ink);
         background:var(--ink); color:var(--bg); font-weight:600; cursor:pointer; font:inherit; }
-      .shepherd-feedback__panel > button:hover:not(:disabled) { background:#413a2a; }
-      .shepherd-feedback__panel > button:disabled { opacity:.55; cursor:default; }
+      .shepherd-feedback__footer button:hover:not(:disabled) { background:#413a2a; }
+      .shepherd-feedback__footer button:disabled { opacity:.55; cursor:default; }
+      @media (prefers-reduced-motion: no-preference) {
+        .shepherd-feedback__panel { animation:shepherd-feedback-in .12s ease-out; }
+      }
+      @keyframes shepherd-feedback-in {
+        from { opacity:0; transform:translateY(6px); }
+        to   { opacity:1; transform:none; }
+      }
 
       /* Modal — a centered card over a dimmed backdrop. Used by the type-to-confirm
          Delete workspace dialog. The first true modal in the app (the feedback
