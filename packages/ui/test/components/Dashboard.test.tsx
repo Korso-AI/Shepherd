@@ -349,7 +349,7 @@ describe("Dashboard", () => {
     );
     await flush();
 
-    // Lands on Tasks (not Config), with the checklist in an open dialog.
+    // Lands on Tasks (not Settings), with the checklist in an open dialog.
     expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
       "aria-selected",
       "true",

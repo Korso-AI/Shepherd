@@ -10,3 +10,13 @@ dist
 # Per-machine Shepherd link marker — must never ship in the repo, or fresh
 # clones would arrive pre-linked and skip the first-run ask.
 .shepherd
+# Local-only dev harness for iterating on @korso/shepherd-ui against a local Hub
+# (a BFF-header proxy config + a full-UI entry point + a data seed script).
+# Machine-specific and reference a local dev shared-secret; never part of the
+# public repo, and never published (package.json `files` ships only dist/lib).
+# DEV-LOCAL.md is the runbook tying them together — read it first.
+/DEV-LOCAL.md
+/seed-dev.sh
+/packages/ui/vite.config.dev.ts
+/packages/ui/devFull.html
+/packages/ui/src/devFull.tsx

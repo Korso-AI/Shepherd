@@ -661,8 +661,15 @@
       .shepherd-setup .card-head { margin-bottom:14px; }
       .shepherd-setup .card-head h3 { margin:0; font-size:15px; font-weight:600;
         color:var(--ink); }
-      .shepherd-setup .card-sub { margin:4px 0 0; font-size:12.5px; color:var(--ink3); }
+      .shepherd-setup .card-sub { margin:4px 0 0; font-size:12.5px; color:var(--ink2); }
       .shepherd-setup .card-body { display:flex; flex-direction:column; gap:14px; }
+      .shepherd-setup .install-command pre { padding-right:62px; }
+      .shepherd-setup .install-command__copy.shepherd-setup__copy {
+        top:8px; right:8px; width:auto; height:24px; padding:0 8px;
+        border:1px solid var(--line2); border-radius:999px; background:var(--card);
+        font-size:12px; font-weight:600; }
+      .shepherd-setup .install-command__copy.shepherd-setup__copy:hover {
+        background:var(--bg); color:var(--ink); }
       /* Descendant (not child) selectors: the create error renders INSIDE the
          inline <form>, not as a direct child of .card-body. */
       .shepherd-setup .card-body [role="alert"] { margin:0; color:var(--drop); font-size:13px; }
@@ -679,7 +686,7 @@
       .shepherd-setup .field__row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
       .shepherd-setup .field__row > input { flex:1; min-width:200px; }
       .shepherd-setup label { font-size:11px; font-weight:600; letter-spacing:.05em;
-        text-transform:uppercase; color:var(--ink3); }
+        text-transform:uppercase; color:var(--ink2); }
       /* Feature value-prop tiles for step 3. */
       .shepherd-setup__cards { display:grid; grid-template-columns:repeat(2, 1fr); gap:12px; }
       .shepherd-setup__cards .card { background:var(--bg); border:1px solid var(--line2);
