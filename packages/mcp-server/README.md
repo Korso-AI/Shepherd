@@ -40,7 +40,7 @@ first fetch, and `@korso/shepherd@latest` picks up updates automatically.
 
 | Variable | Description | Example |
 |---|---|---|
-| `HUB_URL` | Base URL of the deployed hub. Must be a **full valid URL**; plain `http` to a non-localhost host draws a stderr warning (use https) | `https://shepherd.example.com` |
+| `HUB_URL` | Base URL of the deployed hub. Must be a **full valid URL**; plain `http` to a **non-loopback** host is **refused** (the token would travel in cleartext) unless you set `SHEPHERD_ALLOW_INSECURE_HTTP=1` — loopback (`localhost`/`127.0.0.1`/`::1`) http is always allowed for local dev | `https://shepherd.example.com` |
 | `SHEPHERD_TOKEN` | **Hosted-hub credential** — a minted `shp_…` token from the dashboard. It carries its own workspace identity (so `WORKSPACE` is ignored) and **wins over `TEAM_TOKEN`** when both are set | `shp_abc123` |
 | `TEAM_TOKEN` | **Self-host credential** — the shared bearer token matching the hub's `TEAM_TOKEN` | `tok_abc123` |
 
@@ -65,6 +65,7 @@ override only to replace what's detected:
 | `HEARTBEAT_INTERVAL_SECONDS` | defaults to `60` | `30` |
 | `SHEPHERD_INBOX_DIR` | defaults to `~/.shepherd/inbox`. Override only to relocate the **announcement-push** inbox (see below); the background heartbeat writes incoming announcements here. If you set it, point your client hook/extension at the **same** dir | `~/.shepherd/inbox` |
 | `SHEPHERD_NO_AUTO_HOOKS` | unset — set to `1`/`true` to stop the server from auto-installing the client delivery hook on first run (see below) | `1` |
+| `SHEPHERD_ALLOW_INSECURE_HTTP` | unset — set to `1`/`true` to permit a plain-`http` `HUB_URL` to a **non-loopback** host (otherwise refused; the token travels unencrypted). Loopback http never needs it | `1` |
 
 **Device-identity cache.** Whenever `HUMAN` is unset and git **does** detect a
 name, that name is cached for your OS user at `~/.shepherd/identity.json`. A
@@ -98,6 +99,29 @@ default `~/.shepherd/inbox`). That file is then drained by two paths:
    gets installed, for auditing or manual setup.
 
 ### Automatic hook install
+
+> **Consent disclosure — the server edits your client config on first run.**
+> To deliver announcements passively, the **first time** the server runs under a
+> given client on this machine it **writes to that client's own configuration
+> file in your home directory**, without a separate prompt:
+>
+> | Client | File it edits/creates | What it adds |
+> |---|---|---|
+> | Claude Code | `~/.claude/settings.json` | `SessionStart` + `PreToolUse` hook entries |
+> | Codex | `~/.codex/config.toml` | a `[[hooks.UserPromptSubmit]]` block (+ `features.hooks = true`) |
+> | Cursor | `~/.cursor/hooks.json` | a `beforeSubmitPrompt` entry |
+> | Pi | `~/.pi/agent/extensions/shepherd-inbox.js` | copies the bundled extension |
+>
+> This edit is **additive only** (existing keys/entries are never modified,
+> removed, or reordered), **marker-guarded** (attempted **at most once per
+> machine+client**, recorded under `~/.shepherd/hooks/`; if you later remove the
+> hook it is **never re-added**), **version-pinned** (the installed command runs
+> the exact shipped build, not a floating `npx latest`), and **fail-open** (any
+> file it can't confidently parse is left untouched with a stderr notice).
+>
+> **To opt out entirely, set `SHEPHERD_NO_AUTO_HOOKS=1`** — the server then never
+> touches any client config, and you can wire the hook manually using the
+> per-client snippets below.
 
 On its first `initialize` handshake the server detects the connecting client
 and, for Claude Code / Codex / Pi, installs the delivery hook **once per

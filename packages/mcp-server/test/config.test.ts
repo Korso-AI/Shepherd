@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { parseConfig } from "../src/config.js";
+import { describe, it, expect, vi } from "vitest";
+import { parseConfig, assertHubUrlAllowed } from "../src/config.js";
 
 const VALID_ENV = {
   HUB_URL: "http://localhost:4000",
@@ -156,5 +156,46 @@ describe("parseConfig", () => {
       SHEPHERD_INBOX_DIR: "/tmp/shepherd-inbox",
     });
     expect(config.SHEPHERD_INBOX_DIR).toBe("/tmp/shepherd-inbox");
+  });
+});
+
+// Insecure http HUB_URL: cleartext to a non-loopback host is refused unless the
+// operator explicitly opts in. Loopback http and https always pass.
+describe("assertHubUrlAllowed", () => {
+  it("allows https to any host", () => {
+    expect(() => assertHubUrlAllowed("https://shepherd.example.com", {})).not.toThrow();
+  });
+
+  it("allows plain http to loopback hosts (local dev)", () => {
+    for (const url of [
+      "http://localhost:4000",
+      "http://127.0.0.1:4000",
+      "http://[::1]:4000",
+    ]) {
+      expect(() => assertHubUrlAllowed(url, {})).not.toThrow();
+    }
+  });
+
+  it("REFUSES plain http to a non-loopback host without the opt-in", () => {
+    expect(() => assertHubUrlAllowed("http://hub.example.com", {})).toThrow(
+      /cleartext|unencrypted|SHEPHERD_ALLOW_INSECURE_HTTP/,
+    );
+  });
+
+  it("permits non-loopback http when SHEPHERD_ALLOW_INSECURE_HTTP is set (with a stderr warning)", () => {
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    for (const val of ["1", "true", "yes", "YES"]) {
+      expect(() =>
+        assertHubUrlAllowed("http://hub.example.com", { SHEPHERD_ALLOW_INSECURE_HTTP: val }),
+      ).not.toThrow();
+    }
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
+  });
+
+  it("does not opt in for a non-truthy flag value", () => {
+    expect(() =>
+      assertHubUrlAllowed("http://hub.example.com", { SHEPHERD_ALLOW_INSECURE_HTTP: "0" }),
+    ).toThrow();
   });
 });
