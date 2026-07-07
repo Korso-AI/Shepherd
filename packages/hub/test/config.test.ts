@@ -23,6 +23,7 @@ describe("loadConfig — pure (no Postgres needed)", () => {
     expect(cfg.STALE_AFTER_SECONDS).toBe(120);
     expect(cfg.CHANGE_RECORD_TTL_SECONDS).toBe(259200);
     expect(cfg.HUB_ADMIN_LABEL).toBe("admin");
+    expect(cfg.FEEDBACK_EMAIL_TO).toBe("dev@korsoai.com");
     // Optional with no schema default — the effective default is applied at the
     // call sites (DEFAULT_UNCOMMITTED_GRACE_SECONDS), so it is undefined here.
     expect(cfg.UNCOMMITTED_GRACE_SECONDS).toBeUndefined();
