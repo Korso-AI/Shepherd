@@ -216,6 +216,14 @@ describe("SetupChecklist", () => {
     expect(client.mintAccountToken).toHaveBeenCalledWith({ name: "Acme agent" });
   });
 
+  it("marks the text copy button for welcome-panel spacing", () => {
+    renderPanel({ stage: "connect", workspace: WS, agents: [] });
+
+    expect(screen.getByRole("button", { name: /copy command/i })).toHaveClass(
+      "shepherd-setup__copy",
+    );
+  });
+
   it("swaps the install command when a different tool is picked", async () => {
     renderPanel({ stage: "connect", workspace: WS, agents: [] });
 

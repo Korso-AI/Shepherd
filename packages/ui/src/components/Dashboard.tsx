@@ -146,6 +146,12 @@ export interface DashboardProps {
    */
   config?: ReactNode;
   /**
+   * Optional host-supplied brand node rendered at the start of the header row
+   * (replacing the default "Shepherd" title). The hosted Korso console passes its
+   * product switcher here so the logo sits inline with the workspace switcher.
+   */
+  brand?: ReactNode;
+  /**
    * The hosted-shell workspace switcher, rendered in the header beside the brand
    * on EVERY tab (not just Config) so the active workspace is always visible.
    * Omitted for self-host, which has a single implicit team workspace.
@@ -204,6 +210,7 @@ export function Dashboard({
   workspaceId,
   workspace,
   config,
+  brand,
   switcher,
   hasWorkspace,
   onLogout,
@@ -250,7 +257,7 @@ export function Dashboard({
     ? [
         { id: "tasks", label: "Tasks" },
         { id: "chat", label: "Chat" },
-        { id: "config", label: "Config" },
+        { id: "config", label: "Settings" },
       ]
     : [
         { id: "tasks", label: "Tasks" },
@@ -420,12 +427,14 @@ export function Dashboard({
   return (
     <div id="board" className={activeTab === "chat" ? "board--chat-active" : undefined}>
       <header>
-        {/* The brand is the document <h1> so the outline is valid (h1 → the
-            panels' h2). Inline resets keep it visually identical to the prior
-            <span>; consumer CSS still targets `.brand`. */}
-        <h1 className="brand" style={{ margin: 0, font: "inherit" }}>
-          Shepherd
-        </h1>
+        {brand ?? (
+          /* The brand is the document <h1> so the outline is valid (h1 → the
+             panels' h2). Inline resets keep it visually identical to the prior
+             <span>; consumer CSS still targets `.brand`. */
+          <h1 className="brand" style={{ margin: 0, font: "inherit" }}>
+            Shepherd
+          </h1>
+        )}
         {/* The workspace switcher rides beside the brand on every tab, so the
             active workspace is always in view — independent of board chrome. */}
         {switcher}

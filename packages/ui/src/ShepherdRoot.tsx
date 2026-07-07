@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { Dashboard } from "./components/Dashboard.js";
 import { WorkspaceSwitcher } from "./config/WorkspaceSwitcher.js";
@@ -29,6 +29,11 @@ import { describeError } from "./client.js";
 
 export interface ShepherdRootProps {
   /**
+   * Optional host brand node for the dashboard header (e.g. the Korso product
+   * switcher). Replaces the default "Shepherd" title when supplied.
+   */
+  brand?: ReactNode;
+  /**
    * The DIRECT Hub URL embedded in the agent install command (planning decision
    * #2: the headless agent connects straight to the Hub, not the BFF). Defaults
    * to the client's baseUrl, which is correct for self-host.
@@ -46,7 +51,7 @@ type LoadState =
   | { status: "ready"; workspaces: WorkspaceSummaryT[] }
   | { status: "error"; message: string };
 
-export function ShepherdRoot({ hubUrl, onLogout }: ShepherdRootProps) {
+export function ShepherdRoot({ brand, hubUrl, onLogout }: ShepherdRootProps) {
   const client = useShepherdClient();
 
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
@@ -149,6 +154,7 @@ export function ShepherdRoot({ hubUrl, onLogout }: ShepherdRootProps) {
         workspaceId={selected?.id}
         workspace={selected ?? undefined}
         config={configSection}
+        brand={brand}
         switcher={switcher}
         hasWorkspace={hasWorkspace}
         hubUrl={hubUrl}

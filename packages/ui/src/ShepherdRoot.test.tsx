@@ -6,9 +6,10 @@ import { ShepherdRoot } from "./ShepherdRoot.js";
 import { makeMockClient } from "./test/mockClient.js";
 
 // Proves the hosted shell mounts inside the provider and renders ONE flat tab
-// strip [Tasks, Chat, Config] — Config is a third peer tab beside the original
-// Tasks/Chat board views, not a nested second tab layer. The shell lands after
-// listWorkspaces() resolves, so we inject a workspace and wait for the load.
+// strip [Tasks, Chat, Settings] — Settings is a third peer tab beside the
+// original Tasks/Chat board views, not a nested second tab layer. The shell
+// lands after listWorkspaces() resolves, so we inject a workspace and wait
+// for the load.
 describe("ShepherdRoot", () => {
   const WS = { id: "ws_1", slug: "acme", name: "Acme", role: "admin" as const, isOwner: true };
 
@@ -29,11 +30,11 @@ describe("ShepherdRoot", () => {
     );
   }
 
-  it("mounts and shows the flat Tasks | Chat | Config tab strip", async () => {
+  it("mounts and shows the flat Tasks | Chat | Settings tab strip", async () => {
     renderRoot();
     expect(await screen.findByRole("tab", { name: "Tasks" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Config" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("defaults to the Tasks view when a workspace exists", async () => {
@@ -46,22 +47,22 @@ describe("ShepherdRoot", () => {
     );
   });
 
-  it("switches to the Config view when its tab is clicked", async () => {
+  it("switches to the Settings view when its tab is clicked", async () => {
     renderRoot();
-    await userEvent.click(await screen.findByRole("tab", { name: "Config" }));
-    expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+    await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
-    // The Config panel is the sidebar layout, defaulting to the Workspace section.
+    // The Settings panel is the sidebar layout, defaulting to the Workspace section.
     expect(screen.getByRole("heading", { name: "Workspace" })).toBeInTheDocument();
   });
 
-  it("renders the hosted sign out action on the Config → Account section", async () => {
+  it("renders the hosted sign out action on the Settings → Account section", async () => {
     const onLogout = vi.fn();
     renderRoot({ onLogout });
 
-    await userEvent.click(await screen.findByRole("tab", { name: "Config" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     // Sign out moved out of the Workspace tab into its own Account section.
     await userEvent.click(screen.getByRole("button", { name: "Account" }));
     await userEvent.click(screen.getByRole("button", { name: /sign out/i }));
@@ -72,7 +73,7 @@ describe("ShepherdRoot", () => {
   it("does not render the sign out action when no hosted logout hook is supplied", async () => {
     renderRoot();
 
-    await userEvent.click(await screen.findByRole("tab", { name: "Config" }));
+    await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: "Account" }));
 
     expect(screen.queryByRole("button", { name: /sign out/i })).not.toBeInTheDocument();
@@ -82,18 +83,18 @@ describe("ShepherdRoot", () => {
     renderRoot();
     const tasks = await screen.findByRole("tab", { name: "Tasks" });
     const chat = screen.getByRole("tab", { name: "Chat" });
-    const config = screen.getByRole("tab", { name: "Config" });
+    const settings = screen.getByRole("tab", { name: "Settings" });
     // Lands on Tasks, so Tasks is the single tab stop.
     expect(tasks).toHaveAttribute("tabindex", "0");
     expect(chat).toHaveAttribute("tabindex", "-1");
-    expect(config).toHaveAttribute("tabindex", "-1");
+    expect(settings).toHaveAttribute("tabindex", "-1");
   });
 
   it("navigates tabs with the arrow keys, moving selection and focus", async () => {
     renderRoot();
     const tasks = await screen.findByRole("tab", { name: "Tasks" });
     const chat = screen.getByRole("tab", { name: "Chat" });
-    const config = screen.getByRole("tab", { name: "Config" });
+    const settings = screen.getByRole("tab", { name: "Settings" });
 
     tasks.focus();
     expect(tasks).toHaveFocus();
@@ -105,31 +106,31 @@ describe("ShepherdRoot", () => {
     expect(chat).toHaveAttribute("tabindex", "0");
     expect(tasks).toHaveAttribute("tabindex", "-1");
 
-    // ArrowRight → Config.
+    // ArrowRight → Settings.
     await userEvent.keyboard("{ArrowRight}");
-    expect(config).toHaveAttribute("aria-selected", "true");
-    expect(config).toHaveFocus();
+    expect(settings).toHaveAttribute("aria-selected", "true");
+    expect(settings).toHaveFocus();
 
     // ArrowRight again wraps around to Tasks.
     await userEvent.keyboard("{ArrowRight}");
     expect(tasks).toHaveAttribute("aria-selected", "true");
     expect(tasks).toHaveFocus();
 
-    // ArrowLeft wraps back to Config.
+    // ArrowLeft wraps back to Settings.
     await userEvent.keyboard("{ArrowLeft}");
-    expect(config).toHaveAttribute("aria-selected", "true");
-    expect(config).toHaveFocus();
+    expect(settings).toHaveAttribute("aria-selected", "true");
+    expect(settings).toHaveFocus();
   });
 
   it("supports Home/End to jump to the first/last tab", async () => {
     renderRoot();
     const tasks = await screen.findByRole("tab", { name: "Tasks" });
-    const config = screen.getByRole("tab", { name: "Config" });
+    const settings = screen.getByRole("tab", { name: "Settings" });
 
     tasks.focus();
     await userEvent.keyboard("{End}");
-    expect(config).toHaveAttribute("aria-selected", "true");
-    expect(config).toHaveFocus();
+    expect(settings).toHaveAttribute("aria-selected", "true");
+    expect(settings).toHaveFocus();
 
     await userEvent.keyboard("{Home}");
     expect(tasks).toHaveAttribute("aria-selected", "true");

@@ -310,7 +310,7 @@ export function SetupChecklist({
             </pre>
             <button
               type="button"
-              className="install-command__copy"
+              className="install-command__copy shepherd-setup__copy"
               aria-label={copied ? "Copied" : "Copy command"}
               title={copied ? "Copied" : "Copy"}
               onClick={() => void copyCommand()}

@@ -60,7 +60,7 @@ describe("ShepherdRoot routing / landing", () => {
   it("lands on Tasks with the setup checklist when the account has no workspace", async () => {
     // Behavior change (Task 4): the no-workspace account now lands on Tasks so
     // the first-run setup checklist is the first thing a new operator sees,
-    // rather than landing on Config.
+    // rather than landing on Settings.
     client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [] });
     renderRoot();
 
@@ -75,20 +75,20 @@ describe("ShepherdRoot routing / landing", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders hosted sign out on the no-workspace Config prompt without polling", async () => {
+  it("renders hosted sign out on the no-workspace Settings prompt without polling", async () => {
     const onLogout = vi.fn();
     client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [] });
     renderRoot({ onLogout });
 
-    // Now lands on Tasks (the setup checklist); Config stays reachable via its
-    // tab, where the "not in a workspace" prompt + sign out live.
+    // Now lands on Tasks (the setup checklist); Settings stays reachable via
+    // its tab, where the "not in a workspace" prompt + sign out live.
     await waitFor(() =>
       expect(screen.getByRole("tab", { name: "Tasks" })).toHaveAttribute(
         "aria-selected",
         "true",
       ),
     );
-    await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
 
     expect(screen.getByText(/not in a workspace yet/i)).toBeInTheDocument();
 
@@ -210,20 +210,20 @@ describe("ShepherdRoot routing / landing", () => {
 
     await waitFor(() => expect(client.landscape).toHaveBeenCalledWith("ws_1"));
 
-    // Go to Config, then create a workspace through the switcher's menu.
-    await userEvent.click(screen.getByRole("tab", { name: "Config" }));
+    // Go to Settings, then create a workspace through the switcher's menu.
+    await userEvent.click(screen.getByRole("tab", { name: "Settings" }));
     await userEvent.click(screen.getByRole("button", { name: /acme/i }));
     await userEvent.click(screen.getByRole("menuitem", { name: /create workspace/i }));
     await userEvent.type(screen.getByLabelText(/new workspace name/i), "Gamma");
     await userEvent.click(screen.getByRole("button", { name: /^create$/i }));
 
     // The new workspace becomes active (its name shows on the trigger) and the
-    // create never re-lands us off Config.
+    // create never re-lands us off Settings.
     await waitFor(() => expect(client.createWorkspace).toHaveBeenCalled());
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /gamma/i })).toBeInTheDocument(),
     );
-    expect(screen.getByRole("tab", { name: "Config" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
