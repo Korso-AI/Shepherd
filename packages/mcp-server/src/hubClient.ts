@@ -25,7 +25,7 @@ export class HubRequestError extends Error {
 export interface HubClient {
   post(path: string, body: unknown): Promise<unknown>;
   /**
-   * Bodyless GET. Used by the `link` tool (Task 5.4) to fetch the account's
+   * Bodyless GET. Used by the `link` tool to fetch the account's
    * workspace memberships (`GET /workspaces`). Same error contract as `post`:
    * transport errors → HubUnreachable, non-2xx → HubRequestError.
    */

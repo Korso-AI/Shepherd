@@ -1,5 +1,5 @@
 /**
- * Invite operations (Task 3.5): create / revoke / redeem the codes that let a
+ * Invite operations: create / revoke / redeem the codes that let a
  * signed-in account join a workspace.
  *
  *  - createInvite (admin):  POST /workspaces/:id/invites — mint a high-entropy
@@ -8,7 +8,7 @@
  *      gate here is `requireAdmin`. Defaults: 7-day expiry, unlimited uses (the
  *      link works until explicitly revoked); expiry and use-cap are overridable
  *      via the request body. Role is fixed at `member` — the selectable-role
- *      surface was removed (review finding P2.7).
+ *      surface was removed in an earlier security review.
  *
  *  - inviteByEmail (admin): POST /workspaces/:id/invites/email — mints an
  *      invite the same way but fixed at `maxUses: 1` (the existing atomic
@@ -123,7 +123,7 @@ function generateCode(): string {
 // Redeem throttle — per-account failed-attempt counter (anti-enumeration)
 // ---------------------------------------------------------------------------
 
-// TODO(operational hardening): in-memory only — shared-store upgrade alongside the Task 2.2 bucket.
+// TODO(operational hardening): in-memory only — shared-store upgrade alongside the pre-auth throttle bucket.
 //
 // The generic rate bucket (tenant.ts) only engages AFTER a credential resolves,
 // and accounts are free, so a single account could enumerate invite codes against
@@ -133,7 +133,7 @@ function generateCode(): string {
 // accountId (the identity that survives a resolved BFF credential); a successful
 // redeem clears the account's counter, and one account's failures never affect
 // another's (the cross-account test pins this). Single-instance Map; resets on
-// process restart, mirroring the Task 2.2 bucket.
+// process restart, mirroring the pre-auth throttle bucket.
 
 /** Invalid-code redeems allowed per account before we start 429-ing. */
 const REDEEM_FAIL_THRESHOLD = 10;
@@ -197,7 +197,7 @@ export function __resetRedeemThrottle(): void {
  * high-entropy code, computes expiry from `expiresInDays` (default 7d), and
  * persists with `maxUses` (default: unlimited, until revoked). The granted
  * role is always `member` (DEFAULT_ROLE) — invites do not carry a selectable
- * role (review finding P2.7).
+ * role (removed in an earlier security review).
  */
 export async function createInvite(
   input: CreateInviteRequestT,

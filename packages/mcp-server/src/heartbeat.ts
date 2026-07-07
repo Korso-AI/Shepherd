@@ -1,3 +1,4 @@
+import { HeartbeatResponse } from "@shepherd/shared";
 import type { ChangeReportT, AnnouncementT } from "@shepherd/shared";
 import { type HubClient } from "./hubClient.js";
 
@@ -75,11 +76,18 @@ export function createHeartbeat({
     // never ask the hub to hand over announcements.
     if (announcementSink) body.deliverAnnouncements = true;
 
-    const response = (await hubClient.post("/heartbeat", body)) as {
-      announcements?: AnnouncementT[];
-    } | null;
-
-    const delivered = response?.announcements;
+    // Validate the response against the shared contract before trusting it — a
+    // compromised/MITM hub could otherwise flow oversized/newline-laden
+    // announcement content into agent context. On a parse failure we degrade
+    // gracefully (treat as NO announcements): this beat delivers nothing and
+    // acks nothing, so the hub keeps anything pending for a later, valid beat.
+    const parsed = HeartbeatResponse.safeParse(await hubClient.post("/heartbeat", body));
+    if (!parsed.success) {
+      console.error(
+        "[shepherd] heartbeat returned a response that failed contract validation — ignoring this beat's announcements.",
+      );
+    }
+    const delivered = parsed.success ? parsed.data.announcements : [];
     if (announcementSink && Array.isArray(delivered) && delivered.length > 0) {
       // Phase 1: persist to the model-visible sink FIRST. A throw here means the
       // local write failed — log and bail WITHOUT acking, so the hub keeps the

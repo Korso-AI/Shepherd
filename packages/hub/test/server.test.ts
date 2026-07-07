@@ -759,7 +759,7 @@ describe.skipIf(!dbAvailable)(
       secret?: string;
       path?: string;
     }): Record<string, string> {
-      const email = opts.email ?? "operator@korsoai.com";
+      const email = opts.email ?? "operator@example.test";
       const path = opts.path ?? "/admin/analytics";
       const timestampMs = Date.now().toString();
       const bodySha256 = createHash("sha256").update("", "utf8").digest("hex");
@@ -795,6 +795,7 @@ describe.skipIf(!dbAvailable)(
         config: makeTestConfig({
           BFF_INTERNAL_TOKEN: BFF_TOKEN,
           OPERATOR_IDENTITY_SECRET: OPERATOR_SECRET,
+          OPERATOR_EMAIL_DOMAIN: "example.test",
         }),
       });
       app = buildServer();

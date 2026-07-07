@@ -65,7 +65,7 @@ function makeTestConfig(overrides: Partial<Config> = {}): Config {
     RESEND_API_KEY: "re_test",
     INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
     PUBLIC_WEB_URL: "https://test.local",
-    FEEDBACK_EMAIL_TO: "dev@korsoai.com",
+    FEEDBACK_EMAIL_TO: "dev@example.test",
     ...overrides,
   };
 }
@@ -266,14 +266,53 @@ describe.skipIf(!dbAvailable)(
           id: parsed.id,
           type: "bug",
           body: "mail me",
-          accountId: "acct-dave",
-          workspaceId: null,
+          account: { id: "acct-dave", name: null, email: null },
+          workspace: null,
           context: { route: "/r" },
         },
         {
           RESEND_API_KEY: "re_test",
           INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
-          FEEDBACK_EMAIL_TO: "dev@korsoai.com",
+          FEEDBACK_EMAIL_TO: "dev@example.test",
+        }
+      );
+    });
+
+    it("resolves account + workspace ids to human identities in the email", async () => {
+      const wsId = await seedWorkspace(pool, "fb-named-ws");
+      await seedMembership(pool, "acct-frank", wsId, "member");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/feedback`,
+        headers: bffHeaders("acct-frank", {
+          "x-display-name": "Frank Example",
+          "x-email": "frank@example.test",
+          "x-github-login": "frankex",
+        }),
+        payload: { type: "bug", body: "resolve me" },
+      });
+      expect(res.statusCode).toBe(200);
+      const parsed = FeedbackResponse.parse(res.json());
+
+      await vi.waitFor(() => expect(sendFeedbackEmail).toHaveBeenCalledTimes(1));
+      expect(sendFeedbackEmail).toHaveBeenCalledWith(
+        {
+          id: parsed.id,
+          type: "bug",
+          body: "resolve me",
+          account: {
+            id: "acct-frank",
+            name: "Frank Example",
+            email: "frank@example.test",
+          },
+          workspace: { id: wsId, name: "fb-named-ws", slug: "fb-named-ws" },
+          context: null,
+        },
+        {
+          RESEND_API_KEY: "re_test",
+          INVITE_EMAIL_FROM: "Shepherd <feedback@test.local>",
+          FEEDBACK_EMAIL_TO: "dev@example.test",
         }
       );
     });
@@ -287,6 +326,10 @@ describe.skipIf(!dbAvailable)(
         payload: { type: "other", body: "mail broke, row survives" },
       });
       expect(res.statusCode).toBe(200);
+      // The email is fire-and-forget and now resolves account/workspace ids via
+      // the DB first, so the send lands a few ticks after the response. Wait for
+      // it here so it can't leak into (and fail) a later test's assertions.
+      await vi.waitFor(() => expect(sendFeedbackEmail).toHaveBeenCalledTimes(1));
     });
 
     it("does not email when Resend is unconfigured", async () => {

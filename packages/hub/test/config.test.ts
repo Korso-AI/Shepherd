@@ -23,10 +23,24 @@ describe("loadConfig — pure (no Postgres needed)", () => {
     expect(cfg.STALE_AFTER_SECONDS).toBe(120);
     expect(cfg.CHANGE_RECORD_TTL_SECONDS).toBe(259200);
     expect(cfg.HUB_ADMIN_LABEL).toBe("admin");
-    expect(cfg.FEEDBACK_EMAIL_TO).toBe("dev@korsoai.com");
+    // FEEDBACK_EMAIL_TO is optional with no default (no org-specific address in
+    // source) — the send path falls back to INVITE_EMAIL_FROM when it is unset.
+    expect(cfg.FEEDBACK_EMAIL_TO).toBeUndefined();
     // Optional with no schema default — the effective default is applied at the
     // call sites (DEFAULT_UNCOMMITTED_GRACE_SECONDS), so it is undefined here.
     expect(cfg.UNCOMMITTED_GRACE_SECONDS).toBeUndefined();
+    // TRUST_PROXY is unset here → undefined; the fail-safe `false` default is
+    // applied at the buildServer boundary, not in the parsed config.
+    expect(cfg.TRUST_PROXY).toBeUndefined();
+    // No operator domain baked in — fail-closed until explicitly configured.
+    expect(cfg.OPERATOR_EMAIL_DOMAIN).toBeUndefined();
+  });
+
+  it("coerces TRUST_PROXY leniently — only \"true\"/\"1\" enable it", () => {
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "true" }).TRUST_PROXY).toBe(true);
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "1" }).TRUST_PROXY).toBe(true);
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "false" }).TRUST_PROXY).toBe(false);
+    expect(loadConfig({ ...BASE_ENV, TRUST_PROXY: "yes" }).TRUST_PROXY).toBe(false);
   });
 
   it("reads HUB_ADMIN_LABEL from the environment when set", () => {

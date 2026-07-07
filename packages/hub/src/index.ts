@@ -27,7 +27,10 @@ async function main(): Promise<void> {
 
   await seedSelfHostWorkspace(pool, config.ALLOWED_WORKSPACE);
 
-  const app = buildServer();
+  // Thread the trust-proxy decision from config (default false — fail-safe).
+  // Enable TRUST_PROXY only when a trusted reverse proxy fronts the hub; see the
+  // trustProxy comment in server.ts for why it must not be on by default.
+  const app = buildServer({ trustProxy: config.TRUST_PROXY });
 
   await app.listen({ port: config.HUB_PORT, host: "0.0.0.0" });
   app.log.info(`Hub listening on port ${config.HUB_PORT}`);

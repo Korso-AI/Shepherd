@@ -7,6 +7,8 @@ dist
 .pi-tmp/
 .agents/
 .claude/
+# Internal agent planning/spec scratch — never part of the public repo.
+docs/superpowers/
 # Per-machine Shepherd link marker — must never ship in the repo, or fresh
 # clones would arrive pre-linked and skip the first-run ask.
 .shepherd
@@ -20,3 +22,9 @@ dist
 /packages/ui/vite.config.dev.ts
 /packages/ui/devFull.html
 /packages/ui/src/devFull.tsx
+# Local-only cruft and per-machine scratch — never part of the public repo.
+nul
+/_shepherd-git-backups/
+/_shepherd-release-audit/
+/.review-worktrees/
+/.wf/

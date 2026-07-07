@@ -170,8 +170,10 @@ export function formatInboxAnnouncements(announcements: AnnouncementT[]): string
     `[Shepherd] ${count} new announcement${count === 1 ? "" : "s"} from your teammates:`,
   ];
   for (const a of announcements) {
-    const target = a.targetAgentName ? ` → ${a.targetAgentName}` : " (broadcast)";
-    lines.push(`  [${a.fromAgentName}${target}] ${indentContinuation(a.body)}`);
+    // Names are teammate-controlled free-text too (see oneLine's note); collapse
+    // newlines so they can't forge structure in this injected context block.
+    const target = a.targetAgentName ? ` → ${oneLine(a.targetAgentName)}` : " (broadcast)";
+    lines.push(`  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`);
   }
   lines.push(REPLY_ROUTING_HINT);
   return lines.join("\n");

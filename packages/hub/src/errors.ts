@@ -2,7 +2,7 @@
  * Error taxonomy for @shepherd/hub.
  *
  * HubError is the base class for all domain errors thrown by the hub.
- * Route handlers (Task 13) catch these and map them to HTTP status codes.
+ * Route handlers catch these and map them to HTTP status codes.
  */
 
 /** Base class for all hub domain errors. */

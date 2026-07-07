@@ -22,6 +22,25 @@ const ConfigSchema = z.object({
   // tenant.ts for the full trust model. Optional and fail-closed: when unset,
   // operator headers never verify, so the operator surface is unreachable.
   OPERATOR_IDENTITY_SECRET: z.string().min(1).optional(),
+  // The verified-email domain that marks a caller as an internal operator (the
+  // exact domain after the last `@`, e.g. "example.com"). Optional and
+  // fail-closed: with it unset, no operator email can ever match, so the
+  // cross-tenant `/admin/*` analytics surface stays unreachable — the same
+  // fail-closed posture as an unset OPERATOR_IDENTITY_SECRET. Threaded into
+  // isInternalOperatorEmail (tenant.ts) rather than hardcoded, so no org-specific
+  // domain ships in source.
+  OPERATOR_EMAIL_DOMAIN: z.string().min(1).optional(),
+  // Whether to derive request.ip from X-Forwarded-For. Fail-safe: only enable
+  // when a TRUSTED reverse proxy that overwrites XFF fronts the hub, otherwise a
+  // directly-exposed hub lets a client spoof XFF and dodge the per-IP pre-auth
+  // throttle. Coerced leniently: only "true"/"1" enable it, any other present
+  // value is false; UNSET stays undefined and the effective DEFAULT of `false`
+  // is applied at the buildServer boundary (index.ts / server.ts). Optional so
+  // the field never has to appear in a config literal. See server.ts's trustProxy.
+  TRUST_PROXY: z
+    .string()
+    .transform((v) => v === "true" || v === "1")
+    .optional(),
   DEFAULT_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   MIN_TTL_SECONDS: z.coerce.number().int().positive().default(30),
   STALE_AFTER_SECONDS: z.coerce.number().int().positive().default(120),
@@ -54,10 +73,13 @@ const ConfigSchema = z.object({
   // The Hub has no reliable way to infer its own public web origin from a
   // request, so this is explicit rather than derived from Host/Origin headers.
   PUBLIC_WEB_URL: z.string().min(1).optional(),
-  // Where feedback-widget submissions are emailed. Sending is enabled only
-  // when RESEND_API_KEY + INVITE_EMAIL_FROM are also set (the sender address
-  // is shared with email invites); with them unset this default is inert.
-  FEEDBACK_EMAIL_TO: z.string().min(1).default("dev@korsoai.com"),
+  // Where feedback-widget submissions are emailed. OPTIONAL, no default (no
+  // org-specific address ships in source): when unset, the feedback send path
+  // falls back to INVITE_EMAIL_FROM as the recipient (see operations/feedback.ts).
+  // Either way, sending is enabled only when RESEND_API_KEY + INVITE_EMAIL_FROM
+  // are also set (the sender address is shared with email invites); with those
+  // unset the feature is simply inert.
+  FEEDBACK_EMAIL_TO: z.string().min(1).optional(),
 }).superRefine((cfg, ctx) => {
   // One Hub binary, two deployment modes. Require at least one to be fully
   // configured so the Hub never boots without a way to authenticate callers
@@ -83,7 +105,7 @@ const ConfigSchema = z.object({
   }
 });
 
-/** Parsed, validated configuration. Imported by other tasks (e.g. Task 6). */
+/** Parsed, validated configuration. Imported across the hub (operations, boot). */
 export type Config = z.infer<typeof ConfigSchema>;
 
 /**

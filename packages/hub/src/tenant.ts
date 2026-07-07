@@ -41,7 +41,7 @@ import type pg from "pg";
  *  - Browser path on a NON-:id route (POST /workspaces, GET /workspaces,
  *    /invites/:code/redeem, …): there is no route workspace to scope to, so
  *    `workspaceId` is the empty-string sentinel `""`. The operation layer
- *    (Task 2.5 / Phase 3) supplies the workspace for these and is responsible
+ *    supplies the workspace for these and is responsible
  *    for its own authorization. Operations that REQUIRE a workspace must reject
  *    a `""` workspaceId.
  *
@@ -105,7 +105,7 @@ export function requireWorkspaceId(tenant: TenantContext): string {
  * Shared home next to requireWorkspaceId — the workspace, token, and invite
  * operations all need this identical guard, so it lives here rather than being
  * re-declared per operation file. (It previously lived as a private copy in both
- * operations/workspaces.ts and operations/tokens.ts; Task 3.5 consolidated it.)
+ * operations/workspaces.ts and operations/tokens.ts; later consolidated here.)
  */
 export function requireAccountId(tenant: TenantContext): string {
   if (tenant.accountId === undefined) {
@@ -166,7 +166,7 @@ export function requireOperator(tenant: TenantContext): void {
 /**
  * SHA-256 hex digest of a token's plaintext — the only stored form of a minted
  * agent token (matches api_tokens.token_hash). Exported so the mint path
- * (Task 3.4) and tests hash identically.
+ * and tests hash identically.
  */
 export function hashToken(plaintext: string): string {
   return crypto.createHash("sha256").update(plaintext, "utf8").digest("hex");
@@ -200,8 +200,6 @@ function timingSafeCompare(provided: string, expected: string | undefined): bool
 const OPERATOR_SIGNATURE_VERSION = "v1";
 /** Max age (either direction) of a signed operator timestamp. */
 const OPERATOR_SIGNATURE_MAX_AGE_SECONDS = 300;
-/** The verified-email domain that marks an internal operator. */
-const INTERNAL_OPERATOR_EMAIL_DOMAIN = "korsoai.com";
 
 /** SHA-256 hex digest of a string (the body-hash convention the BFF signs). */
 function sha256Hex(value: string): string {
@@ -209,15 +207,21 @@ function sha256Hex(value: string): string {
 }
 
 /**
- * Whether `email` is a well-formed internal operator address: a non-empty local
- * part and EXACT domain equality after the last `@`, lowercased (mirrors the
- * platform's isInternalEmail — never a suffix match, so lookalike suffix domains
- * and a bare domain with no local part are both rejected).
+ * Whether `email` is a well-formed internal operator address for the configured
+ * operator domain: a non-empty local part and EXACT domain equality after the
+ * last `@`, lowercased (mirrors the platform's isInternalEmail — never a suffix
+ * match, so lookalike suffix domains and a bare domain with no local part are
+ * both rejected).
+ *
+ * `domain` is `config.OPERATOR_EMAIL_DOMAIN`. It is OPTIONAL and fail-closed:
+ * when unset, no email can match, so the operator surface stays unreachable —
+ * no org-specific domain is baked into the source.
  */
-function isInternalOperatorEmail(email: string): boolean {
+function isInternalOperatorEmail(email: string, domain: string | undefined): boolean {
+  if (domain === undefined) return false;
   const at = email.lastIndexOf("@");
   if (at < 1) return false;
-  return email.slice(at + 1).trim().toLowerCase() === INTERNAL_OPERATOR_EMAIL_DOMAIN;
+  return email.slice(at + 1).trim().toLowerCase() === domain.trim().toLowerCase();
 }
 
 /**
@@ -262,7 +266,7 @@ function verifyOperatorProof(
     return null;
   }
 
-  if (!isInternalOperatorEmail(email)) return null;
+  if (!isInternalOperatorEmail(email, config.OPERATOR_EMAIL_DOMAIN)) return null;
 
   // Freshness: the signed ms-epoch timestamp must be within the replay window.
   if (!/^\d+$/.test(timestampMs)) return null;
@@ -304,7 +308,7 @@ function verifyOperatorProof(
 // Rate limiting — in-memory token bucket
 // ---------------------------------------------------------------------------
 
-// TODO(operational hardening): in-memory only — shared-store upgrade in #4
+// TODO(operational hardening): in-memory only — pending a shared-store upgrade.
 //
 // A coarse per-credential token bucket to blunt brute-force / runaway clients.
 // Keyed by api_tokens.id on the agent path and by accountId on the browser
@@ -326,7 +330,7 @@ interface Bucket {
 
 // TODO(operational hardening): never evicted — grows by one entry per distinct key (api_tokens.id
 // or accountId) for the process lifetime, bounded by the real account/token id
-// space, and resets on restart. Bounded eviction lands with the #4 shared store.
+// space, and resets on restart. Bounded eviction lands with that shared store.
 const buckets = new Map<string, Bucket>();
 
 /**
@@ -425,7 +429,7 @@ function recordAuthFailure(ip: string, now: number = Date.now()): void {
 }
 
 // ---------------------------------------------------------------------------
-// Hot-path write throttles (review finding P2.6)
+// Hot-path write throttles
 // ---------------------------------------------------------------------------
 
 // The agent hot path (work/sync/heartbeat fire every few seconds per session)
@@ -438,11 +442,11 @@ function recordAuthFailure(ip: string, now: number = Date.now()): void {
 // limiter above: they reset on restart, and a skipped write simply lands on the
 // next un-throttled request.
 //
-// We deliberately do NOT cache the token→tenant LOOKUP itself (the other half of
-// P2.6's note). findApiTokenByHash + findMembership ARE the security decision —
-// and the fail-closed membership check on the agent path (P2.4) depends on
-// reading LIVE membership — so caching them would reintroduce exactly the
-// revocation staleness P2.4 closes. Only the non-decision writes are throttled.
+// We deliberately do NOT cache the token→tenant LOOKUP itself.
+// findApiTokenByHash + findMembership ARE the security decision — and the
+// fail-closed membership check on the agent path depends on reading LIVE
+// membership — so caching them would reintroduce exactly the revocation
+// staleness that check closes. Only the non-decision writes are throttled.
 
 /** Minimum gap between repeated last_used_at / profile writes for the same key. */
 const HOT_PATH_WRITE_THROTTLE_MS = 60_000;
@@ -469,7 +473,7 @@ function throttleWrite(seen: Map<string, number>, key: string, now: number): boo
 
 /**
  * Test-only: clear all in-memory per-credential state — the rate-limit buckets
- * AND the P2.6 hot-path write throttles — so each test starts fresh (e.g. a test
+ * AND the hot-path write throttles — so each test starts fresh (e.g. a test
  * that asserts last_used_at moves, or that the profile is upserted, on the very
  * first request after a reset).
  */
@@ -589,7 +593,7 @@ async function resolveCredentials(
     consumeRateLimit(`acct:${accountId}`);
 
     // Refresh the trusted profile snapshot from the BFF-supplied headers — but at
-    // most once per throttle window per account (P2.6). The snapshot is display
+    // most once per throttle window per account. The snapshot is display
     // metadata, not an auth input, so a slightly stale refresh is harmless; this
     // keeps an unconditional write off every browser request.
     if (!throttleWrite(lastProfileUpsert, accountId, Date.now())) {
@@ -643,7 +647,7 @@ async function resolveCredentials(
   if (tokenRow !== null) {
     // Per-token rate limit on the agent path — applies to BOTH token kinds.
     consumeRateLimit(`tok:${tokenRow.id}`);
-    // last_used_at is best-effort liveness — throttle it off the hot path (P2.6).
+    // last_used_at is best-effort liveness — throttle it off the hot path.
     // Also common to both kinds, so it happens before we branch on scope.
     if (!throttleWrite(lastTokenTouch, tokenRow.id, Date.now())) {
       await touchApiTokenLastUsed(pool, tokenRow.id);
@@ -667,7 +671,7 @@ async function resolveCredentials(
     // token's workspace.
     const membership = await findMembership(pool, tokenRow.account_id, tokenRow.workspace_id);
     if (membership === null) {
-      // Fail closed (P2.4): the token authenticates, but its account is no longer
+      // Fail closed: the token authenticates, but its account is no longer
       // a member of the token's workspace. It is the MEMBERSHIP — not the token —
       // that grants workspace access, so a token whose membership has lapsed must
       // NOT resolve. removeMember/leaveWorkspace also revoke a member's tokens in
@@ -692,8 +696,8 @@ async function resolveCredentials(
     const slug = config.ALLOWED_WORKSPACE;
     const ws = slug !== undefined ? await findWorkspaceBySlug(pool, slug) : null;
     if (ws === null) {
-      // The team token is valid but its workspace was never seeded (Task 2.3
-      // seeds it on boot). Treat as a server-misconfiguration auth failure.
+      // The team token is valid but its workspace was never seeded (boot seeds
+      // it on startup). Treat as a server-misconfiguration auth failure.
       throw new AuthError(401, "self-host workspace not provisioned");
     }
     // Full access, no per-account identity.

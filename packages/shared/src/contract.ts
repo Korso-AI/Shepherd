@@ -422,7 +422,10 @@ export const WorkspaceSummary = z.object({
 // createWorkspace({ name }) -> WorkspaceSummary
 // ---------------------------------------------------------------------------
 export const CreateWorkspaceRequest = z.object({
-  name: z.string().min(1),
+  // Cap the name like every other persisted string field (256), so a workspace
+  // name (and the slug candidate derived from it) can't be inflated toward the
+  // request body limit. min(1) keeps the "non-empty" contract.
+  name: z.string().min(1).max(256),
 });
 
 export const CreateWorkspaceResponse = WorkspaceSummary;

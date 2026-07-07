@@ -9,6 +9,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import Fastify, { type FastifyInstance } from "fastify";
+import helmet from "@fastify/helmet";
 import { ZodError } from "zod";
 
 import {
@@ -177,24 +178,92 @@ function loadUiBundle(): UiBundle {
 // buildServer
 // ---------------------------------------------------------------------------
 
-export function buildServer(): FastifyInstance {
+/** Options that shape the Fastify instance, threaded from the resolved config. */
+export interface BuildServerOptions {
+  /**
+   * Whether Fastify should derive `request.ip` from the `X-Forwarded-For`
+   * header (see the `trustProxy` comment below). Defaults to `false` — the
+   * fail-safe for a directly-exposed hub. `index.ts` passes `config.TRUST_PROXY`;
+   * tests and other callers omit it and get the safe default.
+   */
+  trustProxy?: boolean;
+}
+
+export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({
     // Conservative explicit cap, comfortably above the largest valid payload
     // the contract allows (pathGlobs 64×512 + intent 2048 + body 8192 ≈ 43 KiB).
     // Don't rely on Fastify's 1 MiB default for a bearer-auth coordination API.
     bodyLimit: 64 * 1024,
-    // Derive request.ip from x-forwarded-for. The documented deployments
-    // (Cloud Run, or self-host behind a reverse proxy) always interpose a
-    // proxy, so without this every caller would share the proxy's address and
-    // the per-IP pre-auth failure throttle (tenant.ts) would lump them into
-    // one bucket. On a directly-exposed hub a client can spoof XFF, which
-    // degrades only that throttle back to its per-address baseline — auth
-    // itself never keys off the address.
-    trustProxy: true,
+    // Derive request.ip from x-forwarded-for — OPT-IN, defaulting OFF (fail-safe).
+    // When the hub sits behind a reverse proxy (Cloud Run, nginx, a self-host
+    // ingress), every request arrives from the proxy's address, so without this
+    // the per-IP pre-auth failure throttle (tenant.ts) would lump all callers
+    // into one bucket. Enabling it makes the throttle key off the real client IP
+    // the proxy forwards. BUT on a DIRECTLY-exposed hub any client can spoof
+    // X-Forwarded-For and thereby dodge that per-IP throttle, so it must NOT be
+    // trusted by default: only turn TRUST_PROXY on when a trusted proxy that
+    // overwrites (not appends to) X-Forwarded-For actually fronts the hub. Auth
+    // itself never keys off the address, so the blast radius is limited to that
+    // one throttle either way.
+    trustProxy: options.trustProxy ?? false,
     logger: {
       level: "info",
       redact: ['req.headers.authorization', 'req.headers["x-internal-token"]'],
     },
+  });
+
+  // -------------------------------------------------------------------------
+  // HTTP security headers (@fastify/helmet)
+  //
+  // The hub serves an authenticated SPA shell (GET / and /index.html) plus its
+  // hashed /assets/ bundle, so it needs the standard browser hardening headers.
+  // Registered at the root before any route, so helmet's onRequest hook stamps
+  // EVERY response (the static shell, the /assets/ files, and the JSON data API).
+  //
+  // Content-Security-Policy is written explicitly (`useDefaults: false`) so an
+  // OSS reader can see exactly what the shell is allowed to load, and so we can
+  // OMIT `upgrade-insecure-requests` — a plain-HTTP self-host (no TLS terminator)
+  // would otherwise have its same-origin asset requests force-upgraded to https
+  // and fail. The policy is derived from packages/ui/dist/selfhost/index.html:
+  //   - script-src 'self'          — the shell loads a hashed ES module from
+  //     /assets/ and has NO inline <script>, so no 'unsafe-inline'/nonce needed.
+  //   - style-src 'self' + 'unsafe-inline' — the stylesheet is a hashed /assets/
+  //     file, but the SPA also injects styles at runtime (CSS-in-JS / Vite),
+  //     which CSP cannot hash ahead of time; 'unsafe-inline' is scoped to STYLES
+  //     only (never scripts), the low-risk half of the directive.
+  //   - connect-src 'self'         — the shell makes same-origin XHR/fetch to the
+  //     hub data API and nothing cross-origin.
+  //   - img-src 'self' data: https: — favicons/inline data URIs plus remote
+  //     avatars (e.g. GitHub) the dashboard renders.
+  //   - default/object/base/form/frame-ancestors are locked down; frame-ancestors
+  //     'none' (plus frameguard DENY below) forbids embedding the hub in a frame.
+  // HSTS: left at helmet's default (a no-op over http, correct over https).
+  void app.register(helmet, {
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'", "data:", "https:"],
+        fontSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        baseUri: ["'none'"],
+        formAction: ["'self'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    // frame-ancestors 'none' (CSP, above) is the modern control; frameguard
+    // DENY (X-Frame-Options) covers legacy browsers that ignore CSP framing.
+    frameguard: { action: "deny" },
+    // X-Content-Type-Options: nosniff on every response — including the
+    // hand-rolled /assets/:file route, whose reply.header(...).type(...).send()
+    // never clears the header helmet's onRequest hook already set.
+    noSniff: true,
+    // No referrer leaks the (authenticated) dashboard URL to third parties.
+    referrerPolicy: { policy: "no-referrer" },
   });
 
   // Treat an EMPTY JSON body as "no body" instead of failing the request in
@@ -407,8 +476,8 @@ export function buildServer(): FastifyInstance {
   });
 
   // -------------------------------------------------------------------------
-  // Workspace management (Task 3.3) + account-scoped tokens (Task 1.3) —
-  // account-scoped, NON-`:id` routes.
+  // Workspace management + account-scoped tokens — account-scoped,
+  // NON-`:id` routes.
   //
   // resolveTenant resolves these to {workspaceId: NO_ROUTE_WORKSPACE, accountId}
   // for BOTH the browser-via-BFF path AND an account-scoped agent shp_ token
@@ -431,7 +500,7 @@ export function buildServer(): FastifyInstance {
     return listWorkspaces(request.tenant);
   });
 
-  // Account-scoped token surface (Task 1.3): mint an account-wide token, list the
+  // Account-scoped token surface: mint an account-wide token, list the
   // account's tokens, revoke one the caller owns. mintToken/listTokens branch on
   // the NO_ROUTE_WORKSPACE sentinel to mint/list account-scoped here (vs. the
   // workspace-narrowed `/workspaces/:id/tokens` routes above); revoke enforces
@@ -455,7 +524,7 @@ export function buildServer(): FastifyInstance {
   });
 
   // -------------------------------------------------------------------------
-  // Agent-token management (Task 3.4) — `/workspaces/:id/*` routes.
+  // Agent-token management — `/workspaces/:id/*` routes.
   //
   // These are :id routes, so resolveTenant has ALREADY validated the browser
   // caller's membership of `:id` (a non-member is rejected 404 in the onRequest
@@ -481,7 +550,7 @@ export function buildServer(): FastifyInstance {
   });
 
   // -------------------------------------------------------------------------
-  // Invite management (Task 3.5).
+  // Invite management.
   //
   // Create/revoke are admin-only `/workspaces/:id/*` routes — resolveTenant has
   // already validated the browser caller's membership of `:id` and set its role,
@@ -529,7 +598,7 @@ export function buildServer(): FastifyInstance {
   });
 
   // -------------------------------------------------------------------------
-  // Member management (Task 3.6) — `/workspaces/:id/*` routes.
+  // Member management — `/workspaces/:id/*` routes.
   //
   // These are :id routes, so resolveTenant has ALREADY validated the browser
   // caller's membership of `:id` (a non-member is rejected 404 in the onRequest

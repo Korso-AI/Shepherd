@@ -6,6 +6,10 @@ import {
   AnnounceAgentInput,
   SyncAgentInput,
   JoinResponse,
+  WorkResponse,
+  DoneResponse,
+  AnnounceResponse,
+  SyncResponse,
   type LandscapeT,
   type ChangeRecordT,
   type ChangeReportT,
@@ -119,11 +123,15 @@ function joinFailureCause(reason: JoinFailureReason | null): string {
 function formatLandscape(landscape: LandscapeT): string {
   const lines: string[] = [];
 
+  // Names (agentName/human/target/from) are teammate-controlled free-text too,
+  // just like intents/bodies — a raw newline could forge section headers or fake
+  // senders in this structured block — so every interpolated identity field goes
+  // through oneLine() alongside the message fields.
   if (landscape.conflicts.length > 0) {
     lines.push("CONFLICTS (files overlapping with your claim):");
     for (const c of landscape.conflicts) {
       lines.push(
-        `  [${c.agentName} / ${c.human}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
+        `  [${oneLine(c.agentName)} / ${oneLine(c.human)}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
       );
     }
   } else {
@@ -134,7 +142,7 @@ function formatLandscape(landscape: LandscapeT): string {
     lines.push("ACTIVE CLAIMS (other agents currently working):");
     for (const c of landscape.activeClaims) {
       lines.push(
-        `  [${c.agentName} / ${c.human}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
+        `  [${oneLine(c.agentName)} / ${oneLine(c.human)}] "${oneLine(c.intent)}" — globs: ${oneLine(c.pathGlobs.join(", "))}`
       );
     }
   } else {
@@ -159,8 +167,8 @@ function formatLandscape(landscape: LandscapeT): string {
   if (landscape.announcements.length > 0) {
     lines.push("ANNOUNCEMENTS:");
     for (const a of landscape.announcements) {
-      const target = a.targetAgentName ? ` → ${a.targetAgentName}` : " (broadcast)";
-      lines.push(`  [${a.fromAgentName}${target}] ${indentContinuation(a.body)}`);
+      const target = a.targetAgentName ? ` → ${oneLine(a.targetAgentName)}` : " (broadcast)";
+      lines.push(`  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`);
     }
     lines.push(REPLY_ROUTING_HINT);
   } else {
@@ -172,15 +180,16 @@ function formatLandscape(landscape: LandscapeT): string {
 
 /**
  * Render a standalone "messages for you" block from announcements delivered
- * outside the full landscape (by done/announce, #4). Returns "" when empty so
+ * outside the full landscape (by done/announce). Returns "" when empty so
  * callers can append unconditionally.
  */
 function formatAnnouncements(announcements: AnnouncementT[]): string {
   if (!announcements || announcements.length === 0) return "";
   const lines = ["Messages for you:"];
   for (const a of announcements) {
-    const target = a.targetAgentName ? ` → ${a.targetAgentName}` : " (broadcast)";
-    lines.push(`  [${a.fromAgentName}${target}] ${indentContinuation(a.body)}`);
+    // Names are teammate-controlled free-text; sanitize like the body.
+    const target = a.targetAgentName ? ` → ${oneLine(a.targetAgentName)}` : " (broadcast)";
+    lines.push(`  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`);
   }
   lines.push(REPLY_ROUTING_HINT);
   return lines.join("\n");
@@ -240,12 +249,12 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
     if (rec.kind === "committed") {
       const sha = rec.commitSha;
 
-      // Resolution is viewer-side (#7): if the commit is already in MY branch it
+      // Resolution is viewer-side: if the commit is already in MY branch it
       // has fully landed for me → drop silently, regardless of who still reports
       // it on the hub.
       if (sha && isAncestor(cwd, sha)) continue;
 
-      // #8: distinguish the two actionable states from MY local git, reusing the
+      // Distinguish the two actionable states from MY local git, reusing the
       // single hasCommit spawn for both the label and the line-detail gate:
       //   - I have the object but it isn't in my branch yet → it has landed
       //     somewhere I can reach (origin / another branch); I just pull/rebase.
@@ -256,8 +265,9 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
         : "not yet on your base — unpushed, coordinate";
 
       const intent = oneLine(rec.message ?? "(work in progress)");
+      // agentName/human are teammate-controlled free-text — sanitize like intent.
       lines.push(
-        `  ${rec.agentName} / ${rec.human} (${presence(rec)}) — committed (${state}): "${intent}"`
+        `  ${oneLine(rec.agentName)} / ${oneLine(rec.human)} (${presence(rec)}) — committed (${state}): "${intent}"`
       );
       lines.push(`    files: ${oneLine(rec.paths.join(", "))}`);
 
@@ -279,7 +289,7 @@ export function formatChangeRecords(records: ChangeRecordT[], cwd: string = proc
       // decaying — never line detail.
       const claim = oneLine(rec.message ?? "uncommitted edits in progress");
       lines.push(
-        `  ${rec.agentName} / ${rec.human} (${presence(rec)}) — ${claim} (uncommitted, may change)`
+        `  ${oneLine(rec.agentName)} / ${oneLine(rec.human)} (${presence(rec)}) — ${claim} (uncommitted, may change)`
       );
       lines.push(`    files: ${oneLine(rec.paths.join(", "))}`);
     }
@@ -311,6 +321,30 @@ function degradedResult(err: unknown): { content: Array<{ type: "text"; text: st
       {
         type: "text",
         text: `Coordination hub unreachable — proceeding uncoordinated. ${detail}`,
+      },
+    ],
+  };
+}
+
+/**
+ * Graceful degradation when a hub response FAILS its shared contract schema.
+ * A compromised or MITM hub could otherwise return oversized/newline-laden
+ * content that flows straight into agent context, so — mirroring the `/join`
+ * path (activate()'s failed safeParse) — we never trust or throw the malformed
+ * body: log the rejection to stderr (stdout is the MCP protocol channel) and
+ * return a benign "proceeding uncoordinated" advisory instead.
+ */
+function malformedResponseResult(
+  endpoint: string,
+): { content: Array<{ type: "text"; text: string }> } {
+  console.error(
+    `[shepherd] ${endpoint} returned a response that failed contract validation — proceeding uncoordinated.`,
+  );
+  return {
+    content: [
+      {
+        type: "text",
+        text: "Coordination hub returned an invalid response — proceeding uncoordinated.",
       },
     ],
   };
@@ -379,7 +413,7 @@ export function registerTools(
   // A repo participates ONLY when it carries a committed `.shepherd` marker
   // (context.linked). Otherwise the client stays dormant — no /join, no
   // heartbeat — and every COORDINATION tool returns a one-line advisory. The
-  // link/unlink marker-management tools (Task 5.4) are NOT gated here.
+  // link/unlink marker-management tools are NOT gated here.
   //
   // Mode: hosted is identified by SHEPHERD_TOKEN (it carries the workspace, so
   // the client can't validate the slug locally — a wrong workspace surfaces as a
@@ -407,12 +441,12 @@ export function registerTools(
   // can only be known after the join attempt, so it is handled in activate() and
   // surfaced per-tool below.) This is a ONE-SHOT boot decision, read once below to
   // gate the startup activate(); it is NOT the mechanism behind hot linking — a
-  // mid-session `link` (Task 3.3) takes effect via the mutable `linked`/`sessionId`
+  // mid-session `link` takes effect via the mutable `linked`/`sessionId`
   // that coordinationGate() reads, not via this flag.
   const dormant = !context.linked || selfHostMismatch;
 
   // Mutable mirror of context.linked. coordinationGate keys off THIS, not the
-  // (frozen) context.linked, so a hot `link` (Task 3.3) that calls activate() is
+  // (frozen) context.linked, so a hot `link` that calls activate() is
   // seen as linked immediately — otherwise the gate would return notLinked()
   // forever until a restart.
   let linked = context.linked;
@@ -478,7 +512,7 @@ export function registerTools(
   // automatically. `activate()` is the single seam that does it: build the join
   // body, POST /join, and on success cache the session, start the heartbeat, and
   // flip the `linked` flag to active. It is called at startup when the marker is
-  // present, and (Task 3.3) on demand from `link` / auto-pick, so linking takes
+  // present, and on demand from `link` / auto-pick, so linking takes
   // effect without a restart.
   //
   // `joinInFlight` is the promise a racing tool awaits via awaitJoin(). It is
@@ -604,9 +638,9 @@ export function registerTools(
   // do NOT activate — joinInFlight stays the resolved no-op so awaitJoin() and
   // `ready` still settle, and tools fall through to the not-linked / mismatch
   // advisory because sessionId stays null. (An unlinked repo's on-demand ask is
-  // driven by Task 3.3.)
+  // driven by the first-run edit tripwire / link tool.)
   //
-  // Declined-state lifecycle (decision, resolving the Task 3.2 TODO): when a
+  // Declined-state lifecycle: when a
   // committed marker activates, drop any stale local decline — an active,
   // chosen (or inherited) marker VOIDS a prior "don't ask again", consistent
   // with the `link <slug>` path. clearDeclined no-ops when there is no decline
@@ -676,14 +710,14 @@ export function registerTools(
    * Single coordination-gate for work/done/sync/announce/leave: await the
    * (possibly no-op) join, then decide whether the tool may proceed. Returns the
    * advisory result to short-circuit with, or null when the caller may continue
-   * (a live session exists). NOT applied to link/unlink (Task 5.4).
+   * (a live session exists). NOT applied to link/unlink.
    */
   async function coordinationGate(): Promise<
     { content: Array<{ type: "text"; text: string }> } | null
   > {
     await awaitJoin();
     // Not opted in at all → not-linked advisory (no join was attempted). Keyed
-    // off the mutable `linked` flag so a hot activate() (Task 3.3) is seen at once.
+    // off the mutable `linked` flag so a hot activate() is seen at once.
     if (!linked) return notLinked();
     // Linked but the workspace can't match the credential → mismatch advisory.
     if (selfHostMismatch || hostedWorkspaceRejected) return workspaceMismatch();
@@ -758,10 +792,11 @@ export function registerTools(
       try {
         const changeReport = await changeReportForBody();
         const body = { sessionId, ...args, ...(changeReport ? { changeReport } : {}) };
-        const result = (await hubClient.post("/work", body)) as {
-          workItemId: string;
-          landscape: LandscapeT;
-        };
+        // Validate against the shared contract before trusting the body — a
+        // compromised hub's oversized/newline content must not reach the agent.
+        const parsed = WorkResponse.safeParse(await hubClient.post("/work", body));
+        if (!parsed.success) return malformedResponseResult("/work");
+        const result = parsed.data;
         // Fold in any announcements the heartbeat already staged locally so they
         // surface in this turn's ANNOUNCEMENTS section alongside hub-fresh ones.
         result.landscape.announcements = mergeAnnouncements(
@@ -802,10 +837,10 @@ export function registerTools(
       if (gated) return gated;
       try {
         const body = { sessionId, ...args };
-        const result = (await hubClient.post("/done", body)) as {
-          ok: boolean;
-          announcements?: AnnouncementT[];
-        };
+        // Validate against the shared contract before trusting the body.
+        const parsed = DoneResponse.safeParse(await hubClient.post("/done", body));
+        if (!parsed.success) return malformedResponseResult("/done");
+        const result = parsed.data;
         const base =
           "Work item released. Call work again before your next edit in a new area.";
         const msgs = formatAnnouncements(
@@ -849,11 +884,10 @@ export function registerTools(
       if (gated) return gated;
       try {
         const body = { sessionId, ...args };
-        const result = (await hubClient.post("/announce", body)) as {
-          ok: boolean;
-          announcementId: number;
-          announcements?: AnnouncementT[];
-        };
+        // Validate against the shared contract before trusting the body.
+        const parsed = AnnounceResponse.safeParse(await hubClient.post("/announce", body));
+        if (!parsed.success) return malformedResponseResult("/announce");
+        const result = parsed.data;
         const base = `Announcement sent (id: ${result.announcementId}).`;
         const msgs = formatAnnouncements(
           mergeAnnouncements(result.announcements, drainLocalInbox())
@@ -889,9 +923,10 @@ export function registerTools(
       try {
         const changeReport = await changeReportForBody();
         const body = { sessionId, ...(changeReport ? { changeReport } : {}) };
-        const result = (await hubClient.post("/sync", body)) as {
-          landscape: LandscapeT;
-        };
+        // Validate against the shared contract before trusting the body.
+        const parsed = SyncResponse.safeParse(await hubClient.post("/sync", body));
+        if (!parsed.success) return malformedResponseResult("/sync");
+        const result = parsed.data;
         result.landscape.announcements = mergeAnnouncements(
           result.landscape.announcements,
           drainLocalInbox()
@@ -1232,6 +1267,10 @@ export function registerTools(
  * collide with hub-issued announcement ids (positive DB keys) and sorts first.
  */
 function postLinkGuidance(workspace: string): AnnouncementT {
+  // Defense in depth: `workspace` originates from the hub's workspace list (or a
+  // marker), so strip newlines and cap length before interpolating it into this
+  // agent-facing guidance — a malformed value must not forge structure here.
+  const safeWorkspace = workspace.replace(/\s+/g, " ").slice(0, 64);
   return {
     id: -Date.now(),
     fromAgentName: "shepherd",
@@ -1239,7 +1278,7 @@ function postLinkGuidance(workspace: string): AnnouncementT {
     targetAgentName: null,
     createdAt: new Date().toISOString(),
     body:
-      `The user just linked this repository to the \`${workspace}\` workspace — ` +
+      `The user just linked this repository to the \`${safeWorkspace}\` workspace — ` +
       "coordination is NOW ACTIVE. Standing procedure from here on: call `work` " +
       "(one-line intent + pathGlobs) BEFORE changing files in an area; `done` when " +
       "that unit of work is complete; `announce` anything teammates need to know; " +

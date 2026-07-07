@@ -100,12 +100,16 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   try {
     const config = parseConfig(env);
-    warnInsecureHubUrl(config.HUB_URL);
+    assertHubUrlAllowed(config.HUB_URL, env);
     return config;
   } catch (err) {
     if (err instanceof z.ZodError) {
       const messages = err.issues.map((e) => `  ${e.path.join(".")}: ${e.message}`).join("\n");
       process.stderr.write(`[shepherd] Configuration error — missing or invalid env vars:\n${messages}\n`);
+    } else if (err instanceof Error) {
+      // e.g. assertHubUrlAllowed's insecure-http refusal: a self-contained,
+      // operator-facing message, printed as-is.
+      process.stderr.write(`[shepherd] Configuration error: ${err.message}\n`);
     } else {
       process.stderr.write(`[shepherd] Unexpected configuration error: ${String(err)}\n`);
     }
@@ -114,26 +118,56 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 }
 
 /**
- * A loopback hub over plain http is fine (local dev); anything else sends the
- * team token in cleartext on every request. Warn on stderr (stdout is the MCP
- * protocol channel) rather than refusing — a private-network hub is a
- * legitimate, if discouraged, setup.
+ * Guard the wire credential against cleartext exposure.
+ *
+ * A loopback hub over plain http is fine (local dev — nothing leaves the
+ * machine) and always passes silently. For ANY non-loopback host, plain http
+ * would send the team token and all coordination traffic UNENCRYPTED, so we now
+ * REFUSE (throw a clear config error) rather than merely warning. An operator
+ * who genuinely runs a private-network http hub can opt back in explicitly with
+ * `SHEPHERD_ALLOW_INSECURE_HTTP` (1/true/yes), which downgrades the refusal to
+ * the old stderr warning. https (or any non-http scheme) always passes.
+ *
+ * Exported so it can be unit-tested directly (loadConfig, the only production
+ * caller, would otherwise process.exit on the throw).
  */
-function warnInsecureHubUrl(hubUrl: string): void {
+export function assertHubUrlAllowed(
+  hubUrl: string,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  let url: URL;
   try {
-    const url = new URL(hubUrl);
-    const loopback =
-      url.hostname === "localhost" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "::1" ||
-      url.hostname === "[::1]";
-    if (url.protocol === "http:" && !loopback) {
-      process.stderr.write(
-        `[shepherd] WARNING: HUB_URL (${hubUrl}) uses plain http to a non-local host — ` +
-          `the team token and all coordination traffic travel unencrypted. Use https.\n`,
-      );
-    }
+    url = new URL(hubUrl);
   } catch {
     // Unparseable URLs are rejected by the schema before we get here.
+    return;
   }
+  if (url.protocol !== "http:") return; // https / other schemes: nothing to guard.
+
+  const loopback =
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "::1" ||
+    url.hostname === "[::1]";
+  if (loopback) return; // Local dev over http never leaves the machine.
+
+  const allowInsecure = ["1", "true", "yes"].includes(
+    (env["SHEPHERD_ALLOW_INSECURE_HTTP"] ?? "").toLowerCase(),
+  );
+  if (allowInsecure) {
+    // Explicit opt-in: proceed, but still warn on stderr (stdout is the MCP
+    // protocol channel) since the token remains in cleartext on the wire.
+    process.stderr.write(
+      `[shepherd] WARNING: HUB_URL (${hubUrl}) uses plain http to a non-local host — ` +
+        `the team token and all coordination traffic travel unencrypted ` +
+        `(permitted via SHEPHERD_ALLOW_INSECURE_HTTP). Use https.\n`,
+    );
+    return;
+  }
+
+  throw new Error(
+    `HUB_URL (${hubUrl}) uses plain http to a non-local host — the team token would ` +
+      `travel unencrypted. Use https, or set SHEPHERD_ALLOW_INSECURE_HTTP=1 to permit ` +
+      `cleartext to a private-network hub (not recommended).`,
+  );
 }
