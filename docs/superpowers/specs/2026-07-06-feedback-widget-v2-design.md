@@ -32,24 +32,25 @@ Draft state (`type`, `body`) continues to reset only after a successful send; cl
 
 The widget silently gathers, at submit time:
 
-| Field        | Source                                                        |
-| ------------ | ------------------------------------------------------------- |
-| `route`      | `window.location.pathname` (+ hash if present)                 |
-| `appVersion` | the ui package's own version, imported from its `package.json` |
-| `userAgent`  | `navigator.userAgent`                                          |
-| `viewport`   | `"{innerWidth}x{innerHeight}"`                                 |
+| Field        | Source                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| `route`      | `window.location.pathname` (+ hash if present)                                               |
+| `appVersion` | `SHEPHERD_UI_VERSION` constant in a new `src/version.ts`, kept in sync with `package.json` by a test |
+| `userAgent`  | `navigator.userAgent`                                                                        |
+| `viewport`   | `"{innerWidth}x{innerHeight}"`                                                               |
 
 - **Schema** (`packages/shared`): `FeedbackRequest` gains an optional `context` object; every field optional, `z.string().max(…)`-capped (route/appVersion/viewport 256, userAgent 512). Old clients that omit `context` keep working; unknown extra fields are stripped by Zod as today.
-- **DB**: migration `015_feedback_context.sql` adds a nullable `context jsonb` column (atomic single-transaction file, per the migrate.ts invariant). `insertFeedback` stores the validated object verbatim, `NULL` when absent.
+- **DB**: migration `019_feedback_context.sql` (migrations already run to 018) adds a nullable `context jsonb` column (atomic single-transaction file, per the migrate.ts invariant). `insertFeedback` stores the validated object verbatim, `NULL` when absent.
 - No new props on `FeedbackWidget`; everything comes from browser globals (guarded so SSR/tests without `window` just omit fields).
 
 ## 3. Email delivery via Resend
 
-- **New hub module** `src/mailer.ts`: `sendFeedbackEmail(row)` does a plain `fetch` POST to `https://api.resend.com/emails` — no SDK dependency.
+The hub **already has** Resend infrastructure (`src/email.ts`, fetch-based, used by email invites) and `RESEND_API_KEY`/`INVITE_EMAIL_FROM` in config — this feature extends it rather than adding a new module.
+
+- **Extend `src/email.ts`** with `sendFeedbackEmail(...)`: a plain `fetch` POST to `https://api.resend.com/emails` — no SDK dependency, mirroring `sendInviteEmail`.
 - **Config (env)**:
-  - `RESEND_API_KEY` — absent → mailer is disabled and skips silently (the self-host default).
-  - `FEEDBACK_EMAIL_TO` — default `dev@korsoai.com`.
-  - `FEEDBACK_EMAIL_FROM` — e.g. `feedback@korsoai.com`; requires one-time domain verification of korsoai.com in Resend.
+  - `RESEND_API_KEY` + `INVITE_EMAIL_FROM` (existing) — either absent → feedback email is disabled and skips silently (the self-host default). The sender address is shared with invites; no separate `FEEDBACK_EMAIL_FROM`.
+  - `FEEDBACK_EMAIL_TO` (new) — default `dev@korsoai.com`.
 - **Wiring**: `submitFeedback` inserts the row first, then calls the mailer **fire-and-forget** (`void sendFeedbackEmail(...).catch(log)`). A mail failure (or slow Resend) never fails or delays the HTTP response; the row is the source of truth.
 - **Email content**: subject `[Feedback] <type> — <first 60 chars of body>`; plain-text body with the message, type, account ID, workspace ID, each context field, created-at, and the feedback row ID (for looking the row up later).
 
@@ -61,9 +62,9 @@ The widget silently gathers, at submit time:
 
 ## Ops (outside this change)
 
-1. Verify korsoai.com as a sending domain in Resend; create an API key.
-2. Set `RESEND_API_KEY`, `FEEDBACK_EMAIL_TO`, `FEEDBACK_EMAIL_FROM` on the hub's Cloud Run service.
-3. Run migration 015 against Cloud SQL via the normal migration path.
+1. Verify korsoai.com as a sending domain in Resend; create an API key (skip whatever is already configured for email invites).
+2. Ensure `RESEND_API_KEY` and `INVITE_EMAIL_FROM` are set on the hub's Cloud Run service; set `FEEDBACK_EMAIL_TO` only if a destination other than dev@korsoai.com is wanted.
+3. Run migration 019 against Cloud SQL via the normal migration path.
 
 ## Out of scope
 
