@@ -7,7 +7,9 @@ import {
   type Tool,
   TOOLS,
   TOKEN_PLACEHOLDER,
+  agentSetupPrompt,
   installCommand,
+  installPrerequisite,
   hookSetup,
   parseTool,
 } from "./connectCommand.js";
@@ -48,7 +50,9 @@ export interface ConnectAgentProps {
 // an operator tell which tokens are still active before revoking one.
 function tokenMeta(token: TokenSummaryT, nowMs: number): string {
   const created = `created ${formatRelative(token.createdAt, nowMs)}`;
-  const used = token.lastUsedAt ? `last used ${formatRelative(token.lastUsedAt, nowMs)}` : "never used";
+  const used = token.lastUsedAt
+    ? `last used ${formatRelative(token.lastUsedAt, nowMs)}`
+    : "never used";
   return `${created} · ${used}`;
 }
 
@@ -65,8 +69,10 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // True for a couple seconds after a successful copy, to flash the button label.
-  const [copied, setCopied] = useState(false);
+  // Names which box was copied for a couple seconds, to flash its button label.
+  const [copied, setCopied] = useState<"command" | "prereq" | "prompt" | null>(
+    null,
+  );
   const [copyError, setCopyError] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True until the first loadTokens() resolves, so the management list shows a
@@ -126,16 +132,24 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
     }
   }
 
-  const command = installCommand(tool, directHubUrl, rawToken ?? TOKEN_PLACEHOLDER);
+  const command = installCommand(
+    tool,
+    directHubUrl,
+    rawToken ?? TOKEN_PLACEHOLDER,
+  );
+  const prereq = installPrerequisite(tool);
   const hook = hookSetup(tool);
 
-  async function copyCommand() {
+  async function copyCommand(
+    text: string,
+    what: "command" | "prereq" | "prompt",
+  ) {
     try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
+      await navigator.clipboard.writeText(text);
+      setCopied(what);
       setCopyError(false);
       if (copiedTimer.current) clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
+      copiedTimer.current = setTimeout(() => setCopied(null), 2000);
     } catch {
       // Clipboard permission denied / insecure context: never lose a one-time
       // token silently — tell the operator to select the text themselves.
@@ -159,9 +173,9 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
           command into your coding tool.
         </p>
         <p className="card-sub">
-          The first time the agent changes files in a repo, Shepherd asks
-          which workspace to coordinate that repo with, once per repo,
-          right in your tool.
+          The first time the agent changes files in a repo, Shepherd asks which
+          workspace to coordinate that repo with, once per repo, right in your
+          tool.
         </p>
       </div>
 
@@ -197,7 +211,11 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
               }}
               placeholder="e.g. laptop"
             />
-            <button type="button" onClick={() => void generate()} disabled={busy}>
+            <button
+              type="button"
+              onClick={() => void generate()}
+              disabled={busy}
+            >
               Generate token
             </button>
           </div>
@@ -217,28 +235,98 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
           </p>
         )}
 
+        {/* JSON-config tools: the npm install can't ride inside the JSON
+            block, so it gets its own copyable box above it. */}
+        {prereq && (
+          <div className="install-command">
+            <pre data-testid="install-prereq">{prereq}</pre>
+            <button
+              type="button"
+              className="install-command__copy"
+              aria-label={
+                copied === "prereq" ? "Copied" : "Copy install command"
+              }
+              title={copied === "prereq" ? "Copied" : "Copy"}
+              onClick={() => void copyCommand(prereq, "prereq")}
+            >
+              {copied === "prereq" ? (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              ) : (
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              )}
+            </button>
+          </div>
+        )}
+
         <div className="install-command">
           {/* `ph-no-capture` / `data-sensitive`: the command can carry a live
               bearer token; session-replay tools the HOST runs honor these
               hints and redact the block. */}
-          <pre data-testid="install-command" className="ph-no-capture" data-sensitive="true">
+          <pre
+            data-testid="install-command"
+            className="ph-no-capture"
+            data-sensitive="true"
+          >
             {command}
           </pre>
           <button
             type="button"
             className="install-command__copy"
-            aria-label={copied ? "Copied" : "Copy command"}
-            title={copied ? "Copied" : "Copy"}
-            onClick={() => void copyCommand()}
+            aria-label={copied === "command" ? "Copied" : "Copy command"}
+            title={copied === "command" ? "Copied" : "Copy"}
+            onClick={() => void copyCommand(command, "command")}
           >
-            {copied ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {copied === "command" ? (
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <path d="M20 6 9 17l-5-5" />
               </svg>
             ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
                 <rect x="9" y="9" width="13" height="13" rx="2" />
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
               </svg>
@@ -246,15 +334,50 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
           </button>
         </div>
 
+        {/* Hands-off alternative: a prompt the operator pastes into their
+            coding agent so IT runs the setup. Gated on the live token (the
+            prompt embeds it) and copied without being rendered. */}
+        {rawToken && (
+          <div className="shepherd-setup__agent">
+            <button
+              type="button"
+              className="shepherd-setup__agent-btn"
+              onClick={() =>
+                void copyCommand(
+                  agentSetupPrompt(tool, directHubUrl, rawToken),
+                  "prompt",
+                )
+              }
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+              </svg>
+              {copied === "prompt" ? "Prompt copied!" : "Set up by agent"}
+            </button>
+            <p className="card-sub">
+              Copies a prompt that has your coding agent do the setup for you.
+            </p>
+          </div>
+        )}
+
         {hook && (
           <div className="hook-setup">
             <p className="card-sub">
               Message delivery sets itself up: the first time the agent runs,
               Shepherd adds its inbox hook to <code>{hook.target}</code>{" "}
-              automatically. It delivers teammate announcements and reminds
-              the agent to link each repo before its first write. This
-              happens at most once; set{" "}
-              <code>SHEPHERD_NO_AUTO_HOOKS=1</code> to opt out.
+              automatically. It delivers teammate announcements and reminds the
+              agent to link each repo before its first write. This happens at
+              most once; set <code>SHEPHERD_NO_AUTO_HOOKS=1</code> to opt out.
             </p>
             {hook.snippet && (
               <details className="hook-reference">
@@ -281,7 +404,9 @@ export function ConnectAgent({ hubUrl }: ConnectAgentProps) {
               const name = t.name ?? `Unnamed token (${t.id.slice(0, 8)})`;
               return (
                 <li key={t.id}>
-                  <span className={t.name ? undefined : "token-unnamed"}>{name}</span>
+                  <span className={t.name ? undefined : "token-unnamed"}>
+                    {name}
+                  </span>
                   <span className="token-meta">{tokenMeta(t, Date.now())}</span>
                   {t.revokedAt ? (
                     <span className="revoked">revoked</span>
