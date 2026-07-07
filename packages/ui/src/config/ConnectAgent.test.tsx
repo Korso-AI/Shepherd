@@ -25,7 +25,9 @@ describe("ConnectAgent", () => {
       listAccountTokens: vi.fn().mockResolvedValue({ tokens: [] }),
     });
     // jsdom has no Clipboard implementation; stub it so the copy button works.
-    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
   });
 
   function renderConnect() {
@@ -52,7 +54,9 @@ describe("ConnectAgent", () => {
     renderConnect();
     await waitFor(() => expect(client.listAccountTokens).toHaveBeenCalled());
 
-    await userEvent.click(screen.getByRole("button", { name: /generate token/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /generate token/i }),
+    );
 
     await waitFor(() => {
       const cmd = screen.getByTestId("install-command").textContent ?? "";
@@ -68,13 +72,19 @@ describe("ConnectAgent", () => {
       .mockResolvedValue({ token: "shp_onceonly", id: "tok_1" });
 
     renderConnect();
-    await userEvent.click(screen.getByRole("button", { name: /generate token/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /generate token/i }),
+    );
 
     await waitFor(() => {
-      expect(screen.getByTestId("install-command").textContent).toContain("shp_onceonly");
+      expect(screen.getByTestId("install-command").textContent).toContain(
+        "shp_onceonly",
+      );
     });
     // The one-time warning is shown so the operator knows to copy it now.
-    expect(screen.getByText(/won't be shown again|shown once|only.*once/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/won't be shown again|shown once|only.*once/i),
+    ).toBeInTheDocument();
   });
 
   it("switches the install command when a different tool is picked", async () => {
@@ -83,16 +93,21 @@ describe("ConnectAgent", () => {
       .mockResolvedValue({ token: "shp_tok", id: "tok_1" });
 
     renderConnect();
-    await userEvent.click(screen.getByRole("button", { name: /generate token/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /generate token/i }),
+    );
     await waitFor(() =>
-      expect(screen.getByTestId("install-command").textContent).toContain("shp_tok"),
+      expect(screen.getByTestId("install-command").textContent).toContain(
+        "shp_tok",
+      ),
     );
 
     const claudeCmd = screen.getByTestId("install-command").textContent ?? "";
     expect(claudeCmd).toMatch(/claude mcp add/);
-    // Long `--package=` form — `claude mcp add` fails to parse a bare `-p`
-    // after the `--` separator.
-    expect(claudeCmd).toContain("--package=@korso/shepherd shepherd-mcp");
+    // Two commands: global install first, then `mcp add` with only the bare
+    // bin after `--` — the claude CLI mis-parses flags after the separator.
+    expect(claudeCmd).toContain("npm install -g @korso/shepherd");
+    expect(claudeCmd).toContain("-- shepherd-mcp");
 
     // Pick Codex — its CLI only accepts `--env`, and PROGRAM must be set
     // explicitly (it defaults to claude-code).
@@ -106,7 +121,8 @@ describe("ConnectAgent", () => {
       expect(codexCmd).not.toContain(" -e ");
     });
 
-    // Pi and Cursor have no `mcp add` CLI — they get the JSON config block,
+    // Pi and Cursor have no `mcp add` CLI — they get the JSON config block
+    // (pointing at the installed bin) plus the npm install as its own box,
     // with PROGRAM identifying the tool in the presence feed.
     for (const tool of ["pi", "cursor"] as const) {
       await userEvent.selectOptions(screen.getByLabelText(/tool/i), tool);
@@ -115,11 +131,37 @@ describe("ConnectAgent", () => {
         const parsed = JSON.parse(jsonCmd);
         expect(parsed.mcpServers.shepherd.env.PROGRAM).toBe(tool);
         expect(parsed.mcpServers.shepherd.env.SHEPHERD_TOKEN).toBe("shp_tok");
-        expect(parsed.mcpServers.shepherd.args).toEqual([
-          "-y", "--package=@korso/shepherd", "shepherd-mcp",
-        ]);
+        expect(parsed.mcpServers.shepherd.command).toBe("shepherd-mcp");
       });
+      expect(screen.getByTestId("install-prereq")).toHaveTextContent(
+        "npm install -g @korso/shepherd",
+      );
     }
+  });
+
+  it("offers a 'Set up by agent' prompt copy once a token is minted", async () => {
+    client.mintAccountToken = vi
+      .fn()
+      .mockResolvedValue({ token: "shp_tok", id: "tok_1" });
+    renderConnect();
+
+    // No live token → no prompt button (it would embed the placeholder).
+    expect(
+      screen.queryByRole("button", { name: /set up by agent/i }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /generate token/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /set up by agent/i }),
+    );
+
+    const writes = vi.mocked(navigator.clipboard.writeText).mock.calls;
+    const prompt = String(writes[writes.length - 1]?.[0]);
+    expect(prompt).toContain("npm install -g @korso/shepherd");
+    expect(prompt).toContain("shp_tok");
+    expect(prompt).toMatch(/restart/i);
   });
 
   it("copies the install command to the clipboard", async () => {
@@ -130,7 +172,9 @@ describe("ConnectAgent", () => {
 
     const cmd = screen.getByTestId("install-command").textContent ?? "";
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(cmd);
-    expect(await screen.findByRole("button", { name: /copied/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /copied/i }),
+    ).toBeInTheDocument();
   });
 
   it("lists existing tokens and revokes one", async () => {
@@ -174,7 +218,9 @@ describe("ConnectAgent", () => {
 
     // Fallback label + a short id suffix to tell unnamed twins apart — the
     // full uuid (which reads like a secret token) must never be the label.
-    expect(await screen.findByText("Unnamed token (75e707e5)")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Unnamed token (75e707e5)"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("75e707e5-f39b-4e0b-9999-31dc9da94352"),
     ).not.toBeInTheDocument();
@@ -217,7 +263,9 @@ describe("ConnectAgent", () => {
     );
 
     renderConnect();
-    const btn = await screen.findByRole("button", { name: /revoke token laptop/i });
+    const btn = await screen.findByRole("button", {
+      name: /revoke token laptop/i,
+    });
     await userEvent.click(btn);
 
     await waitFor(() => expect(btn).toBeDisabled());
@@ -225,7 +273,9 @@ describe("ConnectAgent", () => {
     expect(client.revokeAccountToken).toHaveBeenCalledTimes(1);
 
     resolve();
-    await waitFor(() => expect(client.revokeAccountToken).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(client.revokeAccountToken).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("Claude Code: says hooks auto-install (with opt-out) and keeps the snippet as reference", async () => {
@@ -274,7 +324,9 @@ describe("ConnectAgent", () => {
     await waitFor(() => {
       const json = screen.getByTestId("hook-snippet").textContent ?? "";
       const parsed = JSON.parse(json);
-      expect(parsed.hooks.beforeSubmitPrompt[0].command).toContain("shepherd-inbox-hook");
+      expect(parsed.hooks.beforeSubmitPrompt[0].command).toContain(
+        "shepherd-inbox-hook",
+      );
       expect(Object.keys(parsed.hooks)).toEqual(["beforeSubmitPrompt"]);
     });
     expect(screen.getByText(/hooks\.json/)).toBeInTheDocument();

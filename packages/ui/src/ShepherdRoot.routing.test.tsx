@@ -117,10 +117,11 @@ describe("ShepherdRoot routing / landing", () => {
     expect(client.getLandscape).not.toHaveBeenCalled();
   });
 
-  it("create step: submitting a name refetches, auto-selects the new workspace, and reaches the connect stage", async () => {
+  it("create step: generating a token refetches, auto-selects the new workspace, and reaches the connect stage", async () => {
     // Plan Task 5 integration: a no-workspace root → checklist create step
-    // submits → listWorkspaces refetched → the new workspace auto-selected and
-    // polled → the checklist advances to the connect stage.
+    // generates a token (which creates the workspace in one action) →
+    // listWorkspaces refetched → the new workspace auto-selected and polled →
+    // the checklist advances to the connect stage.
     let list: (typeof WS)[] = [];
     client.listWorkspaces = vi
       .fn()
@@ -135,7 +136,7 @@ describe("ShepherdRoot routing / landing", () => {
     await screen.findByRole("region", { name: /setup guide/i });
     await userEvent.type(screen.getByLabelText(/workspace name/i), "Acme");
     await userEvent.click(
-      screen.getByRole("button", { name: /create workspace/i }),
+      screen.getByRole("button", { name: /generate token/i }),
     );
 
     // The create triggers a refetch; the new workspace becomes selected and the
@@ -149,6 +150,14 @@ describe("ShepherdRoot routing / landing", () => {
     expect(
       screen.getByText(/waiting for your agent to check in/i),
     ).toBeInTheDocument();
+    // ONE click did it all: the token minted by that same click is still in
+    // the install command after the switch onto the new workspace — the guide
+    // never unmounted mid-flow (a remount would eat the token and force a
+    // second "Generate token" click).
+    expect(client.mintAccountToken).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("setup-install-command").textContent).toContain(
+      "shp_mock",
+    );
   });
 
   it("shows a loading indicator before the workspace list resolves", async () => {
