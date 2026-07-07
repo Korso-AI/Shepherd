@@ -22,6 +22,7 @@ export async function submitFeedback(
     accountId: tenant.accountId ?? null,
     type: input.type,
     body: input.body,
+    context: input.context ?? null,
   });
 
   return { ok: true, id };

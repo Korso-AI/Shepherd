@@ -97,9 +97,15 @@ async function seedMembership(
 async function fetchFeedback(
   pool: pg.Pool,
   id: string
-): Promise<{ workspace_id: string | null; account_id: string | null; type: string; body: string }> {
+): Promise<{
+  workspace_id: string | null;
+  account_id: string | null;
+  type: string;
+  body: string;
+  context: Record<string, string> | null;
+}> {
   const { rows } = await pool.query(
-    `SELECT workspace_id, account_id, type, body FROM feedback WHERE id = $1`,
+    `SELECT workspace_id, account_id, type, body, context FROM feedback WHERE id = $1`,
     [id]
   );
   return rows[0]!;
@@ -188,6 +194,48 @@ describe.skipIf(!dbAvailable)(
       const row = await fetchFeedback(pool, parsed.id);
       expect(row.workspace_id).toBe(wsId);
       expect(row.account_id).toBeNull();
+    });
+
+    it("stores client context verbatim when supplied", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/feedback",
+        headers: bffHeaders("acct-carol"),
+        payload: {
+          type: "bug",
+          body: "widget exploded",
+          context: {
+            route: "/shepherd",
+            appVersion: "0.14.0",
+            userAgent: "test-agent",
+            viewport: "1280x720",
+          },
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const parsed = FeedbackResponse.parse(res.json());
+      const row = await fetchFeedback(pool, parsed.id);
+      expect(row.context).toEqual({
+        route: "/shepherd",
+        appVersion: "0.14.0",
+        userAgent: "test-agent",
+        viewport: "1280x720",
+      });
+    });
+
+    it("stores NULL context when the request omits it", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/feedback",
+        headers: bffHeaders("acct-carol"),
+        payload: { type: "other", body: "no context here" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const parsed = FeedbackResponse.parse(res.json());
+      const row = await fetchFeedback(pool, parsed.id);
+      expect(row.context).toBeNull();
     });
 
     it("rejects an empty body with 400", async () => {
