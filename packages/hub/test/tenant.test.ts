@@ -46,6 +46,7 @@ import type { Config } from "../src/config.js";
 const TEAM_TOKEN = "self-host-team-token";
 const BFF_INTERNAL_TOKEN = "bff-internal-secret";
 const OPERATOR_IDENTITY_SECRET = "operator-identity-secret";
+const OPERATOR_EMAIL_DOMAIN = "example.test";
 const ALLOWED_WORKSPACE = "default";
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
@@ -56,6 +57,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     ALLOWED_WORKSPACE,
     BFF_INTERNAL_TOKEN,
     OPERATOR_IDENTITY_SECRET,
+    OPERATOR_EMAIL_DOMAIN,
     DEFAULT_TTL_SECONDS: 1800,
     MIN_TTL_SECONDS: 30,
     STALE_AFTER_SECONDS: 120,
@@ -79,7 +81,7 @@ function signedOperatorHeaders(opts: {
   secret?: string;
   body?: string;
 }): Record<string, string> {
-  const email = opts.email ?? "operator@korsoai.com";
+  const email = opts.email ?? "operator@example.test";
   const method = (opts.method ?? "GET").toUpperCase();
   const path = opts.path ?? "/admin/analytics";
   const timestampMs = Date.now().toString();
@@ -283,7 +285,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     const ctx = await resolveTenant(req as any, makeConfig(), pool);
     expect(ctx.via).toBe("browser");
     expect(ctx.operator).toBe(true);
-    expect(ctx.operatorEmail).toBe("operator@korsoai.com");
+    expect(ctx.operatorEmail).toBe("operator@example.test");
   });
 
   it("browser with a BARE x-operator-verified: true (no HMAC proof) → NOT an operator", async () => {
@@ -331,7 +333,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
         "x-account-id": accountId,
         // Correctly signed — but for a lookalike domain, so the exact-domain
         // email check must reject it regardless of the valid signature.
-        ...signedOperatorHeaders({ accountId, email: "op@korsoai.com.evil.com" }),
+        ...signedOperatorHeaders({ accountId, email: "op@example.test.evil.com" }),
       },
       url: `/admin/analytics`,
       method: "GET",
