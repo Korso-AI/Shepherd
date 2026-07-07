@@ -385,6 +385,30 @@
       .shepherd-config li > span:first-child { flex:1; min-width:0; font-weight:500; }
       .shepherd-config li button { padding:5px 12px; }
       .shepherd-config .role { color:var(--ink3); font-size:12px; }
+      /* Per-row "⋯" actions menu (member rows): a quiet icon trigger next to
+         the role badge opening a small right-aligned popover — mirrors the
+         header's repo selector instead of a row of filled buttons. The extra
+         selector depth deliberately beats the generic dark
+         `.shepherd-config button` fill. */
+      .shepherd-config .row-actions { position:relative; display:inline-flex; }
+      .shepherd-config .row-actions__trig { display:grid; place-items:center;
+        width:28px; height:28px; padding:0; border:0; border-radius:7px;
+        background:transparent; color:var(--ink3); font-size:16px; line-height:1;
+        cursor:pointer; transition:background .12s ease, color .12s ease; }
+      .shepherd-config .row-actions__trig:hover:not(:disabled) {
+        background:rgba(50,44,32,.08); color:var(--ink); }
+      .shepherd-config .row-actions__trig[aria-expanded="true"] {
+        background:rgba(50,44,32,.08); color:var(--ink); }
+      .shepherd-config .row-actions__menu { position:absolute; top:calc(100% + 4px);
+        right:0; min-width:180px; display:flex; flex-direction:column;
+        background:var(--card); border:1px solid var(--line); border-radius:10px;
+        padding:5px; box-shadow:0 8px 24px rgba(50,40,20,.14); z-index:5; }
+      .shepherd-config .row-actions__menu button { width:100%; text-align:left;
+        padding:7px 9px; border:0; border-radius:7px; background:transparent;
+        color:var(--ink); font-weight:500; font-size:13px; white-space:nowrap; }
+      .shepherd-config .row-actions__menu button:hover:not(:disabled) {
+        background:var(--chip); }
+      .shepherd-config .row-actions__menu .row-actions__danger { color:var(--drop); }
       .shepherd-config .token-meta { color:var(--ink3); font-size:12px; }
       /* Fallback label for a token minted without a name — quiet, so it never
          reads as a secret value. */

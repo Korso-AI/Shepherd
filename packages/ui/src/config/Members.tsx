@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { MemberSummaryT, RoleT } from "@shepherd/shared";
 import { useShepherdClient } from "../context.js";
 import { describeError } from "../client.js";
@@ -18,6 +18,10 @@ import { ConfirmTransferOwnership } from "./ConfirmTransferOwnership.js";
 // Restricting role changes to the owner is the escalation guard: a promoted admin
 // cannot then demote the rest and seize the workspace. Self-service "leave" lives
 // in <WorkspaceSettings>.
+//
+// The controls sit behind a per-row "⋯" actions menu (rendered only when the
+// caller can act on that row) so the roster reads as a quiet list instead of a
+// row of filled buttons.
 // ---------------------------------------------------------------------------
 
 export interface MembersProps {
@@ -58,6 +62,31 @@ export function Members({
   const [transferTarget, setTransferTarget] = useState<MemberSummaryT | null>(null);
   const [transferring, setTransferring] = useState(false);
   const [transferError, setTransferError] = useState<string | null>(null);
+  // The row (by accountId) whose actions menu is open — at most one at a time.
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  // Host of the OPEN menu (only one exists), for the outside-click dismiss.
+  const menuHostRef = useRef<HTMLSpanElement | null>(null);
+
+  // Dismiss the open actions menu on outside-click — same popover behavior as
+  // the repo/workspace selectors. mousedown (not click) so it fires before
+  // focus moves.
+  useEffect(() => {
+    if (menuFor === null) return;
+    function onDocClick(e: MouseEvent) {
+      if (menuHostRef.current && !menuHostRef.current.contains(e.target as Node)) {
+        setMenuFor(null);
+      }
+    }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [menuFor]);
+
+  // Move focus into the freshly-opened menu so keyboard users can Tab the
+  // items and Esc out — only on open.
+  useEffect(() => {
+    if (menuFor === null) return;
+    menuHostRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [menuFor]);
 
   // `keepError` lets a failure path re-sync the roster without wiping the message
   // it just surfaced (a fresh fetch normally clears stale errors).
@@ -163,43 +192,78 @@ export function Members({
               const showRoleControls = isOwner && !m.isOwner;
               const canRemoveRow =
                 !m.isOwner && (m.role === "admin" ? isOwner : canRemove);
+              const hasActions = showRoleControls || canRemoveRow;
+              const menuOpen = menuFor === m.accountId;
               return (
                 <li key={m.accountId}>
                   <span>{display}</span>
                   <span className="role">{m.isOwner ? "owner" : m.role}</span>
-                  {showRoleControls && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void changeRole(
-                            m.accountId,
-                            m.role === "admin" ? "member" : "admin",
-                            display,
-                          )
-                        }
-                        disabled={busyId === m.accountId}
-                      >
-                        {m.role === "admin" ? "Make member" : "Make admin"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTransferTarget(m)}
-                        disabled={busyId === m.accountId}
-                      >
-                        Transfer ownership
-                      </button>
-                    </>
-                  )}
-                  {canRemoveRow && (
-                    <button
-                      type="button"
-                      aria-label={`Remove ${display}`}
-                      onClick={() => void remove(m.accountId, display)}
-                      disabled={busyId === m.accountId}
+                  {hasActions && (
+                    <span
+                      className="row-actions"
+                      ref={menuOpen ? menuHostRef : undefined}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setMenuFor(null);
+                      }}
                     >
-                      Remove
-                    </button>
+                      <button
+                        type="button"
+                        className="row-actions__trig"
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpen}
+                        aria-label={`Actions for ${display}`}
+                        onClick={() => setMenuFor(menuOpen ? null : m.accountId)}
+                        disabled={busyId === m.accountId}
+                      >
+                        ⋯
+                      </button>
+                      {menuOpen && (
+                        <div className="row-actions__menu" role="menu">
+                          {showRoleControls && (
+                            <>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  void changeRole(
+                                    m.accountId,
+                                    m.role === "admin" ? "member" : "admin",
+                                    display,
+                                  );
+                                }}
+                              >
+                                {m.role === "admin" ? "Make member" : "Make admin"}
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setMenuFor(null);
+                                  setTransferTarget(m);
+                                }}
+                              >
+                                Transfer ownership
+                              </button>
+                            </>
+                          )}
+                          {canRemoveRow && (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="row-actions__danger"
+                              aria-label={`Remove ${display}`}
+                              onClick={() => {
+                                setMenuFor(null);
+                                void remove(m.accountId, display);
+                              }}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </span>
                   )}
                 </li>
               );
