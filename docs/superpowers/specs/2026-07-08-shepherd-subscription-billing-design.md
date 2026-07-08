@@ -58,6 +58,13 @@ coordinating agents can also run a Docker container + Postgres. Therefore:
 - **Downgrade, never lock out.** On cancellation or payment failure: a grace
   period, then the workspace reverts to **Free limits**. We never delete data or
   hard-lock a workspace for non-payment.
+- **No-credit-card trial.** The 14-day Pro trial is **app-side, no card
+  required** ("no credit card needed" is an advertised adoption lever). An admin
+  starts the trial, the workspace gets full Pro limits for 14 days, and at trial
+  end it reverts to **Free limits** — the same downgrade rule above, no lock-out.
+  A card is required only to **convert** to a paid Pro subscription (via Stripe
+  Checkout), never to start the trial. One trial per workspace. This trades lower
+  per-trial conversion for far more trials started — the intended adoption bet.
 
 ## Plans & pricing
 
@@ -65,7 +72,7 @@ coordinating agents can also run a Docker container + Postgres. Therefore:
 |---|---|---|---|
 | **Positioning** | "try hosted, or self-host free" | "we host your team's workspace, cheaply" | "hosted + SSO, SLA, compliance, commercial license" |
 | **Price** | **$0** | **$15 / month flat per workspace** | **Custom — starts ~$99/month** |
-| **Billing** | — | flat monthly; 14-day free trial; annual ≈ 2 months free (~$150/yr) | negotiated (may include commercial license worth far more than the hosting fee) |
+| **Billing** | — | flat monthly; **14-day free trial, no credit card**; annual ≈ 2 months free (~$150/yr) | negotiated (may include commercial license worth far more than the hosting fee) |
 | **Human seats** (memberships) | **2** | up to **20** | unlimited |
 | **Active agents** | anti-abuse only | anti-abuse only | anti-abuse only |
 | **Repos / workspace** | **3** | unlimited | unlimited |
@@ -161,6 +168,7 @@ are **skipped entirely for self-host** (`TEAM_TOKEN`-resolved) requests.
   lazy filter at read time.
 - Precise error shape returned when a limit is hit (so the UI can render a clean
   "upgrade" prompt).
-- Trial mechanics: Stripe trial vs. app-side trial window, and whether a card is
-  required to start the trial.
 - How `enterprise` limits are set (admin endpoint vs. DB flag).
+
+(Resolved: trial mechanics — the trial is app-side and requires no credit card;
+see "No-credit-card trial" under Billing model above.)
