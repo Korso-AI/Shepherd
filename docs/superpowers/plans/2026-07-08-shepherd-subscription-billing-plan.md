@@ -4,7 +4,7 @@
 
 **Goal:** Make Korso-hosted Shepherd workspaces a Stripe-billed subscription product (Free / Pro $15/mo flat / Enterprise custom) with per-plan seat, repo, and retention limits enforced in the hub — while self-hosted deployments stay fully unlimited and unmetered.
 
-**Architecture:** Plan state lives on the `workspaces` table (migration `020`); a small pure module (`packages/hub/src/plan.ts`) defines the limits table and the `effectivePlan()` fallback rules. Enforcement is three surgical checks in the hub's existing transaction paths (seat check in `redeemInvite`, repo check in `join`, retention prune next to the existing `pruneChangeRecords` call sites), all of which no-op unless the deployment has billing enabled (`STRIPE_SECRET_KEY` set) — self-host never sets it. The hub owns all Stripe interaction: Checkout/Portal session endpoints under `/workspaces/:id/billing/*` (admin-only) and a signature-verified, auth-exempt `/stripe/webhook` route that flips plan state. The UI gets a Billing section in the existing ConfigPanel; the platform BFF only proxies.
+**Architecture:** Plan state lives on the `workspaces` table (migration `020`); a small pure module (`packages/hub/src/plan.ts`) defines the limits table and the `effectivePlan()` fallback rules. Enforcement is three surgical checks in the hub's existing transaction paths (seat check in `redeemInvite`, repo check in `join`, retention prune next to the existing `pruneChangeRecords` call sites), all of which no-op unless the deployment has billing enabled (`STRIPE_SECRET_KEY` set) — self-host never sets it. The hub owns all Stripe interaction: trial-start/Checkout/Portal endpoints under `/workspaces/:id/billing/*` (admin-only; the 14-day trial is app-side and creates NO Stripe objects — no card) and a signature-verified, auth-exempt `/stripe/webhook` route that flips plan state. The UI gets a Billing section in the existing ConfigPanel; the platform BFF only proxies.
 
 **Spec:** `docs/superpowers/specs/2026-07-08-shepherd-subscription-billing-design.md` (approved). Do not relitigate plan/pricing decisions.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Prices/limits (copied from spec, exact): Free = $0, **2 seats, 3 repos, 7-day retention**; Pro = **$15/mo flat**, **20 seats**, unlimited repos, **90-day retention**, admin analytics, **14-day trial**; Enterprise = custom, unlimited everything, **no self-serve Checkout at launch**.
+- Prices/limits (copied from spec, exact): Free = $0, **2 seats, 3 repos, 7-day retention**; Pro = **$15/mo flat**, **20 seats**, unlimited repos, **90-day retention**, admin analytics, **14-day trial — app-side, NO credit card required** (human decision 2026-07-08, supersedes the Stripe-side trial); Enterprise = custom, unlimited everything, **no self-serve Checkout at launch**.
 - **Billing entity = the workspace.** One Stripe customer + subscription per workspace. No org layer. Flat pricing — never per seat, never per agent.
 - **Agents are NEVER a plan lever.** No agent counts anywhere in this plan (anti-abuse rate limiting is separate, out of scope).
 - **Hosted-only enforcement.** Every limit check must no-op when billing is not enabled on the deployment (`STRIPE_SECRET_KEY` unset) AND when the request resolved via self-host `TEAM_TOKEN` (`tenant.via === "team"`). Self-host is fully unlimited/unmetered.
@@ -29,7 +29,7 @@ These are the concrete decisions this plan implements. **Flag to the human for c
 1. **Columns (migration `020_workspace_plans.sql`)** — six new `workspaces` columns: `plan text NOT NULL DEFAULT 'free'` (CHECK `free|pro|enterprise`), `plan_status text NOT NULL DEFAULT 'none'` (CHECK `none|trialing|active|past_due|canceled`), `stripe_customer_id text` (partial unique index), `stripe_subscription_id text`, `current_period_end timestamptz`, `grace_until timestamptz`.
 2. **Retention cleanup = lazy prune at coordination-write time**, throttled to once per workspace per hour in-memory. Rationale: the hub already prunes `change_records` lazily inside the `work`/`sync`/`heartbeat` transactions (`pruneChangeRecords`, `repo.ts:2257`) — same pattern, zero new infra (no cron on Cloud Run, no boot sweep that misses long-lived instances), and it lands inside an existing transaction. This also finally bounds the announcements ledger (known review finding P2-2, noted at `repo.ts:1686-1691`). `change_records` need no plan-level prune: the existing `CHANGE_RECORD_TTL_SECONDS` default (3 days) is already stricter than both the 7- and 90-day windows.
 3. **Limit-hit error shape = HTTP 402 + `code: "plan_limit"` body**, defined in the shared zod contract (`PlanLimitErrorBody`): `{ error, code: "plan_limit", limit: "seats"|"repos", plan, current, max }`. A new `PlanLimitError` hub error class maps to it in the server error handler. 402 is unused by any existing hub surface, so clients can key upgrade UI off the status alone.
-4. **Trial = Stripe-side trial, card required.** Checkout sessions set `subscription_data.trial_period_days: 14` and `payment_method_collection: "always"`. No app-side trial state; the `trialing` subscription status flows in via webhook. One trial per workspace: the checkout endpoint omits the trial when the workspace has ever had a subscription (`stripe_subscription_id IS NOT NULL` or `plan_status != 'none'`).
+4. **Trial = APP-SIDE, NO credit card** (human decision — "no credit card needed" is the adoption lever). An admin calls `POST /workspaces/:id/billing/trial`; the hub flips the workspace to `plan='pro'`, `plan_status='trialing'`, `current_period_end = now + 14 days` — **no Stripe customer, subscription, or card is created at trial start**. The existing `current_period_end` column is dual-used as the trial-end timestamp while trialing (no new column). `effectivePlan()` treats `trialing` as `pro` only while `now < current_period_end`; an expired trial reverts to FREE LIMITS (same downgrade-never-lock-out rule — no data deleted). Converting to paid Pro goes through Stripe Checkout (card entered THEN). **One trial per workspace — concrete guard:** the trial endpoint refuses (409) unless `plan = 'free' AND plan_status = 'none' AND stripe_customer_id IS NULL AND stripe_subscription_id IS NULL` (an expired trial leaves `plan_status='trialing'`, a lapsed subscription leaves `stripe_customer_id` set, so both are caught; accepted edge: an abandoned checkout creates a customer id and thereby blocks a later trial).
 5. **Enterprise limits = DB flag set administratively** (documented SQL runbook: `UPDATE workspaces SET plan='enterprise', plan_status='active' WHERE slug=...`). No admin write endpoint at launch — Enterprise is sales-led and rare; the operator `/admin/*` surface stays read-only.
 6. **Where checks slot in:** seats → inside `redeemInvite`'s existing transaction (`packages/hub/src/operations/invites.ts:384`, the only place a membership is added besides workspace creation); repos → inside `join`'s transaction (`packages/hub/src/operations/join.ts:187`, the single repo-ingestion point — `work` inherits the session's repo, so gating join gates everything); retention → next to the three `pruneChangeRecords` call sites (`operations/work.ts:101`, `operations/sync.ts:67`, `operations/heartbeat.ts:81`). All checks call a shared guard that returns immediately when `!billingEnabled(config) || tenant.via === "team"`.
 7. **Spec deviation — `/admin/*` analytics is NOT plan-gated.** The existing `/admin/analytics` (`server.ts:644`, `requireOperator` in `tenant.ts:156`) is the **cross-tenant Korso-internal operator surface** — gating product-wide operator data on one workspace's plan is incoherent, and workspace admins can't reach it anyway. Instead, the Pro "admin analytics" entitlement is exposed as `entitlements.analytics` in the new `GET /workspaces/:id/billing` response, so the hosted console gates its per-workspace analytics UI on it; a hub-side `requirePlanFeature` helper ships in `plan.ts` for whatever workspace-scoped analytics endpoint lands later. **Confirm this reading with the human.**
@@ -43,7 +43,7 @@ packages/hub/src/plan.ts                               create — PLAN_LIMITS, e
 packages/hub/src/retention.ts                          create — throttled per-workspace retention prune
 packages/hub/src/billing/stripe.ts                     create — Stripe client wrapper (injectable for tests)
 packages/hub/src/billing/webhook.ts                    create — event verification + plan-state transitions
-packages/hub/src/operations/billing.ts                 create — checkout/portal/status operations
+packages/hub/src/operations/billing.ts                 create — trial/checkout/portal/status operations
 packages/hub/src/repo.ts                               modify — plan-row reads/writes, pruneAnnouncements
 packages/hub/src/errors.ts                             modify — PlanLimitError
 packages/hub/src/config.ts                             modify — STRIPE_* env vars + superRefine
@@ -60,7 +60,7 @@ packages/ui/src/config/ConfigPanel.tsx                 modify — add Billing se
 packages/hub/test/plan.test.ts                         create — pure-unit effectivePlan/limits
 packages/hub/test/planLimits.test.ts                   create — DB-gated seat/repo enforcement
 packages/hub/test/retention.test.ts                    create — DB-gated announcement pruning
-packages/hub/test/billing.test.ts                      create — DB-gated checkout/portal/status endpoints (fake Stripe)
+packages/hub/test/billing.test.ts                      create — DB-gated trial/checkout/portal/status endpoints (fake Stripe)
 packages/hub/test/stripeWebhook.test.ts                create — DB-gated webhook signature + transitions
 docs/billing-runbook.md                                create — Stripe setup, env vars, Enterprise runbook
 ```
@@ -173,15 +173,20 @@ Create `packages/hub/migrations/020_workspace_plans.sql`:
 --                   Stripe webhooks set 'pro'; 'enterprise' is set
 --                   administratively (sales-led; see docs/billing-runbook.md).
 --   plan_status   — the subscription lifecycle ('none' | 'trialing' | 'active'
---                   | 'past_due' | 'canceled'), mapped from Stripe statuses.
+--                   | 'past_due' | 'canceled'). 'trialing' is set APP-SIDE by
+--                   the no-card trial endpoint (no Stripe objects exist yet);
+--                   the other paid states are mapped from Stripe statuses.
 --                   The EFFECTIVE plan (what limits apply) is derived in code:
---                   see effectivePlan() in packages/hub/src/plan.ts — past_due
---                   inside the grace window keeps the paid limits, past_due
+--                   see effectivePlan() in packages/hub/src/plan.ts — trialing
+--                   keeps pro limits only until current_period_end; past_due
+--                   inside the grace window keeps the paid limits; past_due
 --                   beyond it and canceled revert to Free limits. Data is
 --                   never deleted and the workspace is never locked.
 --   grace_until   — end of the past-due grace window (set on
 --                   invoice.payment_failed, cleared when payment recovers).
---   current_period_end — the paid-through timestamp, for display.
+--   current_period_end — DUAL USE: while plan_status='trialing' (app-side,
+--                   card-less trial) this is the TRIAL END; once a Stripe
+--                   subscription exists it is the paid-through timestamp.
 
 ALTER TABLE workspaces
   ADD COLUMN plan                   text        NOT NULL DEFAULT 'free'
@@ -259,9 +264,16 @@ describe("effectivePlan", () => {
   it("free stays free", () => {
     expect(effectivePlan(row(), now)).toBe("free");
   });
-  it("pro trialing/active keep pro limits", () => {
-    expect(effectivePlan(row({ plan: "pro", plan_status: "trialing" }), now)).toBe("pro");
+  it("pro active keeps pro limits", () => {
     expect(effectivePlan(row({ plan: "pro", plan_status: "active" }), now)).toBe("pro");
+  });
+  it("trialing keeps pro limits only until current_period_end (the trial end)", () => {
+    const live = row({ plan: "pro", plan_status: "trialing", current_period_end: new Date("2026-07-15T00:00:00Z") });
+    const expired = row({ plan: "pro", plan_status: "trialing", current_period_end: new Date("2026-07-01T00:00:00Z") });
+    const missingEnd = row({ plan: "pro", plan_status: "trialing", current_period_end: null });
+    expect(effectivePlan(live, now)).toBe("pro");
+    expect(effectivePlan(expired, now)).toBe("free"); // expired trial → FREE LIMITS, no lock-out
+    expect(effectivePlan(missingEnd, now)).toBe("free"); // fail toward free
   });
   it("past_due keeps pro inside the grace window, reverts to free after", () => {
     const inGrace = row({ plan: "pro", plan_status: "past_due", grace_until: new Date("2026-07-20T00:00:00Z") });
@@ -374,18 +386,24 @@ export function billingEnabled(config: Config): boolean {
  *  - free       → free.
  *  - enterprise → enterprise regardless of plan_status (set administratively,
  *                 no Stripe subscription drives it).
- *  - pro        → pro while trialing/active; past_due keeps pro until
- *                 grace_until lapses (a missing grace_until fails toward free);
- *                 canceled (and any other state) reverts to FREE LIMITS.
+ *  - pro        → pro while active; trialing (the app-side, no-card trial)
+ *                 keeps pro only until current_period_end — the trial-end
+ *                 timestamp — and fails toward free when it is missing or
+ *                 past; past_due keeps pro until grace_until lapses (a
+ *                 missing grace_until fails toward free); canceled (and any
+ *                 other state) reverts to FREE LIMITS.
  * Reverting means limits only: data is never deleted here and nothing locks.
  */
 export function effectivePlan(row: WorkspacePlanRow, now: Date = new Date()): PlanT {
   if (row.plan === "free") return "free";
   if (row.plan === "enterprise") return "enterprise";
   switch (row.plan_status) {
-    case "trialing":
     case "active":
       return row.plan;
+    case "trialing":
+      // App-side trial: current_period_end holds the trial end (dual use —
+      // see migration 020). An expired or end-less trial is Free limits.
+      return row.current_period_end !== null && row.current_period_end > now ? row.plan : "free";
     case "past_due":
       return row.grace_until !== null && row.grace_until > now ? row.plan : "free";
     default:
@@ -572,7 +590,7 @@ git commit -m "feat(hub): plan model — PLAN_LIMITS, effectivePlan, plan-state 
 
 **Interfaces:**
 - Produces:
-  - `@shepherd/shared`: `PlanLimitErrorBody` (below) + `PlanLimitErrorBodyT`; `BillingStatusResponse` + `BillingStatusResponseT`; `CreateCheckoutSessionRequest` `{ interval: "month"|"year" (default "month") }` + `CheckoutSessionResponse { url: string }`; `PortalSessionResponse { url: string }`.
+  - `@shepherd/shared`: `PlanLimitErrorBody` (below) + `PlanLimitErrorBodyT`; `BillingStatusResponse` + `BillingStatusResponseT` (includes `trialAvailable`); `StartTrialResponse { plan, planStatus, trialEndsAt }` + `StartTrialResponseT`; `CreateCheckoutSessionRequest` `{ interval: "month"|"year" (default "month") }` + `CheckoutSessionResponse { url: string }`; `PortalSessionResponse { url: string }`.
   - `hub/errors.ts`: `class PlanLimitError extends HubError { status: 402; limit: "seats"|"repos"; plan: PlanT; current: number; max: number }` with constructor `new PlanLimitError(limit, plan, current, max)` that composes its own user-facing message.
   - `server.ts` error handler: `PlanLimitError` → HTTP 402 with a body that parses as `PlanLimitErrorBody`.
 
@@ -614,12 +632,35 @@ export const BillingStatusResponse = z.object({
   repos: z.object({ used: z.number().int(), max: z.number().int().nullable() }),
   retentionDays: z.number().int().nullable(),
   entitlements: z.object({ analytics: z.boolean() }),
+  /**
+   * Whether this workspace may start the 14-day, NO-CARD app-side trial —
+   * true only for a never-trialed, never-subscribed free workspace (the
+   * one-trial-per-workspace guard, computed hub-side). Drives the UI's
+   * "Start free trial — no credit card" button.
+   */
+  trialAvailable: z.boolean(),
+});
+
+// ---------------------------------------------------------------------------
+// startTrial(workspaceId) -> StartTrialResponse
+//   (POST /workspaces/:id/billing/trial — admin-only. Starts the 14-day
+//    APP-SIDE trial: plan='pro', plan_status='trialing', current_period_end =
+//    trial end. NO Stripe customer/subscription/card is created — converting
+//    to paid Pro goes through Checkout later. 409 when the workspace has ever
+//    trialed or subscribed.)
+// ---------------------------------------------------------------------------
+export const StartTrialResponse = z.object({
+  plan: Plan,
+  planStatus: PlanStatus,
+  /** When the trial reverts to Free LIMITS (stored in current_period_end). */
+  trialEndsAt: IsoTimestamp,
 });
 
 // ---------------------------------------------------------------------------
 // startCheckout(workspaceId, { interval }) -> { url }
-//   (POST /workspaces/:id/billing/checkout — admin-only, Pro upgrades only;
-//    Enterprise is sales-led with no self-serve Checkout at launch.)
+//   (POST /workspaces/:id/billing/checkout — admin-only, Pro upgrades and
+//    trial→paid conversions; card is entered HERE (the trial itself is
+//    card-less). Enterprise is sales-led with no self-serve Checkout at launch.)
 // openBillingPortal(workspaceId) -> { url }
 //   (POST /workspaces/:id/billing/portal — admin-only.)
 // ---------------------------------------------------------------------------
@@ -630,7 +671,7 @@ export const CheckoutSessionResponse = z.object({ url: z.string() });
 export const PortalSessionResponse = z.object({ url: z.string() });
 ```
 
-Add the inferred `...T` type exports next to the others: `PlanLimitErrorBodyT`, `BillingStatusResponseT`, `CreateCheckoutSessionRequestT`, `CheckoutSessionResponseT`, `PortalSessionResponseT`.
+Add the inferred `...T` type exports next to the others: `PlanLimitErrorBodyT`, `BillingStatusResponseT`, `StartTrialResponseT`, `CreateCheckoutSessionRequestT`, `CheckoutSessionResponseT`, `PortalSessionResponseT`.
 
 - [ ] **Step 2: Write the failing unit test** (append to `plan.test.ts`, pure)
 
@@ -1241,6 +1282,7 @@ git commit -m "feat(hub): plan-window announcement retention (lazy throttled pru
 - Produces:
   - `config.ts`: `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO_MONTHLY`, `STRIPE_PRICE_PRO_ANNUAL` (all optional strings), `BILLING_GRACE_DAYS` (int, default 14); superRefine: `STRIPE_SECRET_KEY` set ⇒ `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO_MONTHLY`, and `PUBLIC_WEB_URL` required.
   - `billing/stripe.ts`: `getStripe(config: Config): Stripe` (throws `NotConfiguredError` when billing disabled; caches the client) and `__setStripeForTests(fake: unknown): void` (also clears the cache; pass `null` to restore).
+  - `plan.ts`: `trialEligible(row: WorkspacePlanRow): boolean` — the one-trial-per-workspace guard, shared by `getBillingStatus` (as `trialAvailable`) and Task 8's `startTrial`.
   - `operations/billing.ts`: `getBillingStatus(tenant: TenantContext): Promise<BillingStatusResponseT>`.
   - Route: `GET /workspaces/:id/billing` — any member (`:id` membership already validated by `resolveTenant`).
 
@@ -1360,28 +1402,61 @@ it("GET /workspaces/:id/billing reports plan, usage, limits, entitlements", asyn
     repos: { used: 2, max: 3 },
     retentionDays: 7,
     entitlements: { analytics: false },
+    trialAvailable: true, // never trialed, never subscribed → eligible
   });
+});
+
+it("reports trialAvailable:false once the workspace has trialed or has Stripe linkage", async () => {
+  // Case A: plan_status='trialing' (even expired) → false.
+  // Case B: plan='free', plan_status='none', stripe_customer_id='cus_x' → false.
 });
 
 it("reports billingEnabled:false with null maxima when billing is disabled", async () => {
   // re-init context without STRIPE_SECRET_KEY → seats.max/repos.max/retentionDays null,
-  // entitlements.analytics true (nothing is gated on a non-billing deployment).
+  // entitlements.analytics true (nothing is gated on a non-billing deployment),
+  // trialAvailable false (there is nothing to trial).
 });
 ```
 
-- [ ] **Step 6: Implement `getBillingStatus`** in `packages/hub/src/operations/billing.ts`:
+- [ ] **Step 6: Implement `getBillingStatus`** in `packages/hub/src/operations/billing.ts`, plus the shared eligibility guard in `plan.ts`:
+
+Add to `packages/hub/src/plan.ts`:
 
 ```typescript
 /**
- * Billing operations: plan status (this task), Checkout + Portal sessions
- * (Task 8). The hub owns ALL Stripe interaction — the platform BFF only
- * proxies these routes, and the UI's billing panel renders their output.
+ * One trial per workspace, EVER — the no-card trial's abuse guard. Eligible
+ * only when the workspace has never trialed and never touched Stripe:
+ * an expired trial leaves plan_status='trialing' behind, and a lapsed/canceled
+ * subscription leaves stripe_customer_id set (webhooks keep it on deletion),
+ * so both histories are caught. Accepted edge: a customer created by an
+ * ABANDONED checkout also blocks a later trial (documented in the plan's
+ * decisions-to-confirm).
+ */
+export function trialEligible(row: WorkspacePlanRow): boolean {
+  return (
+    row.plan === "free" &&
+    row.plan_status === "none" &&
+    row.stripe_customer_id === null &&
+    row.stripe_subscription_id === null
+  );
+}
+```
+
+Then the operation:
+
+```typescript
+/**
+ * Billing operations: plan status (this task); trial start, Checkout +
+ * Portal sessions (Task 8). The hub owns ALL Stripe interaction — the
+ * platform BFF only proxies these routes, and the UI's billing panel renders
+ * their output. The 14-day trial is APP-SIDE and card-less: it touches only
+ * the workspaces plan columns, never Stripe.
  */
 
 import type { BillingStatusResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
 import { requireWorkspaceId, type TenantContext } from "../tenant.js";
-import { PLAN_LIMITS, effectivePlan, billingEnabled } from "../plan.js";
+import { PLAN_LIMITS, effectivePlan, billingEnabled, trialEligible } from "../plan.js";
 import { getWorkspacePlanRow, countMembers, listWorkspaceRepos } from "../repo.js";
 import { AuthError } from "../errors.js";
 
@@ -1413,6 +1488,7 @@ export async function getBillingStatus(tenant: TenantContext): Promise<BillingSt
       repos: { used: reposUsed, max: null },
       retentionDays: null,
       entitlements: { analytics: true },
+      trialAvailable: false,
     };
   }
 
@@ -1429,6 +1505,9 @@ export async function getBillingStatus(tenant: TenantContext): Promise<BillingSt
     repos: { used: reposUsed, max: limits.repos },
     retentionDays: limits.retentionDays,
     entitlements: { analytics: limits.analytics },
+    // One trial per workspace, ever (see trialEligible in plan.ts — the same
+    // guard startTrial enforces, so the UI button and the endpoint agree).
+    trialAvailable: trialEligible(row),
   };
 }
 ```
@@ -1452,7 +1531,7 @@ git add packages/hub/package.json package-lock.json packages/hub/src/config.ts \
 git commit -m "feat(hub): stripe config + GET /workspaces/:id/billing status endpoint"
 ```
 
-### Task 8: Checkout + Customer Portal endpoints (admin-only)
+### Task 8: Trial, Checkout + Customer Portal endpoints (admin-only)
 
 **Files:**
 - Modify: `packages/hub/src/operations/billing.ts`
@@ -1460,18 +1539,20 @@ git commit -m "feat(hub): stripe config + GET /workspaces/:id/billing status end
 - Test: `packages/hub/test/billing.test.ts` (extend, with a fake Stripe via `__setStripeForTests`)
 
 **Interfaces:**
-- Consumes: `getStripe`/`__setStripeForTests` (Task 7); `requireAdmin` (`tenant.ts:127`); `setStripeCustomerId`; contract schemas from Task 3; `ConflictError`, `NotConfiguredError`.
+- Consumes: `getStripe`/`__setStripeForTests` (Task 7); `requireAdmin` (`tenant.ts:127`); `trialEligible` (Task 7); `setStripeCustomerId`, `applyPlanState`; contract schemas from Task 3 (incl. `StartTrialResponse`); `ConflictError`, `NotConfiguredError`.
 - Produces:
-  - `createCheckoutSession(input: CreateCheckoutSessionRequestT, tenant: TenantContext): Promise<CheckoutSessionResponseT>`
+  - `startTrial(tenant: TenantContext): Promise<StartTrialResponseT>` — the APP-SIDE, no-card trial (touches only the plan columns; NO Stripe call).
+  - `createCheckoutSession(input: CreateCheckoutSessionRequestT, tenant: TenantContext): Promise<CheckoutSessionResponseT>` — a straight PAID subscription (card entered here; the trial already happened app-side).
   - `createPortalSession(tenant: TenantContext): Promise<PortalSessionResponseT>`
-  - Routes: `POST /workspaces/:id/billing/checkout`, `POST /workspaces/:id/billing/portal`.
+  - Routes: `POST /workspaces/:id/billing/trial`, `POST /workspaces/:id/billing/checkout`, `POST /workspaces/:id/billing/portal`.
 
 **Behavior contract (write tests for each):**
-1. Non-admin member → 403. Self-host TEAM_TOKEN → 401 (`requireAccountId`) — billing is a hosted/account surface.
-2. Billing disabled → 501 (`NotConfiguredError` from `getStripe`).
-3. Already subscribed (`plan_status` in `trialing|active|past_due`) or plan `enterprise` → 409 `ConflictError("This workspace already has an active subscription — use Manage billing instead.")`.
-4. First checkout: creates a Stripe customer (`metadata: { workspaceId }`), persists it via `setStripeCustomerId`, creates a subscription-mode Checkout session with the monthly price (or annual when `interval: "year"`; 501 if `STRIPE_PRICE_PRO_ANNUAL` unset), `subscription_data: { trial_period_days: 14, metadata: { workspaceId } }` ONLY when the workspace has never had a subscription (`stripe_subscription_id === null && plan_status === "none"`), `payment_method_collection: "always"`, success/cancel URLs on `PUBLIC_WEB_URL` (`?billing=success` / `?billing=canceled`). Returns `{ url: session.url }`.
-5. Portal: requires an existing `stripe_customer_id` (409 if none — nothing to manage), returns `{ url }` from `stripe.billingPortal.sessions.create({ customer, return_url: PUBLIC_WEB_URL })`.
+1. Non-admin member → 403. Self-host TEAM_TOKEN → 401 (`requireAccountId`) — billing is a hosted/account surface. (Applies to all three endpoints.)
+2. Billing disabled → 501 (`NotConfiguredError`; `startTrial` checks `billingEnabled(config)` itself since it never calls `getStripe`).
+3. **Trial:** eligible workspace (`trialEligible` — `plan='free' AND plan_status='none' AND stripe_customer_id IS NULL AND stripe_subscription_id IS NULL`) → sets `plan='pro'`, `plan_status='trialing'`, `current_period_end = now + 14 days` (the trial end — dual use, see migration 020) via `applyPlanState`; creates NOTHING in Stripe; returns `{ plan, planStatus, trialEndsAt }`. Ineligible (ever trialed — even expired — or any Stripe linkage) → 409 `ConflictError("This workspace has already used its free trial — upgrade to Pro to continue.")`.
+4. **Checkout** is refused with 409 only when a PAID subscription already exists (`plan_status` in `active|past_due`) or plan is `enterprise` — a `trialing` workspace (live OR expired trial) MUST be allowed through: Checkout is the trial→paid conversion path. Message: `ConflictError("This workspace already has an active subscription — use Manage billing instead.")`.
+5. Checkout mechanics: creates a Stripe customer (`metadata: { workspaceId }`) if the workspace has none, persists it via `setStripeCustomerId`, creates a subscription-mode Checkout session with the monthly price (or annual when `interval: "year"`; 501 if `STRIPE_PRICE_PRO_ANNUAL` unset), `subscription_data: { metadata: { workspaceId } }` (NO `trial_period_days` — the trial is app-side and already consumed; NO `payment_method_collection` override — subscription mode collects the card by default, which is exactly the "card enters at conversion" rule), success/cancel URLs on `PUBLIC_WEB_URL` (`?billing=success` / `?billing=canceled`). Returns `{ url: session.url }`.
+6. Portal: requires an existing `stripe_customer_id` (409 if none — nothing to manage; note an app-side trial creates no customer, so a trialing-only workspace gets the 409 and the UI never offers Portal for it), returns `{ url }` from `stripe.billingPortal.sessions.create({ customer, return_url: PUBLIC_WEB_URL })`.
 
 - [ ] **Step 1: Write the failing tests** (extend `billing.test.ts`; fake Stripe):
 
@@ -1497,7 +1578,40 @@ function fakeStripe() {
 }
 // beforeEach: __setStripeForTests(fakeStripe-instance); afterEach: __setStripeForTests(null).
 
-it("admin checkout creates customer + trial subscription session and returns the url", async () => {
+it("admin starts the no-card trial: pro/trialing, 14-day end, and NO Stripe calls", async () => {
+  const res = await app.inject({
+    method: "POST",
+    url: `/workspaces/${wsId}/billing/trial`,
+    headers: bffHeaders("acct-1"),
+  });
+  expect(res.statusCode).toBe(200);
+  const body = StartTrialResponse.parse(res.json());
+  expect(body).toMatchObject({ plan: "pro", planStatus: "trialing" });
+  const endsAt = new Date(body.trialEndsAt).getTime();
+  expect(endsAt).toBeGreaterThan(Date.now() + 13 * 86_400_000);
+  expect(endsAt).toBeLessThan(Date.now() + 15 * 86_400_000);
+  // The adoption lever: NO card, NO Stripe objects at trial start.
+  expect(fake.calls.customers).toHaveLength(0);
+  expect(fake.calls.checkout).toHaveLength(0);
+  const { rows } = await pool.query(
+    `SELECT plan, plan_status, stripe_customer_id, stripe_subscription_id FROM workspaces WHERE id = $1`,
+    [wsId]
+  );
+  expect(rows[0]).toMatchObject({
+    plan: "pro",
+    plan_status: "trialing",
+    stripe_customer_id: null,
+    stripe_subscription_id: null,
+  });
+});
+
+it("refuses a second trial with 409 — even after the first expired, and after any Stripe linkage", async () => {
+  // Case A: plan='pro', plan_status='trialing', current_period_end in the past → 409.
+  // Case B: plan='free', plan_status='none', stripe_customer_id='cus_x' → 409.
+  // Case C: non-admin member → 403.
+});
+
+it("admin checkout creates customer + a straight PAID subscription session (no trial config)", async () => {
   const res = await app.inject({
     method: "POST",
     url: `/workspaces/${wsId}/billing/checkout`,
@@ -1511,16 +1625,20 @@ it("admin checkout creates customer + trial subscription session and returns the
     mode: "subscription",
     customer: "cus_new",
     line_items: [{ price: "price_fake", quantity: 1 }],
-    subscription_data: { trial_period_days: 14, metadata: { workspaceId: wsId } },
-    payment_method_collection: "always",
+    subscription_data: { metadata: { workspaceId: wsId } },
   });
+  // The app-side trial replaced Stripe's: assert the session carries NO trial.
+  expect((fake.calls.checkout[0] as { subscription_data: Record<string, unknown> }).subscription_data)
+    .not.toHaveProperty("trial_period_days");
   const { rows } = await pool.query(`SELECT stripe_customer_id FROM workspaces WHERE id = $1`, [wsId]);
   expect(rows[0].stripe_customer_id).toBe("cus_new");
 });
 
-it("omits the trial when the workspace has had a subscription before", async () => { /* seed plan_status='canceled', stripe_subscription_id='sub_old' → subscription_data has NO trial_period_days */ });
-it("rejects a non-admin with 403 and a second subscription with 409", async () => { /* member → 403; plan_status='active' → 409 */ });
-it("portal returns the portal url for a customer-linked workspace, 409 without one", async () => { /* ... */ });
+it("checkout is ALLOWED while (or after) trialing — it is the trial→paid conversion path", async () => {
+  // seed plan='pro', plan_status='trialing', current_period_end now+7d → checkout 200
+});
+it("rejects a non-admin with 403 and an already-paid subscription with 409", async () => { /* member → 403; plan_status='active' → 409 */ });
+it("portal returns the portal url for a customer-linked workspace, 409 without one (incl. trial-only workspaces)", async () => { /* ... */ });
 ```
 
 - [ ] **Step 2: Run to verify failure** (404 route not found), then implement in `operations/billing.ts`:
@@ -1530,20 +1648,66 @@ import type {
   CreateCheckoutSessionRequestT,
   CheckoutSessionResponseT,
   PortalSessionResponseT,
+  StartTrialResponseT,
 } from "@shepherd/shared";
 import { requireAccountId, requireAdmin } from "../tenant.js";
 import { getStripe } from "../billing/stripe.js";
-import { setStripeCustomerId } from "../repo.js";
+import { setStripeCustomerId, applyPlanState } from "../repo.js";
 import { ConflictError, NotConfiguredError } from "../errors.js";
+// (billingEnabled + trialEligible are already imported from ../plan.js in
+//  Task 7's getBillingStatus — this file shares those imports.)
+
+/** Length of the app-side, no-card Pro trial (design §Plans: 14 days). */
+const TRIAL_DAYS = 14;
+
+/**
+ * Start the 14-day Pro trial — APP-SIDE and CARD-LESS (the advertised
+ * "no credit card needed" adoption lever): flips the plan columns only, and
+ * creates NO Stripe customer/subscription. current_period_end dual-uses as
+ * the trial end (migration 020); effectivePlan reverts an expired trial to
+ * FREE LIMITS on its own — nothing is scheduled and nothing is deleted.
+ * Converting to paid goes through createCheckoutSession (card entered there).
+ *
+ * ADMIN-ONLY, hosted-only, and ONE trial per workspace ever — trialEligible
+ * (plan.ts) is the guard, shared with getBillingStatus's trialAvailable so
+ * the UI button and this endpoint can never disagree.
+ */
+export async function startTrial(tenant: TenantContext): Promise<StartTrialResponseT> {
+  const { pool, config } = getContext();
+  requireAccountId(tenant);
+  requireAdmin(tenant);
+  const workspaceId = requireWorkspaceId(tenant);
+  if (!billingEnabled(config)) {
+    throw new NotConfiguredError("Billing is not enabled on this deployment");
+  }
+
+  const row = await getWorkspacePlanRow(pool, workspaceId);
+  if (row === null) throw new AuthError(404, "workspace not found");
+  if (!trialEligible(row)) {
+    throw new ConflictError(
+      "This workspace has already used its free trial — upgrade to Pro to continue."
+    );
+  }
+
+  const trialEndsAt = new Date(Date.now() + TRIAL_DAYS * 86_400_000);
+  await applyPlanState(pool, workspaceId, {
+    plan: "pro",
+    planStatus: "trialing",
+    currentPeriodEnd: trialEndsAt, // dual use: the trial end
+  });
+  return { plan: "pro", planStatus: "trialing", trialEndsAt: trialEndsAt.toISOString() };
+}
 
 /**
  * Start a Pro upgrade: create (or reuse) the workspace's Stripe customer and
  * mint a subscription-mode Checkout session. ADMIN-ONLY, hosted-only.
  * Enterprise has no self-serve checkout at launch (sales-led).
  *
- * Trial policy (design §Plans): 14-day Stripe-side trial, card required
- * (payment_method_collection "always"), granted only on a workspace's FIRST
- * subscription — a canceled-and-returning workspace pays immediately.
+ * This is a straight PAID subscription — the card enters HERE. There is no
+ * Stripe-side trial: the 14-day trial is app-side (startTrial above), so a
+ * `trialing` workspace (live or expired) is explicitly ALLOWED through —
+ * this endpoint IS the trial→paid conversion path. Only an existing paid
+ * subscription (active/past_due) or an enterprise plan refuses.
  */
 export async function createCheckoutSession(
   input: CreateCheckoutSessionRequestT,
@@ -1557,7 +1721,7 @@ export async function createCheckoutSession(
 
   const row = await getWorkspacePlanRow(pool, workspaceId);
   if (row === null) throw new AuthError(404, "workspace not found");
-  if (row.plan === "enterprise" || ["trialing", "active", "past_due"].includes(row.plan_status)) {
+  if (row.plan === "enterprise" || ["active", "past_due"].includes(row.plan_status)) {
     throw new ConflictError(
       "This workspace already has an active subscription — use Manage billing instead."
     );
@@ -1576,16 +1740,14 @@ export async function createCheckoutSession(
     await setStripeCustomerId(pool, workspaceId, customerId);
   }
 
-  const neverSubscribed = row.stripe_subscription_id === null && row.plan_status === "none";
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     customer: customerId,
     line_items: [{ price, quantity: 1 }],
-    subscription_data: {
-      ...(neverSubscribed ? { trial_period_days: 14 } : {}),
-      metadata: { workspaceId },
-    },
-    payment_method_collection: "always",
+    // NO trial_period_days (the trial is app-side, already consumed) and NO
+    // payment_method_collection override — subscription mode collects the
+    // card by default, which is exactly the "card enters at conversion" rule.
+    subscription_data: { metadata: { workspaceId } },
     success_url: `${config.PUBLIC_WEB_URL}/?billing=success`,
     cancel_url: `${config.PUBLIC_WEB_URL}/?billing=canceled`,
     metadata: { workspaceId },
@@ -1618,10 +1780,15 @@ export async function createPortalSession(tenant: TenantContext): Promise<Portal
 Routes in `server.ts`:
 
 ```typescript
-  // Start a Pro upgrade (Stripe Checkout) / open the Customer Portal. Both are
-  // :id routes (membership validated in the hook) and ADMIN-gated in the ops;
-  // requireAccountId additionally rejects the self-host TEAM_TOKEN (billing is
-  // a hosted/account surface).
+  // Billing actions: start the no-card app-side trial, start a Pro upgrade
+  // (Stripe Checkout — also the trial→paid conversion), open the Customer
+  // Portal. All are :id routes (membership validated in the hook) and
+  // ADMIN-gated in the ops; requireAccountId additionally rejects the
+  // self-host TEAM_TOKEN (billing is a hosted/account surface).
+  app.post("/workspaces/:id/billing/trial", async (request, _reply) => {
+    return startTrial(request.tenant);
+  });
+
   app.post("/workspaces/:id/billing/checkout", async (request, _reply) => {
     const parsed = CreateCheckoutSessionRequest.safeParse(request.body ?? {});
     if (!parsed.success) {
@@ -1639,7 +1806,7 @@ Routes in `server.ts`:
 
 ```bash
 git add packages/hub/src/operations/billing.ts packages/hub/src/server.ts packages/hub/test/billing.test.ts
-git commit -m "feat(hub): Stripe Checkout + Customer Portal endpoints (admin-only)"
+git commit -m "feat(hub): no-card app-side trial + Stripe Checkout/Portal endpoints (admin-only)"
 ```
 
 ### Task 9: Webhook route — auth-exempt, signature-verified, plan transitions
@@ -1657,8 +1824,8 @@ git commit -m "feat(hub): Stripe Checkout + Customer Portal endpoints (admin-onl
 
 | Event | Effect |
 |---|---|
-| `checkout.session.completed` | link ids: `setStripeCustomerId` (if changed) + `applyPlanState(plan:'pro', planStatus:'active', stripeSubscriptionId: session.subscription)` — optimistic unlock; the subscription events refine status/period. |
-| `customer.subscription.created` / `customer.subscription.updated` | map Stripe status → `planStatus` (`trialing→trialing`, `active→active`, `past_due→past_due`, `canceled/unpaid/incomplete_expired→canceled`, `incomplete/paused→none`); `plan:'pro'`; `currentPeriodEnd` from the subscription; on `active`/`trialing` clear `graceUntil: null`; on `past_due` leave `graceUntil` untouched (payment_failed sets it). Skip entirely (ack) if the workspace row's plan is `enterprise` — administrative plans are never driven by Stripe. |
+| `checkout.session.completed` | link ids: `setStripeCustomerId` (if changed) + `applyPlanState(plan:'pro', planStatus:'active', stripeSubscriptionId: session.subscription)` — optimistic unlock; the subscription events refine status/period. This is also how an app-side trial converts to paid: `trialing` → `active`, and the stale trial-end in `current_period_end` is refreshed by the subscription events (harmless meanwhile — `active` ignores it). |
+| `customer.subscription.created` / `customer.subscription.updated` | map Stripe status → `planStatus` (`trialing→trialing` — defensive only: our Checkout creates no Stripe trials since the trial is app-side, but a dashboard-created subscription could carry one, and these events also set `currentPeriodEnd` so `effectivePlan`'s trialing-expiry check stays coherent; `active→active`, `past_due→past_due`, `canceled/unpaid/incomplete_expired→canceled`, `incomplete/paused→none`); `plan:'pro'`; `currentPeriodEnd` from the subscription; on `active`/`trialing` clear `graceUntil: null`; on `past_due` leave `graceUntil` untouched (payment_failed sets it). Skip entirely (ack) if the workspace row's plan is `enterprise` — administrative plans are never driven by Stripe. |
 | `customer.subscription.deleted` | `applyPlanState(plan:'free', planStatus:'none', stripeSubscriptionId: null, currentPeriodEnd: null, graceUntil: null)` — full revert to Free LIMITS; the customer id is kept for re-subscribes; no data deletion. |
 | `invoice.payment_failed` | `planStatus:'past_due'` (plan unchanged) and set `graceUntil = now + BILLING_GRACE_DAYS days` ONLY if currently null (first failure starts the clock; retries don't extend it). |
 | anything else | ack `{ received: true }`, no-op. |
@@ -1948,26 +2115,28 @@ git commit -m "feat(hub): Stripe webhook route — signature-verified plan-state
 - Test: `packages/ui/src/client.test.ts` (extend, following its existing fetch-stub pattern)
 
 **Interfaces:**
-- Consumes: `BillingStatusResponseT`, `CreateCheckoutSessionRequestT`, `CheckoutSessionResponseT`, `PortalSessionResponseT` from `@shepherd/shared` (Task 3); hub routes from Tasks 7-8.
+- Consumes: `BillingStatusResponseT`, `StartTrialResponseT`, `CreateCheckoutSessionRequestT`, `CheckoutSessionResponseT`, `PortalSessionResponseT` from `@shepherd/shared` (Task 3); hub routes from Tasks 7-8.
 - Produces (on `ShepherdClient`, hosted-mode section next to `landscape()`):
 
 ```typescript
   /** Current plan + usage for a workspace (any member). */
   getBilling(workspaceId: string): Promise<BillingStatusResponseT>;
-  /** Start a Pro upgrade — returns the Stripe Checkout URL to redirect to (admin-only). */
+  /** Start the 14-day, NO-CARD app-side Pro trial (admin-only; once per workspace). */
+  startTrial(workspaceId: string): Promise<StartTrialResponseT>;
+  /** Start a Pro upgrade / trial conversion — returns the Stripe Checkout URL to redirect to (admin-only). */
   startCheckout(workspaceId: string, body: CreateCheckoutSessionRequestT): Promise<CheckoutSessionResponseT>;
   /** Open the Stripe Customer Portal — returns its URL (admin-only). */
   openBillingPortal(workspaceId: string): Promise<PortalSessionResponseT>;
 ```
 
-- [ ] **Step 1: Write failing tests** asserting method → `GET /workspaces/:id/billing`, `POST /workspaces/:id/billing/checkout` (JSON body pass-through), `POST /workspaces/:id/billing/portal` (bodyless), mirroring how `client.test.ts` asserts paths/methods for `listMembers` etc. Include one 402 case: a fetch stub returning status 402 with a `plan_limit` body must surface a `ShepherdClientError` with `status === 402` (the existing error path — assert it so the upgrade-prompt hook in Task 11 has a tested contract).
+- [ ] **Step 1: Write failing tests** asserting method → `GET /workspaces/:id/billing`, `POST /workspaces/:id/billing/trial` (bodyless), `POST /workspaces/:id/billing/checkout` (JSON body pass-through), `POST /workspaces/:id/billing/portal` (bodyless), mirroring how `client.test.ts` asserts paths/methods for `listMembers` etc. Include one 402 case: a fetch stub returning status 402 with a `plan_limit` body must surface a `ShepherdClientError` with `status === 402` (the existing error path — assert it so the upgrade-prompt hook in Task 11 has a tested contract).
 - [ ] **Step 2: Run to verify failure** (`npx vitest run packages/ui/src/client.test.ts`).
-- [ ] **Step 3: Implement** the three methods following the file's existing `request(...)` helper conventions (e.g. `this.request("GET", \`/workspaces/${encodeURIComponent(workspaceId)}/billing\`)` — copy the exact idiom used by `listMembers`).
+- [ ] **Step 3: Implement** the four methods following the file's existing `request(...)` helper conventions (e.g. `this.request("GET", \`/workspaces/${encodeURIComponent(workspaceId)}/billing\`)` — copy the exact idiom used by `listMembers`).
 - [ ] **Step 4: Tests pass; commit.**
 
 ```bash
 git add packages/ui/src/client.ts packages/ui/src/client.test.ts
-git commit -m "feat(ui): client methods for billing status, checkout, portal"
+git commit -m "feat(ui): client methods for billing status, trial, checkout, portal"
 ```
 
 ### Task 11: Billing panel in ConfigPanel
@@ -1976,7 +2145,7 @@ git commit -m "feat(ui): client methods for billing status, checkout, portal"
 - Create: `packages/ui/src/config/Billing.tsx`
 - Create: `packages/ui/src/config/Billing.test.tsx`
 - Modify: `packages/ui/src/config/ConfigPanel.tsx` (add the section)
-- Modify: `packages/ui/src/test/mockClient.ts` (stub the three new client methods)
+- Modify: `packages/ui/src/test/mockClient.ts` (stub the four new client methods)
 
 **Interfaces:**
 - Consumes: `ShepherdClient` methods (Task 10); `workspace: WorkspaceSummaryT` (`role`, `id`); ConfigPanel's section pattern (`ConfigPanel.tsx:29-36`).
@@ -1985,9 +2154,10 @@ git commit -m "feat(ui): client methods for billing status, checkout, portal"
 **Behavior (follow `WorkspaceSettings.tsx` / `Members.tsx` structure, styling classes, and test harness):**
 - On mount, `getBilling(workspaceId)`. While loading, the panel's standard loading treatment; on error, the standard error line.
 - `billingEnabled === false` → render a single quiet line: "Billing is not enabled on this deployment." (self-host).
-- Otherwise render: current plan name + status badge (show "Trial ends <date>" when `planStatus === "trialing"` with `currentPeriodEnd`; "Payment past due — Pro until <graceUntil>" when `past_due`); usage rows "Members X / Y" and "Repos X / Y" (∞ for null max); "History retention: N days" (or "Unlimited").
-- Admin + effectivePlan `free` → primary "Upgrade to Pro — $15/mo" button: `startCheckout(workspaceId, { interval: "month" })` then `window.location.assign(url)`.
-- Admin + a Stripe-linked workspace (`plan !== "free" || planStatus !== "none"`) → "Manage billing" button: `openBillingPortal` then `window.location.assign(url)`.
+- Otherwise render: current plan name + status badge (while `planStatus === "trialing"` and `effectivePlan === "pro"`, show "Pro trial — N days left", N computed from `currentPeriodEnd`; when the trial has lapsed — `planStatus === "trialing"` but `effectivePlan === "free"` — show "Trial ended — back on Free limits"; "Payment past due — Pro until <graceUntil>" when `past_due`); usage rows "Members X / Y" and "Repos X / Y" (∞ for null max); "History retention: N days" (or "Unlimited").
+- Admin + `trialAvailable` → primary "Start free trial — no credit card" button: `startTrial(workspaceId)`, then refetch `getBilling` and re-render (no redirect — nothing leaves the app; the trial is card-less).
+- Admin + upgradable (`effectivePlan === "free"` without `trialAvailable`, OR `planStatus === "trialing"` — live or lapsed, since Checkout is the trial→paid conversion) → "Upgrade to Pro — $15/mo" button: `startCheckout(workspaceId, { interval: "month" })` then `window.location.assign(url)`. While trialing, both the days-left badge and this button show.
+- Admin + a Stripe-driven state (`planStatus` in `active | past_due | canceled`) → "Manage billing" button: `openBillingPortal` then `window.location.assign(url)`. (NOT shown for a trial-only workspace — the app-side trial has no Stripe customer, and the portal endpoint would 409.)
 - Non-admin: no buttons, plus the line "Ask a workspace admin to change the plan." (spec: read-only for non-admins).
 - Enterprise: no self-serve buttons; "Contact sales to change your Enterprise plan."
 
@@ -1999,7 +2169,7 @@ ConfigPanel changes: add `{ id: "billing", label: "Billing" }` to `SECTIONS` (af
         )}
 ```
 
-- [ ] **Step 1: Write failing component tests** (mirror `WorkspaceSettings.test.tsx`'s render/mock harness): free-plan admin sees the Upgrade button and usage numbers; non-admin sees numbers but no buttons; `billingEnabled:false` hides everything but the disabled line; clicking Upgrade calls `startCheckout` with `{ interval: "month" }` and navigates to the returned URL (stub `window.location.assign`).
+- [ ] **Step 1: Write failing component tests** (mirror `WorkspaceSettings.test.tsx`'s render/mock harness): trial-eligible admin sees "Start free trial — no credit card" and clicking it calls `startTrial` then refetches (assert `getBilling` called twice, no navigation); a trialing workspace shows "N days left" plus the Upgrade button and NO trial or Manage-billing button; free-plan admin with `trialAvailable:false` sees the Upgrade button and usage numbers; non-admin sees numbers but no buttons; `billingEnabled:false` hides everything but the disabled line; clicking Upgrade calls `startCheckout` with `{ interval: "month" }` and navigates to the returned URL (stub `window.location.assign`).
 - [ ] **Step 2: Run to verify failure** (`npx vitest run packages/ui/src/config/Billing.test.tsx`).
 - [ ] **Step 3: Implement `Billing.tsx`** per the behavior list, reusing the panel's existing section/heading/button class names (copy from `WorkspaceSettings.tsx`), then wire ConfigPanel.
 - [ ] **Step 4: Tests + `npm run check` pass.**
@@ -2009,7 +2179,7 @@ ConfigPanel changes: add `{ id: "billing", label: "Billing" }` to `SECTIONS` (af
 ```bash
 git add packages/ui/src/config/Billing.tsx packages/ui/src/config/Billing.test.tsx \
         packages/ui/src/config/ConfigPanel.tsx packages/ui/src/test/mockClient.ts
-git commit -m "feat(ui): Billing section — plan status, usage, upgrade + portal (admin-only actions)"
+git commit -m "feat(ui): Billing section — plan status, usage, no-card trial + upgrade + portal (admin-only actions)"
 ```
 
 ### Task 12: Runbook + external touchpoints (docs only; no code)
@@ -2020,7 +2190,7 @@ git commit -m "feat(ui): Billing section — plan status, usage, upgrade + porta
 
 **Content checklist for `docs/billing-runbook.md`:**
 
-- [ ] Stripe dashboard setup: create the Pro product with a $15/mo recurring price (and optional $150/yr annual price); copy the price ids into `STRIPE_PRICE_PRO_MONTHLY` / `STRIPE_PRICE_PRO_ANNUAL`.
+- [ ] Stripe dashboard setup: create the Pro product with a $15/mo recurring price (and optional $150/yr annual price); copy the price ids into `STRIPE_PRICE_PRO_MONTHLY` / `STRIPE_PRICE_PRO_ANNUAL`. Do NOT configure a Stripe-side trial on the price/product — the 14-day trial is app-side and card-less (hub endpoint); Checkout is always a straight paid subscription.
 - [ ] Cloud Run env vars for the hosted hub: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO_MONTHLY`, `PUBLIC_WEB_URL`, optional `STRIPE_PRICE_PRO_ANNUAL`, `BILLING_GRACE_DAYS`. Note: push to main auto-deploys (Cloud Build trigger) — no manual redeploy.
 - [ ] Webhook endpoint registration: point Stripe at the hub's **direct** URL `https://<hub-host>/stripe/webhook` (NOT through the BFF), events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`. Local dev: `stripe listen --forward-to localhost:8080/stripe/webhook`.
 - [ ] Enterprise runbook (the "DB flag" decision): the exact SQL —
@@ -2033,7 +2203,7 @@ git commit -m "feat(ui): Billing section — plan status, usage, upgrade + porta
 
 ## Self-review (done while writing)
 
-- **Spec coverage:** billing entity/columns → Tasks 1-2; flat pricing/plan table → `PLAN_LIMITS` (Task 2); seats → Task 4; repos → Task 5; retention → Task 6; hosted-only/self-host-unlimited → `billingEnabled` + `via === "team"` guards asserted in Tasks 4/5/6 tests; downgrade-never-lock-out → `effectivePlan` (Task 2) + webhook transitions (Task 9) + "existing repos exempt" rule (Task 5); Checkout/Portal/webhooks → Tasks 7-9; BFF-proxies-only + UI admin panel → Tasks 10-12; Enterprise administrative → runbook (Task 12); agents never gated → nothing anywhere counts agents. Deviation: `/admin/*` plan-gating replaced by the `entitlements.analytics` flag (Resolved question 7 — flagged for confirmation).
+- **Spec coverage:** billing entity/columns → Tasks 1-2; flat pricing/plan table → `PLAN_LIMITS` (Task 2); seats → Task 4; repos → Task 5; retention → Task 6; hosted-only/self-host-unlimited → `billingEnabled` + `via === "team"` guards asserted in Tasks 4/5/6 tests; downgrade-never-lock-out → `effectivePlan` (Task 2, incl. trial expiry) + webhook transitions (Task 9) + "existing repos exempt" rule (Task 5); 14-day NO-CARD app-side trial (human decision 2026-07-08, supersedes the spec's Stripe-side trial) → Tasks 2/3/7/8/11; Checkout/Portal/webhooks → Tasks 7-9; BFF-proxies-only + UI admin panel → Tasks 10-12; Enterprise administrative → runbook (Task 12); agents never gated → nothing anywhere counts agents. Deviation: `/admin/*` plan-gating replaced by the `entitlements.analytics` flag (Resolved question 7 — flagged for confirmation).
 - **Type consistency:** `PlanT`/`PlanStatusT` (shared) ↔ `WorkspacePlanRow` (repo) ↔ `effectivePlan(row, now)` ↔ `applyPlanState(patch)` names checked across Tasks 2/4/5/6/7/9; client method names `getBilling`/`startCheckout`/`openBillingPortal` consistent across Tasks 10-11.
 - **Placeholder scan:** the abbreviated sibling tests in Tasks 4/5/6/8/9 name their exact fixtures and assertions ("write in full following the first's structure") — the first test of each suite is complete code establishing the harness. All route/column/function names are real or defined here.
 
@@ -2041,7 +2211,7 @@ git commit -m "feat(ui): Billing section — plan status, usage, upgrade + porta
 
 1. `/admin/*` analytics is **not** plan-gated (it's the Korso-internal operator surface); Pro analytics ships as the `entitlements.analytics` flag for the console to gate on (Resolved question 7).
 2. Grace period = **14 days** (`BILLING_GRACE_DAYS`, configurable).
-3. Trial = Stripe-side, **card required**, first subscription only.
+3. Trial = **app-side, NO credit card**, 14 days, once per workspace ever (guard: `plan='free' AND plan_status='none' AND both Stripe ids NULL`). `current_period_end` dual-uses as the trial end; expiry reverts to Free LIMITS via `effectivePlan` (no job, no deletion); the card enters only at Checkout conversion. Accepted edge: a customer id created by an ABANDONED checkout blocks a later trial.
 4. Enterprise = **SQL runbook**, no admin endpoint at launch.
 5. Repo cap gates **new** repos only — a workspace already over the cap (post-downgrade) keeps its existing repos working.
 6. Retention prune applies **only to announcements** (change records already expire at 3 days globally); billing-disabled deployments never prune.
