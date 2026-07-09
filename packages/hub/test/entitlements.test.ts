@@ -7,8 +7,10 @@ import {
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
+import { LimitExceededErrorBody } from "@shepherd/shared";
 import { loadConfig } from "../src/config.js";
 import { enforcementEnabled, effectiveLimits } from "../src/entitlements.js";
+import { HubError, LimitExceededError } from "../src/errors.js";
 import {
   getWorkspaceEntitlements,
   upsertWorkspaceEntitlements,
@@ -260,6 +262,42 @@ describe("enforcementEnabled — pure (no Postgres needed)", () => {
 
   it("is false when the env var is unset (every check no-ops)", () => {
     expect(enforcementEnabled(loadConfig(BASE_ENV))).toBe(false);
+  });
+});
+
+describe("LimitExceededError — pure (no Postgres needed)", () => {
+  it("is a 402 HubError carrying the exceeded dimension and counts", () => {
+    const err = new LimitExceededError("seats", 4, 4);
+    expect(err).toBeInstanceOf(HubError);
+    expect(err.status).toBe(402);
+    expect(err.limit).toBe("seats");
+    expect(err.current).toBe(4);
+    expect(err.max).toBe(4);
+    expect(err.message).toBe(
+      "This workspace has reached its seat limit (4/4). Ask a workspace admin about increasing it.",
+    );
+  });
+
+  it("phrases the repo dimension with its own noun", () => {
+    const err = new LimitExceededError("repos", 6, 5);
+    expect(err.message).toBe(
+      "This workspace has reached its repo limit (6/5). Ask a workspace admin about increasing it.",
+    );
+  });
+
+  it("produces a wire body that parses as LimitExceededErrorBody", () => {
+    const err = new LimitExceededError("repos", 5, 5);
+    // The exact shape the server error handler sends for this error.
+    const body = {
+      error: err.message,
+      code: "limit_exceeded",
+      limit: err.limit,
+      current: err.current,
+      max: err.max,
+    };
+    const parsed = LimitExceededErrorBody.parse(body);
+    expect(parsed.code).toBe("limit_exceeded");
+    expect(parsed.limit).toBe("repos");
   });
 });
 

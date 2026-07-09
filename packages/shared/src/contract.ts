@@ -678,6 +678,48 @@ export const EntitlementLimits = z.object({
   retentionDays: NullableCap,
 });
 
+/**
+ * The 402 body the hub sends when an action would exceed a workspace cap
+ * (LimitExceededError in the hub's errors.ts). `code` is the machine
+ * discriminator clients switch on; `error` is the user-facing message.
+ */
+export const LimitExceededErrorBody = z.object({
+  error: z.string(),
+  code: z.literal("limit_exceeded"),
+  limit: z.enum(["seats", "repos"]),
+  current: z.number().int(),
+  max: z.number().int(),
+});
+
+/**
+ * A workspace's stored entitlements record on the wire (GET body / PUT
+ * response). `expiresAt` in the past means the record is inert and the
+ * deployment defaults apply — see the hub's effectiveLimits.
+ */
+export const WorkspaceEntitlements = EntitlementLimits.extend({
+  expiresAt: IsoTimestamp.nullable(),
+  updatedAt: IsoTimestamp,
+});
+
+/** PUT /internal/workspaces/:id/entitlements request body. */
+export const PutEntitlementsRequest = EntitlementLimits.extend({
+  expiresAt: IsoTimestamp.nullable(),
+});
+
+/**
+ * GET /internal/workspaces/:id/entitlements response: the stored record (or
+ * null), the caps that actually apply right now, and current usage so the
+ * caller can render headroom without extra round-trips.
+ */
+export const EntitlementsStatusResponse = z.object({
+  record: WorkspaceEntitlements.nullable(),
+  effective: EntitlementLimits,
+  usage: z.object({
+    seatsUsed: z.number().int(),
+    reposUsed: z.number().int(),
+  }),
+});
+
 // ---------------------------------------------------------------------------
 // platformAnalytics() -> ShepherdAnalyticsResponse (GET /admin/analytics)
 //

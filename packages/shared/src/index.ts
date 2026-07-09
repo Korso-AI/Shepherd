@@ -70,6 +70,10 @@ export {
   TopWorkspace,
   ShepherdAnalyticsResponse,
   EntitlementLimits,
+  LimitExceededErrorBody,
+  WorkspaceEntitlements,
+  PutEntitlementsRequest,
+  EntitlementsStatusResponse,
 } from "./contract.js";
 
 // Inferred TypeScript types — consumers import these instead of z.infer<...>
@@ -138,6 +142,10 @@ import type {
   TopWorkspace,
   ShepherdAnalyticsResponse,
   EntitlementLimits,
+  LimitExceededErrorBody,
+  WorkspaceEntitlements,
+  PutEntitlementsRequest,
+  EntitlementsStatusResponse,
 } from "./contract.js";
 
 export type ChangeRecordT = z.infer<typeof ChangeRecord>;
@@ -230,3 +238,9 @@ export type ShepherdAnalyticsResponseT = z.infer<
 >;
 
 export type EntitlementLimitsT = z.infer<typeof EntitlementLimits>;
+export type LimitExceededErrorBodyT = z.infer<typeof LimitExceededErrorBody>;
+export type WorkspaceEntitlementsT = z.infer<typeof WorkspaceEntitlements>;
+export type PutEntitlementsRequestT = z.infer<typeof PutEntitlementsRequest>;
+export type EntitlementsStatusResponseT = z.infer<
+  typeof EntitlementsStatusResponse
+>;

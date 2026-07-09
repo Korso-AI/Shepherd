@@ -73,6 +73,7 @@ import {
   InviteError,
   ConflictError,
   NotConfiguredError,
+  LimitExceededError,
 } from "./errors.js";
 
 // ---------------------------------------------------------------------------
@@ -759,6 +760,20 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     // existence-leak concern here (the caller is an admin of this workspace).
     if (err instanceof ConflictError) {
       return reply.status(err.status).send({ error: err.message });
+    }
+
+    // Domain: the action would exceed a workspace cap → 402 with the
+    // machine-readable body (LimitExceededErrorBody in @shepherd/shared).
+    // Message echoed verbatim like ConflictError — user-facing guidance, no
+    // existence-leak concern (the caller already reached this workspace).
+    if (err instanceof LimitExceededError) {
+      return reply.status(err.status).send({
+        error: err.message,
+        code: "limit_exceeded",
+        limit: err.limit,
+        current: err.current,
+        max: err.max,
+      });
     }
 
     // Domain: the request is fine but this deployment lacks the config a
