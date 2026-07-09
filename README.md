@@ -263,6 +263,15 @@ announcements the operator sends from the self-host dashboard, and the hosted
 identity proof verified with `OPERATOR_IDENTITY_SECRET` (fail-closed when
 unset).
 
+## Workspace entitlements (optional limits)
+
+The hub also carries an **optional** per-workspace limits primitive — caps on
+seats, repos, and announcement retention — that is **inert unless the
+deployment configures it**: a hub that never sets the
+`ENTITLEMENTS_DEFAULT_LIMITS` env var has no limits of any kind, and self-host
+`TEAM_TOKEN` requests are exempt even when it is set. Self-hosting is unlimited
+by construction. See [`docs/entitlements.md`](docs/entitlements.md).
+
 ## Deploying the hub (GCP)
 
 The hub runs on **GCP Cloud Run + Cloud SQL (Postgres 16)**. `min-instances=1`
