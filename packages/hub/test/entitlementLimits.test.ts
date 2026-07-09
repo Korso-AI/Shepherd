@@ -1,6 +1,7 @@
 /**
  * Tests for workspace cap ENFORCEMENT at the server boundary:
  *   - seat cap on POST /invites/:code/redeem (assertSeatAvailable)
+ *   - repo cap on POST /join (assertRepoAllowed)
  *
  * Harness mirrors workspaces.test.ts / invites.test.ts: a real pool, the
  * onRequest hook hits the DB, tenancy rows seeded by hand, truncateAll +
@@ -23,7 +24,7 @@ import {
 } from "./setup.js";
 import { initContext, resetContext } from "../src/context.js";
 import { buildServer } from "../src/server.js";
-import { __resetRateLimiter } from "../src/tenant.js";
+import { __resetRateLimiter, hashToken } from "../src/tenant.js";
 import { __resetRedeemThrottle } from "../src/operations/invites.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
@@ -270,6 +271,116 @@ describe.skipIf(!dbAvailable)(
       const res = await redeem("acct-seed-1", "seatcapmember01");
       expect(res.statusCode).toBe(200);
       expect(await countMemberships(pool, wsId)).toBe(4);
+    });
+  },
+);
+
+describe.skipIf(!dbAvailable)(
+  "Repo cap on join (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
+  () => {
+    let pool: pg.Pool;
+    let app: FastifyInstance;
+
+    beforeAll(async () => {
+      pool = createTestPool();
+      await runTestMigrations(pool);
+      initContext({ pool, config: makeTestConfig() });
+      app = buildServer();
+      await app.ready();
+    });
+
+    afterEach(async () => {
+      __resetRateLimiter();
+      await truncateAll(pool);
+      await truncateTenancy(pool);
+    });
+
+    afterAll(async () => {
+      await app.close();
+      resetContext();
+      await pool.end();
+    });
+
+    /** Seed a workspace + member + agent `shp_` token; returns the bearer. */
+    async function seedAgentCredential(
+      workspaceId: string,
+      accountId: string,
+    ): Promise<string> {
+      await seedMembership(pool, accountId, workspaceId);
+      const raw = `shp_${accountId}`;
+      await pool.query(
+        `INSERT INTO api_tokens (workspace_id, account_id, token_hash, name)
+         VALUES ($1, $2, $3, 'test-token')`,
+        [workspaceId, accountId, hashToken(raw)],
+      );
+      return raw;
+    }
+
+    async function joinRepo(bearer: string, slug: string, repo: string) {
+      return app.inject({
+        method: "POST",
+        url: "/join",
+        headers: {
+          authorization: `Bearer ${bearer}`,
+          "content-type": "application/json",
+        },
+        payload: {
+          workspace: slug,
+          repo,
+          branch: "main",
+          human: "alice",
+          program: "test-prog",
+        },
+      });
+    }
+
+    it("admits distinct repos up to the default cap, then 402s; existing repos stay exempt", async () => {
+      const wsId = await seedWorkspace(pool, "repo-cap-default");
+      const bearer = await seedAgentCredential(wsId, "acct-agent");
+
+      // 5 distinct repos fill the 5-repo default cap.
+      for (let i = 1; i <= 5; i++) {
+        const res = await joinRepo(bearer, "repo-cap-default", `repo-${i}`);
+        expect(res.statusCode).toBe(200);
+      }
+
+      // A 6th NEW repo is over the cap.
+      const sixth = await joinRepo(bearer, "repo-cap-default", "repo-6");
+      expect(sixth.statusCode).toBe(402);
+      const body = LimitExceededErrorBody.parse(sixth.json());
+      expect(body.code).toBe("limit_exceeded");
+      expect(body.limit).toBe("repos");
+      expect(body.current).toBe(5);
+      expect(body.max).toBe(5);
+
+      // Re-joining an EXISTING repo at the cap always passes.
+      const rejoin = await joinRepo(bearer, "repo-cap-default", "repo-1");
+      expect(rejoin.statusCode).toBe(200);
+    });
+
+    it("a live entitlements row with a null repos cap admits the 6th repo", async () => {
+      const wsId = await seedWorkspace(pool, "repo-cap-unlimited");
+      await pool.query(
+        `INSERT INTO workspace_entitlements (workspace_id, repos_limit) VALUES ($1, NULL)`,
+        [wsId],
+      );
+      const bearer = await seedAgentCredential(wsId, "acct-agent-unl");
+
+      for (let i = 1; i <= 6; i++) {
+        const res = await joinRepo(bearer, "repo-cap-unlimited", `repo-${i}`);
+        expect(res.statusCode).toBe(200);
+      }
+    });
+
+    it("self-host TEAM_TOKEN joins are never limited even with the env set", async () => {
+      // The config carries BOTH modes plus default caps; the team path must
+      // stay unlimited by construction.
+      await seedWorkspace(pool, ALLOWED_WS);
+
+      for (let i = 1; i <= 7; i++) {
+        const res = await joinRepo(TEST_TOKEN, ALLOWED_WS, `team-repo-${i}`);
+        expect(res.statusCode).toBe(200);
+      }
     });
   },
 );

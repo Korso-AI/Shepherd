@@ -25,6 +25,7 @@ import { LimitExceededError } from "./errors.js";
 import {
   countMembers,
   getWorkspaceEntitlements,
+  listWorkspaceRepos,
   type Queryable,
   type WorkspaceEntitlementsRow,
 } from "./repo.js";
@@ -116,5 +117,41 @@ export async function assertSeatAvailable(
   const used = await countMembers(tx, workspaceId);
   if (used >= limits.seatsLimit) {
     throw new LimitExceededError("seats", used, limits.seatsLimit);
+  }
+}
+
+/**
+ * Throw LimitExceededError(402) when joining from `repo` would register a NEW
+ * distinct repo past the workspace's cap. An EXISTING repo always passes — a
+ * cap reduction never locks agents out of repos already in use. `repo` must
+ * already be canonicalized (the same canonicalizeRepo the session row gets),
+ * or an equal repo would miscompare against listWorkspaceRepos. Call INSIDE
+ * the join transaction with the transaction client — the advisory lock closes
+ * the two-new-repos race (both joins reading the same repo list and both
+ * creating sessions past the cap).
+ */
+export async function assertRepoAllowed(
+  tx: Queryable,
+  config: Config,
+  tenant: TenantContext,
+  workspaceId: string,
+  repo: string,
+): Promise<void> {
+  if (guardDisabled(config, tenant)) return;
+  await lockDimension(tx, workspaceId, "entitlements:repos");
+
+  const repos = await listWorkspaceRepos(tx, workspaceId);
+  if (repos.includes(repo)) return;
+
+  const record = await getWorkspaceEntitlements(tx, workspaceId);
+  const limits = effectiveLimits(
+    record,
+    config.ENTITLEMENTS_DEFAULT_LIMITS!,
+    new Date(),
+  );
+  if (limits.reposLimit === null) return;
+
+  if (repos.length >= limits.reposLimit) {
+    throw new LimitExceededError("repos", repos.length, limits.reposLimit);
   }
 }

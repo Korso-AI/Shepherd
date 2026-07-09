@@ -15,6 +15,7 @@
 import type { JoinRequestT, JoinResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
 import { DEFAULT_UNCOMMITTED_GRACE_SECONDS } from "../config.js";
+import { assertRepoAllowed } from "../entitlements.js";
 import { ValidationError, AuthError, HubError } from "../errors.js";
 import {
   requireWorkspaceId,
@@ -187,6 +188,21 @@ export async function join(
   const handle = normalizeHandle(human);
 
   return withTransaction(pool, async (tx) => {
+    // Canonicalize repo HERE, at the single ingestion point — repo is the
+    // coordination boundary and the hub owns it. Every downstream row
+    // (work_items, announcements, change_records) derives its repo from this
+    // session, so normalizing once means teammates converge regardless of which
+    // client version they run (an old client reporting "Org/Repo" still lands on
+    // "repo"). Same canonicalizeRepo the client uses (@shepherd/shared).
+    const repo = canonicalizeRepo(input.repo);
+
+    // Repo cap BEFORE any row is written (agent allocation included), on the
+    // canonicalized name the session row will carry. Takes the workspace-level
+    // advisory lock that serializes concurrent first-joins of new repos;
+    // no-ops entirely unless this deployment configured
+    // ENTITLEMENTS_DEFAULT_LIMITS, and existing repos always pass.
+    await assertRepoAllowed(tx, config, tenant, workspaceId, repo);
+
     let agent: AgentRow | null = null;
 
     // Bounded retry loop. Each attempt: compute the target name, then
@@ -267,16 +283,10 @@ export async function join(
       }
     }
 
-    // Canonicalize repo HERE, at the single ingestion point — repo is the
-    // coordination boundary and the hub owns it. Every downstream row
-    // (work_items, announcements, change_records) derives its repo from this
-    // session, so normalizing once means teammates converge regardless of which
-    // client version they run (an old client reporting "Org/Repo" still lands on
-    // "repo"). Same canonicalizeRepo the client uses (@shepherd/shared).
     const session = await createSession(tx, {
       workspaceId,
       agentId: agent.id,
-      repo: canonicalizeRepo(input.repo),
+      repo,
       branch: input.branch,
     });
 
