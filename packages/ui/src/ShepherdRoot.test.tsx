@@ -25,7 +25,9 @@ describe("ShepherdRoot", () => {
     localStorage.clear();
   });
 
-  function renderRoot(rootProps: { onLogout?: () => void } = {}) {
+  function renderRoot(
+    rootProps: Partial<Parameters<typeof ShepherdRoot>[0]> = {},
+  ) {
     const client = makeMockClient({
       listWorkspaces: vi.fn().mockResolvedValue({ workspaces: [WS] }),
     });
@@ -89,6 +91,22 @@ describe("ShepherdRoot", () => {
     expect(
       screen.queryByRole("button", { name: /sign out/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("plumbs extraSections through to the Settings sidebar", async () => {
+    renderRoot({
+      extraSections: [
+        {
+          id: "usage",
+          label: "Usage",
+          render: ({ workspaceId }) => <p>Usage for {workspaceId}</p>,
+        },
+      ],
+    });
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    expect(screen.getByText("Usage for ws_1")).toBeInTheDocument();
   });
 
   it("applies a roving tabindex (selected tab = 0, others = -1)", async () => {

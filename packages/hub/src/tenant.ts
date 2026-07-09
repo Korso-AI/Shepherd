@@ -55,9 +55,13 @@ export interface TenantContext {
   /**
    * Which credential KIND resolved this request — the sole discriminator of
    * caller trust, set at every {@link resolveTenant} branch:
-   *  - `"browser"` — the trusted browser-via-BFF path (`x-internal-token`).
-   *  - `"agent"`   — a minted agent/API token (`Authorization: Bearer shp_…`).
-   *  - `"team"`    — the self-host single-team `TEAM_TOKEN`.
+   *  - `"browser"`  — the trusted browser-via-BFF path (`x-internal-token`).
+   *  - `"agent"`    — a minted agent/API token (`Authorization: Bearer shp_…`).
+   *  - `"team"`     — the self-host single-team `TEAM_TOKEN`.
+   *  - `"internal"` — the BFF calling ON ITS OWN BEHALF (matched
+   *    `x-internal-token`, `/internal/*` pathname, NO `x-account-id`): a
+   *    service-to-service call with the same trust posture as the BFF itself,
+   *    reaching only the `/internal/*` surface (see {@link requireInternal}).
    *
    * Security-critical routes that must accept ONLY a browser session (e.g.
    * `redeemInvite`) gate on this, NOT on the `workspaceId` sentinel: an
@@ -65,7 +69,7 @@ export interface TenantContext {
    * browser has on a non-`:id` route, so the sentinel can no longer distinguish
    * a trusted session from a leaked token.
    */
-  via: "browser" | "agent" | "team";
+  via: "browser" | "agent" | "team" | "internal";
   /**
    * Whether this request carries a VERIFIED internal-operator identity: the
    * BFF-signed HMAC proof checked by {@link verifyOperatorProof} on the browser
@@ -159,6 +163,21 @@ export function requireAdmin(tenant: TenantContext): void {
 export function requireOperator(tenant: TenantContext): void {
   if (tenant.via !== "browser" || tenant.operator !== true) {
     throw new AuthError(403, "operation requires an internal operator");
+  }
+}
+
+/**
+ * Require the request to be a BFF SERVICE CALL (`via === "internal"`), or
+ * reject with 403. Gates the `/internal/*` management surface (per-workspace
+ * entitlements). The discriminator is set only by resolveCredentials' browser
+ * branch: matched `x-internal-token` + `/internal/*` pathname + ABSENT
+ * `x-account-id` — so a proxied browser request (which always carries
+ * `x-account-id` through the BFF's forwardToUpstream) can never reach this
+ * surface, nor can any bearer-token caller.
+ */
+export function requireInternal(tenant: TenantContext): void {
+  if (tenant.via !== "internal") {
+    throw new AuthError(403, "operation requires an internal service call");
   }
 }
 
@@ -619,7 +638,21 @@ async function resolveCredentials(
 
     const accountId = headerValue(request, "x-account-id");
     if (accountId === undefined) {
-      // A matched internal token with no account is a malformed BFF call.
+      // A matched internal token with NO account on an `/internal/*` PATHNAME
+      // is the BFF calling on its own behalf — the service-call surface. Same
+      // trust posture as the BFF itself: no profile upsert, no per-account
+      // rate limit. Pathname, not raw URL (strip the query string exactly as
+      // routeWorkspaceId does) so `?x=/internal/` can never spoof it. A
+      // matched token WITH x-account-id keeps today's browser behavior even
+      // on /internal/* (it 403s at requireInternal — the proxied-browser
+      // confused-deputy case; forwardToUpstream always attaches
+      // x-account-id).
+      const pathname = request.url.split("?")[0]!;
+      if (pathname.startsWith("/internal/")) {
+        return { workspaceId: NO_ROUTE_WORKSPACE, via: "internal" };
+      }
+      // Anywhere else, a matched internal token with no account stays a
+      // malformed BFF call.
       throw new AuthError(400, "malformed BFF call: missing x-account-id");
     }
 

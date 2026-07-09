@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EntitlementLimits } from "@shepherd/shared";
 
 /**
  * Zod schema for all environment variables consumed by the hub.
@@ -85,6 +86,28 @@ const ConfigSchema = z
     // are also set (the sender address is shared with email invites); with those
     // unset the feature is simply inert.
     FEEDBACK_EMAIL_TO: z.string().min(1).optional(),
+    // Deployment-default workspace caps as a JSON object, e.g.
+    // '{"seatsLimit":10,"reposLimit":25,"retentionDays":180}' (null = that
+    // dimension unlimited). OPTIONAL and inert by construction: when unset,
+    // every entitlements check no-ops and the hub enforces no limits of any
+    // kind (see enforcementEnabled in entitlements.ts). Malformed JSON or an
+    // invalid shape fails config load loudly rather than silently disabling
+    // enforcement on a deployment that meant to enable it.
+    ENTITLEMENTS_DEFAULT_LIMITS: z
+      .string()
+      .transform((raw, ctx): unknown => {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "must be a valid JSON object",
+          });
+          return z.NEVER;
+        }
+      })
+      .pipe(EntitlementLimits)
+      .optional(),
   })
   .superRefine((cfg, ctx) => {
     // One Hub binary, two deployment modes. Require at least one to be fully

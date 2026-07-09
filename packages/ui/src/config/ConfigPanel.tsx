@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { WorkspaceSettings } from "./WorkspaceSettings.js";
 import { Members } from "./Members.js";
@@ -35,6 +35,20 @@ const SECTIONS: ReadonlyArray<{ id: Section; label: string }> = [
   { id: "account", label: "Account" },
 ];
 
+/**
+ * An embedder-provided settings section, appended to the sidebar nav after the
+ * built-ins. Embedders may append their own workspace-scoped sections; an entry
+ * whose id collides with a built-in section id is ignored.
+ */
+export interface ExtraConfigSection {
+  /** Nav identity — must not collide with a built-in Section id. */
+  id: string;
+  /** Nav label, rendered verbatim. */
+  label: string;
+  /** Panel body for the active workspace. */
+  render: (ctx: { workspaceId: string }) => ReactNode;
+}
+
 export interface ConfigPanelProps {
   /** The active workspace all sections configure. */
   workspace: WorkspaceSummaryT;
@@ -59,6 +73,8 @@ export interface ConfigPanelProps {
    * the authentication side effect.
    */
   onLogout?: () => void;
+  /** Embedder-provided sections, appended to the nav after the built-ins. */
+  extraSections?: ReadonlyArray<ExtraConfigSection>;
 }
 
 export function ConfigPanel({
@@ -70,14 +86,22 @@ export function ConfigPanel({
   onLeft,
   onDeleted,
   onLogout,
+  extraSections,
 }: ConfigPanelProps) {
-  const [section, setSection] = useState<Section>("workspace");
+  const [section, setSection] = useState<Section | string>("workspace");
   const isAdmin = workspace.role === "admin";
+
+  // A built-in section id always wins: a colliding extra entry is dropped so
+  // it can never shadow (or duplicate) a built-in nav item.
+  const extras = (extraSections ?? []).filter(
+    (extra) => !SECTIONS.some((builtin) => builtin.id === extra.id),
+  );
+  const activeExtra = extras.find((extra) => extra.id === section);
 
   return (
     <div className="config-layout">
       <nav className="config-nav" aria-label="Configuration sections">
-        {SECTIONS.map(({ id, label }) => (
+        {[...SECTIONS, ...extras].map(({ id, label }) => (
           <button
             key={id}
             type="button"
@@ -124,6 +148,8 @@ export function ConfigPanel({
         {section === "agent" && <ConnectAgent hubUrl={hubUrl} />}
 
         {section === "account" && <AccountSettings onLogout={onLogout} />}
+
+        {activeExtra && activeExtra.render({ workspaceId: workspace.id })}
       </div>
     </div>
   );

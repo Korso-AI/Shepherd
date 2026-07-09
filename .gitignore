@@ -30,3 +30,6 @@ nul
 /_shepherd-release-audit/
 /.review-worktrees/
 /.wf/
+
+# Local-only scratch notes — never committed/pushed (public repo).
+local/

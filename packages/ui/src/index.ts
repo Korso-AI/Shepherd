@@ -46,6 +46,7 @@ export {
 } from "./config/index.js";
 export type {
   ConfigPanelProps,
+  ExtraConfigSection,
   WorkspaceSwitcherProps,
   WorkspaceSettingsProps,
   AccountSettingsProps,

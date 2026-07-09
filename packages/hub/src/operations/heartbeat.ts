@@ -46,6 +46,7 @@ import {
 } from "../repo.js";
 import { resolveSession } from "../sessionScope.js";
 import { withTransaction } from "../db.js";
+import { maybePruneRetention } from "../retention.js";
 import { type TenantContext } from "../tenant.js";
 
 export async function heartbeat(
@@ -90,6 +91,12 @@ export async function heartbeat(
         config.CHANGE_RECORD_TTL_SECONDS,
       );
     }
+
+    // Lazy announcement retention (entitlements window), every beat rather
+    // than only when a changeReport rode along — the hourly per-workspace
+    // throttle keeps it a no-op read in the common case; inert without
+    // ENTITLEMENTS_DEFAULT_LIMITS. See retention.ts.
+    await maybePruneRetention(tx, config, session.workspaceId, now);
 
     // ACK phase: the client confirms it has durably written these ids to its
     // model-visible sink. Mark exactly those delivered to the caller's session.
