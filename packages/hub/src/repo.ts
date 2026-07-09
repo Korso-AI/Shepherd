@@ -40,6 +40,16 @@ type Queryable = pg.Pool | pg.PoolClient;
  */
 const DELIVERY_BATCH_LIMIT = 200;
 
+/**
+ * Freshness window for agent delivery: announcements older than this are never
+ * delivered, only kept for the dashboard feed. The pending anti-join is per
+ * SESSION, so without a window a brand-new session replays the workspace's
+ * entire announcement history as if it were current — days-stale claims about
+ * branches and files read as live coordination state. Hardcoded integer,
+ * safe to interpolate (see DELIVERY_BATCH_LIMIT).
+ */
+const DELIVERY_MAX_AGE_HOURS = 48;
+
 // ---------------------------------------------------------------------------
 // Identity & tenancy (migration 011) — lookups used by resolveTenant
 //
@@ -1789,6 +1799,11 @@ export async function fetchPendingAnnouncements(
        -- and (NULL <> $4) is NULL (falsy) -- which would silently drop them -- so
        -- the IS NULL branch keeps admin messages deliverable.
        AND  (ann.from_session_id IS NULL OR ann.from_session_id <> $4)
+       -- Freshness window: a NEW session has no delivery rows at all, so the
+       -- anti-join alone would replay the full history as "pending". Old
+       -- announcements stay readable on the dashboard; agents only get
+       -- recent ones (and every delivery path renders each message's age).
+       AND  ann.created_at > now() - interval '${DELIVERY_MAX_AGE_HOURS} hours'
        AND  NOT EXISTS (
              SELECT 1
              FROM   announcement_deliveries ad

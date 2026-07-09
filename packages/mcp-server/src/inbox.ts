@@ -165,10 +165,35 @@ export function indentContinuation(text: string): string {
 }
 
 /**
+ * Human-readable "Nm/Nh/Nd ago" since an ISO timestamp. Best-effort; on a
+ * bad/empty timestamp returns "recently" rather than throwing.
+ *
+ * Lives here (the leaf module every delivery path imports) because EVERY
+ * announcement render must carry its age: delivery lags the send — a fresh
+ * session replays its whole undelivered backlog — so an unstamped message
+ * reads as current coordination state when it may be days stale.
+ */
+export function relativeAge(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "recently";
+  const ms = Date.now() - then;
+  if (ms < 0) return "just now";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
  * Render drained announcements into a context block for the hook to inject.
  * Returns "" for an empty list so callers can guard cheaply. Mirrors the
  * tool-path "Messages for you" formatting, with a header that flags it as an
- * out-of-band Shepherd delivery.
+ * out-of-band Shepherd delivery. Deliberately NOT "new announcements": a
+ * fresh session drains messages sent while nobody was listening, and each
+ * line's age stamp is what tells the reader how much to trust it.
  */
 export function formatInboxAnnouncements(
   announcements: AnnouncementT[],
@@ -176,7 +201,7 @@ export function formatInboxAnnouncements(
   if (!announcements || announcements.length === 0) return "";
   const count = announcements.length;
   const lines = [
-    `[Shepherd] ${count} new announcement${count === 1 ? "" : "s"} from your teammates:`,
+    `[Shepherd] ${count} announcement${count === 1 ? "" : "s"} from your teammates:`,
   ];
   for (const a of announcements) {
     // Names are teammate-controlled free-text too (see oneLine's note); collapse
@@ -185,7 +210,7 @@ export function formatInboxAnnouncements(
       ? ` → ${oneLine(a.targetAgentName)}`
       : " (broadcast)";
     lines.push(
-      `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+      `  [${oneLine(a.fromAgentName)}${target}, ${relativeAge(a.createdAt)}] ${indentContinuation(a.body)}`,
     );
   }
   lines.push(REPLY_ROUTING_HINT);

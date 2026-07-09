@@ -33,6 +33,7 @@ import {
   REPLY_ROUTING_HINT,
   oneLine,
   indentContinuation,
+  relativeAge,
 } from "./inbox.js";
 import { createEditTripwire, type EditTripwire } from "./editTripwire.js";
 import { offerLinkPopup, type ElicitFn } from "./linkPopup.js";
@@ -179,7 +180,7 @@ function formatLandscape(landscape: LandscapeT): string {
         ? ` → ${oneLine(a.targetAgentName)}`
         : " (broadcast)";
       lines.push(
-        `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+        `  [${oneLine(a.fromAgentName)}${target}, ${relativeAge(a.createdAt)}] ${indentContinuation(a.body)}`,
       );
     }
     lines.push(REPLY_ROUTING_HINT);
@@ -204,7 +205,7 @@ function formatAnnouncements(announcements: AnnouncementT[]): string {
       ? ` → ${oneLine(a.targetAgentName)}`
       : " (broadcast)";
     lines.push(
-      `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+      `  [${oneLine(a.fromAgentName)}${target}, ${relativeAge(a.createdAt)}] ${indentContinuation(a.body)}`,
     );
   }
   lines.push(REPLY_ROUTING_HINT);
@@ -214,24 +215,6 @@ function formatAnnouncements(announcements: AnnouncementT[]): string {
 // ---------------------------------------------------------------------------
 // Change-record rendering (advisory, inform-not-block)
 // ---------------------------------------------------------------------------
-
-/**
- * Human-readable "Nh ago" / "Nm ago" since an ISO timestamp. Best-effort; on a
- * bad/empty timestamp returns "recently" rather than throwing.
- */
-function relativeAge(iso: string): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "recently";
-  const ms = Date.now() - then;
-  if (ms < 0) return "just now";
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function presence(rec: ChangeRecordT): string {
   return rec.authorIsLive

@@ -753,6 +753,55 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       expect(announcements[0]!.targetAgentName).toBeNull();
     });
 
+    it("does not deliver announcements older than the freshness window", async () => {
+      const sender = await seedAgentAndSession(pool, {
+        agentNameSuffix: "stalesend",
+      });
+      const recipient = await seedAgentAndSession(pool, {
+        agentNameSuffix: "stalerecip",
+      });
+
+      await withTransaction(pool, async (tx) => {
+        await insertAnnouncement(tx, {
+          workspaceId: wsId("acme"),
+          repo: "my-repo",
+          fromSessionId: sender.sessionId,
+          targetAgentName: null,
+          body: "stale broadcast",
+        });
+        await insertAnnouncement(tx, {
+          workspaceId: wsId("acme"),
+          repo: "my-repo",
+          fromSessionId: sender.sessionId,
+          targetAgentName: null,
+          body: "still-fresh broadcast",
+        });
+      });
+      // Backdate: a brand-new session must NOT replay history older than the
+      // 48h window as if it were current coordination state.
+      await pool.query(
+        `UPDATE announcements SET created_at = now() - interval '3 days'
+         WHERE body = 'stale broadcast'`,
+      );
+      await pool.query(
+        `UPDATE announcements SET created_at = now() - interval '47 hours'
+         WHERE body = 'still-fresh broadcast'`,
+      );
+
+      const recipientSession = await getSession(
+        pool,
+        wsId("acme"),
+        recipient.sessionId,
+      );
+      const announcements = await withTransaction(pool, (tx) =>
+        fetchPendingAnnouncements(tx, recipientSession),
+      );
+
+      expect(announcements.map((a) => a.body)).toEqual([
+        "still-fresh broadcast",
+      ]);
+    });
+
     it("does NOT return a broadcast to the sender themselves", async () => {
       const now = new Date();
       const sender = await seedAgentAndSession(pool, {

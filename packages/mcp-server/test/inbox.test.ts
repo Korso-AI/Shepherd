@@ -375,4 +375,29 @@ describe("formatInboxAnnouncements", () => {
     expect(text.toLowerCase()).toContain("can't see this chat");
     expect(text).toContain("`announce`");
   });
+
+  it("stamps each message with its age so stale info is discountable", () => {
+    const threeDaysAgo = new Date(
+      Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+    ).toISOString();
+    const text = formatInboxAnnouncements([
+      { ...ann(1, "old news"), createdAt: threeDaysAgo },
+      { ...ann(2, "for you", "BlueWolf"), createdAt: threeDaysAgo },
+    ]);
+    expect(text).toContain("(broadcast), 3d ago]");
+    expect(text).toContain("→ BlueWolf, 3d ago]");
+  });
+
+  it("falls back to 'recently' for an unparseable createdAt", () => {
+    const text = formatInboxAnnouncements([
+      { ...ann(1, "x"), createdAt: "not-a-date" },
+    ]);
+    expect(text).toContain("(broadcast), recently]");
+  });
+
+  it("does not label a replayed backlog as new", () => {
+    const text = formatInboxAnnouncements([ann(1, "a"), ann(2, "b")]);
+    expect(text).toContain("[Shepherd] 2 announcements from your teammates:");
+    expect(text).not.toContain("new announcement");
+  });
 });

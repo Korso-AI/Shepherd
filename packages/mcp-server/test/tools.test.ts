@@ -900,6 +900,56 @@ describe("registerTools", () => {
       expect(result.content[0].text).toContain("sync inbox msg");
     });
 
+    it("stamps work-landscape announcements with their age", async () => {
+      const threeDaysAgo = new Date(
+        Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+      ).toISOString();
+      const inboxFile = seedInbox([
+        { ...ann(104, "old landscape msg"), createdAt: threeDaysAgo },
+      ]);
+      const { mockPost, tools, ready } = setup({
+        join: {
+          agentName: "agent-iv",
+          sessionId: "00000000-0000-0000-0000-000000000055",
+        },
+        inboxFile,
+      });
+      await ready;
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+      expect(result.content[0].text).toContain("(broadcast), 3d ago]");
+    });
+
+    it("stamps done-output announcements with their age", async () => {
+      const threeDaysAgo = new Date(
+        Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+      ).toISOString();
+      const inboxFile = seedInbox([
+        { ...ann(105, "old done msg"), createdAt: threeDaysAgo },
+      ]);
+      const { mockPost, tools, ready } = setup({
+        join: {
+          agentName: "agent-iu",
+          sessionId: "00000000-0000-0000-0000-000000000056",
+        },
+        inboxFile,
+      });
+      await ready;
+      mockPost.mockResolvedValueOnce({ ok: true, announcements: [] });
+
+      const result = await tools["done"].handler({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      });
+      expect(result.content[0].text).toContain("(broadcast), 3d ago]");
+    });
+
     it("appends inbox announcements to done output", async () => {
       const inboxFile = seedInbox([ann(102, "done inbox msg")]);
       const { mockPost, tools, ready } = setup({
