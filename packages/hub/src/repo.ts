@@ -2364,6 +2364,51 @@ export async function pruneChangeRecords(
   );
 }
 
+/**
+ * Max announcements deleted per retention-prune pass. A hardcoded integer
+ * constant (never user input) so it is safe to interpolate into the SQL text
+ * — same posture as DELIVERY_BATCH_LIMIT. Bounds the delete volume a single
+ * hot work/sync/heartbeat transaction can absorb; retention.ts's hourly
+ * cadence drains any surplus over subsequent passes.
+ */
+export const ANNOUNCEMENT_PRUNE_BATCH_LIMIT = 500;
+
+/**
+ * Delete announcements in `workspaceId` older than `retentionDays`, plus
+ * their announcement_deliveries rows — deliveries FIRST, same transaction:
+ * the deliveries FK (001_init.sql) has NO ON DELETE CASCADE. Bounded to
+ * ANNOUNCEMENT_PRUNE_BATCH_LIMIT rows per call (oldest-id first, so repeated
+ * passes drain a backlog deterministically). Returns the number of
+ * announcements deleted.
+ */
+export async function pruneAnnouncements(
+  tx: pg.PoolClient,
+  workspaceId: string,
+  now: Date,
+  retentionDays: number,
+): Promise<number> {
+  const { rows } = await tx.query<{ id: string }>(
+    `SELECT id FROM announcements
+     WHERE workspace_id = $1
+       AND created_at < $2::timestamptz - ($3 * interval '1 day')
+     ORDER BY id
+     LIMIT ${ANNOUNCEMENT_PRUNE_BATCH_LIMIT}`,
+    [workspaceId, now, retentionDays],
+  );
+  if (rows.length === 0) return 0;
+
+  const ids = rows.map((r) => r.id);
+  await tx.query(
+    `DELETE FROM announcement_deliveries WHERE announcement_id = ANY($1::bigint[])`,
+    [ids],
+  );
+  const result = await tx.query(
+    `DELETE FROM announcements WHERE id = ANY($1::bigint[])`,
+    [ids],
+  );
+  return result.rowCount ?? 0;
+}
+
 // ---------------------------------------------------------------------------
 // Workspace entitlements (migration 020)
 //
