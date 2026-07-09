@@ -33,6 +33,7 @@ import {
   REPLY_ROUTING_HINT,
   oneLine,
   indentContinuation,
+  relativeAge,
 } from "./inbox.js";
 import { createEditTripwire, type EditTripwire } from "./editTripwire.js";
 import { offerLinkPopup, type ElicitFn } from "./linkPopup.js";
@@ -179,7 +180,7 @@ function formatLandscape(landscape: LandscapeT): string {
         ? ` → ${oneLine(a.targetAgentName)}`
         : " (broadcast)";
       lines.push(
-        `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+        `  [${oneLine(a.fromAgentName)}${target}, ${relativeAge(a.createdAt)}] ${indentContinuation(a.body)}`,
       );
     }
     lines.push(REPLY_ROUTING_HINT);
@@ -204,7 +205,7 @@ function formatAnnouncements(announcements: AnnouncementT[]): string {
       ? ` → ${oneLine(a.targetAgentName)}`
       : " (broadcast)";
     lines.push(
-      `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+      `  [${oneLine(a.fromAgentName)}${target}, ${relativeAge(a.createdAt)}] ${indentContinuation(a.body)}`,
     );
   }
   lines.push(REPLY_ROUTING_HINT);
@@ -214,24 +215,6 @@ function formatAnnouncements(announcements: AnnouncementT[]): string {
 // ---------------------------------------------------------------------------
 // Change-record rendering (advisory, inform-not-block)
 // ---------------------------------------------------------------------------
-
-/**
- * Human-readable "Nh ago" / "Nm ago" since an ISO timestamp. Best-effort; on a
- * bad/empty timestamp returns "recently" rather than throwing.
- */
-function relativeAge(iso: string): string {
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "recently";
-  const ms = Date.now() - then;
-  if (ms < 0) return "just now";
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function presence(rec: ChangeRecordT): string {
   return rec.authorIsLive
@@ -436,6 +419,10 @@ export function registerTools(
   // so it knows how to address itself / be addressed, without a `join` tool.
   let sessionId: string | null = null;
   let agentName: string | null = null;
+  // The workspace slug the LIVE session was joined under; null while dormant.
+  // Lets activate() recognize a same-workspace re-activation (hot re-link) and
+  // keep the session instead of minting a new identity.
+  let activeWorkspaceSlug: string | null = null;
 
   // ---- repo opt-in gating (design D8 / §5.1) --------------------------------
   // A repo participates ONLY when it carries a committed `.shepherd` marker
@@ -562,6 +549,16 @@ export function registerTools(
    * @param workspaceSlug - the marker's workspace slug to join under.
    */
   async function activate(workspaceSlug: string): Promise<ActivateResult> {
+    // A live session in this same workspace is REUSED, never re-joined: every
+    // /join mints a fresh agent identity (the hub hands out the lowest free
+    // ordinal — possibly a RECYCLED former teammate's name), so re-joining on a
+    // hot re-link would silently rename this agent mid-conversation and abandon
+    // its old session — teammates would see a ghost agent and announcements
+    // attributed to the wrong name.
+    if (sessionId !== null && activeWorkspaceSlug === workspaceSlug) {
+      return { ok: true };
+    }
+
     // Build the join body from the RESOLVED context (env → git → fallback), not
     // raw config, with the caller's slug. `model` is omitted entirely when unset
     // rather than sent as undefined, so the wire body stays clean for hubs that
@@ -606,6 +603,7 @@ export function registerTools(
         // the heartbeat started cleanly.
         sessionId = newSessionId;
         agentName = parsed.data.agentName;
+        activeWorkspaceSlug = workspaceSlug;
         linked = true;
         hostedWorkspaceRejected = false;
         joinFailure = null;
@@ -1175,6 +1173,7 @@ export function registerTools(
         await leave();
         sessionId = null;
         agentName = null;
+        activeWorkspaceSlug = null;
       }
       return advisory(
         "Unlinked — this repo will stay uncoordinated and won't ask again. Run `link` to re-enable.",

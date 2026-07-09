@@ -118,9 +118,15 @@ export function ensureHookScript(
 }
 
 /** The command a client config should run: the cached local script when
- * available, else the pinned-npx fallback. */
+ * available, else the pinned-npx fallback. Clients (Claude Code among them)
+ * execute hook commands through a POSIX shell even on Windows, where a
+ * backslash path would be eaten as escape characters ("C:\Users\..." →
+ * "C:Users..."), so the quoted path always uses forward slashes — node
+ * accepts them on every platform. */
 export function hookCommandFor(scriptPath: string | null): string {
-  return scriptPath === null ? HOOK_COMMAND : `node "${scriptPath}"`;
+  return scriptPath === null
+    ? HOOK_COMMAND
+    : `node "${scriptPath.replace(/\\/g, "/")}"`;
 }
 
 function codexHookBlock(scriptPath: string | null): string {

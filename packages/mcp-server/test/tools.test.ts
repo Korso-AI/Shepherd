@@ -900,6 +900,56 @@ describe("registerTools", () => {
       expect(result.content[0].text).toContain("sync inbox msg");
     });
 
+    it("stamps work-landscape announcements with their age", async () => {
+      const threeDaysAgo = new Date(
+        Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+      ).toISOString();
+      const inboxFile = seedInbox([
+        { ...ann(104, "old landscape msg"), createdAt: threeDaysAgo },
+      ]);
+      const { mockPost, tools, ready } = setup({
+        join: {
+          agentName: "agent-iv",
+          sessionId: "00000000-0000-0000-0000-000000000055",
+        },
+        inboxFile,
+      });
+      await ready;
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+      expect(result.content[0].text).toContain("(broadcast), 3d ago]");
+    });
+
+    it("stamps done-output announcements with their age", async () => {
+      const threeDaysAgo = new Date(
+        Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+      ).toISOString();
+      const inboxFile = seedInbox([
+        { ...ann(105, "old done msg"), createdAt: threeDaysAgo },
+      ]);
+      const { mockPost, tools, ready } = setup({
+        join: {
+          agentName: "agent-iu",
+          sessionId: "00000000-0000-0000-0000-000000000056",
+        },
+        inboxFile,
+      });
+      await ready;
+      mockPost.mockResolvedValueOnce({ ok: true, announcements: [] });
+
+      const result = await tools["done"].handler({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      });
+      expect(result.content[0].text).toContain("(broadcast), 3d ago]");
+    });
+
     it("appends inbox announcements to done output", async () => {
       const inboxFile = seedInbox([ann(102, "done inbox msg")]);
       const { mockPost, tools, ready } = setup({
@@ -1718,6 +1768,38 @@ describe("registerTools", () => {
       } finally {
         errSpy.mockRestore();
       }
+    });
+
+    it("hot link of the SAME workspace reuses the live session — no second /join", async () => {
+      // Re-joining mints a brand-new agent identity (the hub hands out the
+      // lowest free ordinal, possibly a RECYCLED teammate name) and abandons
+      // the current session — so a same-workspace re-link (e.g. linking a
+      // second worktree of one repo) must keep the session it already has.
+      const cwd = mkdtempSync(join(tmpdir(), "shepherd-relink-"));
+      writeFileSync(join(cwd, ".git"), "gitdir: x\n", "utf8");
+      const mockPost = vi.fn().mockResolvedValueOnce(DEFAULT_JOIN);
+      const hubClient: HubClient = { post: mockPost, get: vi.fn() };
+      const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };
+      const { server, tools } = makeFakeServer();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { ready } = registerTools(server as any, {
+        hubClient,
+        config: fakeConfig,
+        context: fakeContext,
+        heartbeat,
+        cwd,
+      });
+      await ready;
+      const joins = () =>
+        mockPost.mock.calls.filter(([path]) => path === "/join");
+      expect(joins()).toHaveLength(1);
+      expect(heartbeat.start).toHaveBeenCalledTimes(1);
+
+      const result = await tools["link"].handler({ workspace: "acme" });
+
+      expect(joins()).toHaveLength(1); // still only the startup join
+      expect(heartbeat.start).toHaveBeenCalledTimes(1); // no session churn
+      expect(result.content[0].text).toContain("coordinating in `acme`");
     });
 
     it("never surfaces the cached sessionId in any tool result text", async () => {

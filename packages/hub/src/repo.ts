@@ -40,6 +40,16 @@ export type Queryable = pg.Pool | pg.PoolClient;
  */
 const DELIVERY_BATCH_LIMIT = 200;
 
+/**
+ * Freshness window for agent delivery: announcements older than this are never
+ * delivered, only kept for the dashboard feed. The pending anti-join is per
+ * SESSION, so without a window a brand-new session replays the workspace's
+ * entire announcement history as if it were current — days-stale claims about
+ * branches and files read as live coordination state. Hardcoded integer,
+ * safe to interpolate (see DELIVERY_BATCH_LIMIT).
+ */
+const DELIVERY_MAX_AGE_HOURS = 48;
+
 // ---------------------------------------------------------------------------
 // Identity & tenancy (migration 011) — lookups used by resolveTenant
 //
@@ -1083,7 +1093,14 @@ export async function reservedAgentNamesForHandle(
   //       ONLY while the agent has a session within `graceSeconds`, exactly the
   //       grace gate in listOtherChangeRecords: once a dead agent's dirty snapshot
   //       stops showing, its ordinal must not stay parked (it would otherwise hold
-  //       an invisible name for the full change-record TTL).
+  //       an invisible name for the full change-record TTL), OR
+  //   (4) an announcement ATTRIBUTED to the name that is still deliverable —
+  //       one the agent sent, or one directed AT the name, within the
+  //       fetchPendingAnnouncements freshness window. A name must not change
+  //       hands while words in its name can still reach a teammate: a new
+  //       joiner adopting the ordinal would silently become the apparent author
+  //       (fromAgentName resolves through the reclaimed agents row) or the
+  //       recipient of the dead agent's messages.
   const { rows } = await db.query<{ name: string }>(
     `SELECT a.name
      FROM   agents a
@@ -1114,6 +1131,18 @@ export async function reservedAgentNamesForHandle(
                    AND  s3.last_heartbeat_at > $3::timestamptz - ($6 * interval '1 second')
                )
              )
+         )
+         OR EXISTS (
+           SELECT 1 FROM announcements ann
+           JOIN   sessions s4 ON s4.id = ann.from_session_id
+           WHERE  s4.agent_id = a.id
+             AND  ann.created_at > $3::timestamptz - interval '${DELIVERY_MAX_AGE_HOURS} hours'
+         )
+         OR EXISTS (
+           SELECT 1 FROM announcements ann2
+           WHERE  ann2.workspace_id = $1
+             AND  ann2.target_agent_name = a.name
+             AND  ann2.created_at > $3::timestamptz - interval '${DELIVERY_MAX_AGE_HOURS} hours'
          )
        )`,
     [
@@ -1789,6 +1818,11 @@ export async function fetchPendingAnnouncements(
        -- and (NULL <> $4) is NULL (falsy) -- which would silently drop them -- so
        -- the IS NULL branch keeps admin messages deliverable.
        AND  (ann.from_session_id IS NULL OR ann.from_session_id <> $4)
+       -- Freshness window: a NEW session has no delivery rows at all, so the
+       -- anti-join alone would replay the full history as "pending". Old
+       -- announcements stay readable on the dashboard; agents only get
+       -- recent ones (and every delivery path renders each message's age).
+       AND  ann.created_at > now() - interval '${DELIVERY_MAX_AGE_HOURS} hours'
        AND  NOT EXISTS (
              SELECT 1
              FROM   announcement_deliveries ad

@@ -5,6 +5,7 @@ import {
   writeFileSync,
   existsSync,
   readFileSync,
+  utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,12 @@ import {
   defaultInboxDir,
   mergeAnnouncements,
   REPLY_ROUTING_HINT,
+  sessionMailboxPath,
+  sessionMetaPath,
+  writeMailboxMeta,
+  removeMailboxMeta,
+  selectSessionMailboxes,
+  MAILBOX_TTL_MS,
 } from "../src/inbox.js";
 import type { AnnouncementT } from "@shepherd/shared";
 
@@ -271,6 +278,41 @@ describe("buildHookOutput", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Session mailboxes — the pairing layer (hookPairing.ts) resolves which
+  // mailboxes belong to this hook's session and passes them in.
+  // -------------------------------------------------------------------------
+
+  it("drains the session mailboxes resolved by the pairing layer", () => {
+    const box = sessionMailboxPath(dir, 111);
+    appendAnnouncements(box, [ann(1, "from my session's server")]);
+
+    const out = JSON.parse(
+      buildHookOutput(stdin(), dir, undefined, undefined, [box]),
+    );
+    expect(out.hookSpecificOutput.additionalContext).toContain(
+      "from my session's server",
+    );
+    // Consumed: a second fire finds nothing.
+    expect(buildHookOutput(stdin(), dir, undefined, undefined, [box])).toBe("");
+  });
+
+  it("merges legacy-file and session-mailbox announcements, deduped by id", () => {
+    const box = sessionMailboxPath(dir, 111);
+    appendAnnouncements(inboxFilePath(dir, cwd), [
+      ann(2, "legacy"),
+      ann(3, "both"),
+    ]);
+    appendAnnouncements(box, [ann(1, "mailbox"), ann(3, "both")]);
+
+    const out = JSON.parse(
+      buildHookOutput(stdin(), dir, undefined, undefined, [box]),
+    );
+    const ctx: string = out.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("[Shepherd] 3 announcements");
+    expect(ctx.indexOf("mailbox")).toBeLessThan(ctx.indexOf("legacy"));
+  });
+
+  // -------------------------------------------------------------------------
   // Cursor dialect — verified by spike (Cursor 3.9.16): no cwd, URI-style
   // workspace_roots, a BOM prefix on stdin, and only a TOP-LEVEL
   // additionalContext (+ continue: true) reaches the model.
@@ -374,5 +416,193 @@ describe("formatInboxAnnouncements", () => {
     expect(text).toContain(REPLY_ROUTING_HINT);
     expect(text.toLowerCase()).toContain("can't see this chat");
     expect(text).toContain("`announce`");
+  });
+
+  it("stamps each message with its age so stale info is discountable", () => {
+    const threeDaysAgo = new Date(
+      Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+    ).toISOString();
+    const text = formatInboxAnnouncements([
+      { ...ann(1, "old news"), createdAt: threeDaysAgo },
+      { ...ann(2, "for you", "BlueWolf"), createdAt: threeDaysAgo },
+    ]);
+    expect(text).toContain("(broadcast), 3d ago]");
+    expect(text).toContain("→ BlueWolf, 3d ago]");
+  });
+
+  it("falls back to 'recently' for an unparseable createdAt", () => {
+    const text = formatInboxAnnouncements([
+      { ...ann(1, "x"), createdAt: "not-a-date" },
+    ]);
+    expect(text).toContain("(broadcast), recently]");
+  });
+
+  it("does not label a replayed backlog as new", () => {
+    const text = formatInboxAnnouncements([ann(1, "a"), ann(2, "b")]);
+    expect(text).toContain("[Shepherd] 2 announcements from your teammates:");
+    expect(text).not.toContain("new announcement");
+  });
+});
+
+describe("session mailboxes (per-client-process pairing)", () => {
+  const STALE_MS = 90_000;
+  let dir: string;
+
+  // A hook chain: [hook node, shell, client (e.g. Claude), terminal].
+  const HOOK_CHAIN = [900, 800, 700, 600];
+  const CWD = "/repos/projectA";
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "shepherd-mailbox-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const select = (
+    chain: number[] = HOOK_CHAIN,
+    cwd: string | null = CWD,
+    staleMs = STALE_MS,
+    nowMs?: number,
+  ) => selectSessionMailboxes(dir, chain, cwd, staleMs, nowMs);
+
+  it("names the mailbox and meta after the server pid", () => {
+    expect(sessionMailboxPath(dir, 111)).toBe(join(dir, "agent-111.jsonl"));
+    expect(sessionMetaPath(dir, 111)).toBe(join(dir, "agent-111.json"));
+  });
+
+  it("selects the mailbox whose server chain shares the hook's client pid", () => {
+    // Server spawned (via an npx hop) by client 700 — same client as the hook.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 50, 700, 600] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("prefers the closest common ancestor when two sessions share a terminal", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700, 600] }); // our client
+    writeMailboxMeta(dir, 222, { cwd: CWD, chain: [222, 555, 600] }); // sibling session
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("prefers the server closest to the shared client (nested-agent case)", () => {
+    // A teammate's server reaches our client only THROUGH its own nested client
+    // (333); the main session's server hangs directly under 700.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    writeMailboxMeta(dir, 222, { cwd: CWD, chain: [222, 333, 700] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("drains ALL equally-matched mailboxes of the same client (crashed-server leftovers)", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    writeMailboxMeta(dir, 112, { cwd: CWD, chain: [112, 700] });
+    expect(select().sort()).toEqual([
+      sessionMailboxPath(dir, 111),
+      sessionMailboxPath(dir, 112),
+    ]);
+  });
+
+  it("breaks a cross-workspace tie by cwd (shared client main process)", () => {
+    writeMailboxMeta(dir, 111, { cwd: "/repos/projectA", chain: [111, 700] });
+    writeMailboxMeta(dir, 222, { cwd: "/repos/projectB", chain: [222, 700] });
+    expect(select([900, 700], "/repos/projectA")).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  it("selects nothing when a cross-workspace tie matches neither cwd", () => {
+    writeMailboxMeta(dir, 111, { cwd: "/repos/projectA", chain: [111, 700] });
+    writeMailboxMeta(dir, 222, { cwd: "/repos/projectB", chain: [222, 700] });
+    expect(select([900, 700], "/repos/projectC")).toEqual([]);
+  });
+
+  it("normalizes cwds before comparing them", () => {
+    writeMailboxMeta(dir, 111, {
+      cwd: "/repos/projectA",
+      chain: [111, 700],
+    });
+    writeMailboxMeta(dir, 222, { cwd: "/repos/projectB", chain: [222, 700] });
+    expect(select([900, 700], "/repos/./projectA")).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  // -- deep-match guard -------------------------------------------------------
+  // A match at hook-chain index 2 is the client for Claude-under-bash but can
+  // be a TERMINAL-level ancestor for direct-spawn clients whose session has no
+  // mailbox of its own (a shepherd-less sibling session). Those deep matches
+  // need corroboration: same cwd AND a shallow spot in the server's chain.
+
+  it("accepts a depth-2 match when cwd agrees and the pid sits low in the server chain", () => {
+    // Windows Claude Code: hook → bash → client(700); server → npx → client.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 50, 700] });
+    expect(select([900, 800, 700], CWD)).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  it("rejects a depth-2 match from a different cwd (worktree move degrades to tool delivery)", () => {
+    writeMailboxMeta(dir, 111, { cwd: "/repos/projectB", chain: [111, 50, 700] });
+    expect(select([900, 800, 700], CWD)).toEqual([]);
+  });
+
+  it("rejects a depth-2 match on a pid deep in the server chain (terminal, not client)", () => {
+    // A foreign server only shares the TERMINAL (600) with this hook — the
+    // terminal sits deep (j=3) in the server's chain; a real client sits at 1-2.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 50, 700, 600] });
+    expect(select([900, 800, 600], CWD)).toEqual([]);
+  });
+
+  it("never matches beyond the third hook-chain entry", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 600] });
+    expect(select([900, 800, 700, 600], CWD)).toEqual([]);
+  });
+
+  it("selects nothing when no fresh meta shares an ancestor", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 12, 13] });
+    expect(select()).toEqual([]);
+  });
+
+  it("ignores a stale meta (dead or wedged server)", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    const past = new Date(Date.now() - STALE_MS - 60_000);
+    utimesSync(sessionMetaPath(dir, 111), past, past);
+    expect(select()).toEqual([]);
+  });
+
+  it("a re-written meta (heartbeat refresh) is fresh again", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    const past = new Date(Date.now() - STALE_MS - 60_000);
+    utimesSync(sessionMetaPath(dir, 111), past, past);
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("removeMailboxMeta withdraws the mailbox and is idempotent", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    removeMailboxMeta(dir, 111);
+    expect(select()).toEqual([]);
+    expect(() => removeMailboxMeta(dir, 111)).not.toThrow();
+  });
+
+  it("garbage-collects meta AND mailbox past the TTL", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    appendAnnouncements(sessionMailboxPath(dir, 111), [ann(1, "orphaned")]);
+    const ancient = new Date(Date.now() - MAILBOX_TTL_MS - 60_000);
+    utimesSync(sessionMetaPath(dir, 111), ancient, ancient);
+    select();
+    expect(existsSync(sessionMetaPath(dir, 111))).toBe(false);
+    expect(existsSync(sessionMailboxPath(dir, 111))).toBe(false);
+  });
+
+  it("skips a malformed meta file without failing the scan", () => {
+    writeFileSync(sessionMetaPath(dir, 99), "not json");
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("fails open to [] when the inbox dir does not exist", () => {
+    expect(
+      selectSessionMailboxes(join(dir, "missing"), HOOK_CHAIN, CWD, STALE_MS),
+    ).toEqual([]);
   });
 });

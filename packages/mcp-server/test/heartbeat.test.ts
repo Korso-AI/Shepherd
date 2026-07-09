@@ -342,6 +342,92 @@ describe("createHeartbeat", () => {
     }).not.toThrow();
   });
 
+  // ---- mailbox liveness (session mailbox advertisement) --------------------
+  function makeLiveness() {
+    return { refresh: vi.fn(), remove: vi.fn() };
+  }
+
+  it("refreshes mailbox liveness on start and again on every beat", async () => {
+    const hubClient = makeHubClient();
+    const liveness = makeLiveness();
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      liveness,
+    });
+
+    heartbeat.start(SESSION_ID);
+    expect(liveness.refresh).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
+    expect(liveness.refresh).toHaveBeenCalledTimes(2);
+    heartbeat.stop();
+  });
+
+  it("always requests delivery when a sink is present (per-session mailboxes need no gating)", async () => {
+    const hubClient = makeHubClient();
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      liveness: makeLiveness(),
+    });
+
+    heartbeat.start(SESSION_ID);
+    await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
+
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+      deliverAnnouncements: true,
+    });
+    heartbeat.stop();
+  });
+
+  it("keeps beating and delivering when liveness callbacks throw", async () => {
+    const hubClient = makeHubClient();
+    const liveness = {
+      refresh: vi.fn(() => {
+        throw new Error("disk");
+      }),
+      remove: vi.fn(() => {
+        throw new Error("disk");
+      }),
+    };
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      liveness,
+    });
+
+    heartbeat.start(SESSION_ID);
+    await expect(
+      vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000),
+    ).resolves.not.toThrow();
+
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+      deliverAnnouncements: true,
+    });
+    expect(() => heartbeat.stop()).not.toThrow();
+  });
+
+  it("stop() withdraws the mailbox advertisement", () => {
+    const hubClient = makeHubClient();
+    const liveness = makeLiveness();
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      liveness,
+    });
+
+    heartbeat.start(SESSION_ID);
+    heartbeat.stop();
+    expect(liveness.remove).toHaveBeenCalled();
+  });
+
   it("calls .unref() on the timer so it never keeps the process alive", () => {
     const hubClient = makeHubClient();
     const unref = vi.fn();

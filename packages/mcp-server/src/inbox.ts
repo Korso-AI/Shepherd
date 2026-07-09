@@ -8,11 +8,12 @@
  *   2. A Claude Code hook (shepherd-inbox-hook), running on the agent's next
  *      action, DRAINS this file (drainInbox) and injects them as context.
  *
- * The two processes find the same file via inboxFilePath(dir, cwd): both the MCP
- * server (process.cwd()) and the hook (the cwd Claude Code passes it) key off
- * the working directory, so a per-session file needs no shared id. This is the
- * common one-session-per-working-dir case; two Claude sessions in the SAME dir
- * would share one inbox (a documented, benign edge — both are the same repo).
+ * The two processes find the same file by process ancestry: the server owns a
+ * per-pid mailbox (`agent-<pid>.jsonl`) and advertises its ancestor pid chain
+ * in a sibling meta file; the hook, a descendant of the same client process,
+ * picks the mailbox whose chain shares its closest ancestor (see the session
+ * mailboxes section below). The older cwd-keyed file (inboxFilePath) survives
+ * only as the legacy drain path for messages written by pre-mailbox servers.
  *
  * Everything here is FAIL-OPEN: a disk error never throws into the heartbeat or
  * the hook. Worst case a single announcement is missed, exactly like the rest of
@@ -24,8 +25,11 @@ import {
   appendFileSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
+  statSync,
+  writeFileSync,
   existsSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -51,19 +55,227 @@ export function defaultInboxDir(): string {
 }
 
 /**
+ * The per-working-directory rendezvous key of the LEGACY inbox file: resolved,
+ * case-folded (Windows) cwd, hashed.
+ */
+function cwdHash(cwd: string): string {
+  let normalized = resolve(cwd);
+  if (process.platform === "win32") normalized = normalized.toLowerCase();
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+}
+
+/**
  * Deterministic per-working-directory inbox file under `dir`. Both the MCP
  * server and the hook compute this from the same cwd, so they agree without any
  * shared handshake. Windows paths are case-folded so trivially-different
  * spellings of the same dir converge.
  */
 export function inboxFilePath(dir: string, cwd: string): string {
+  return join(dir, `${cwdHash(cwd)}.jsonl`);
+}
+
+// ---------------------------------------------------------------------------
+// Session mailboxes — per-client-process pairing
+// ---------------------------------------------------------------------------
+// The cwd-keyed inbox file above has two structural flaws: two agents launched
+// in the SAME directory share one file (the first hook to drain STEALS the
+// other agent's messages), and an agent that changes directory mid-session
+// (worktrees) strands its messages under the launch cwd. Session mailboxes fix
+// both: each server owns `agent-<pid>.jsonl` plus a meta file advertising its
+// ancestor pid chain (see processTree.ts) and launch cwd, refreshed every
+// heartbeat (mtime = liveness). The hook pairs itself to the right mailbox by
+// ancestry: the server and the hook both descend from the same client process
+// (Claude/Codex/Cursor/Pi), so the mailbox whose chain shares the pid CLOSEST
+// to the hook in the hook's own chain belongs to the hook's session — unique
+// per session regardless of directory. The cwd-keyed file remains only as the
+// legacy drain path for servers older than this scheme.
+
+/** How long a mailbox may sit un-refreshed before the scan deletes it. */
+export const MAILBOX_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** How recent a meta's mtime must be for its server to count as live. Generous
+ * on purpose: it only ever gates mailboxes that ALREADY matched this session's
+ * client process, so a too-wide window admits our own leftovers, never a
+ * foreign session's. */
+export const MAILBOX_FRESH_MS = 15 * 60 * 1000;
+
+/** One server's announcement mailbox. */
+export function sessionMailboxPath(dir: string, serverPid: number): string {
+  return join(dir, `agent-${serverPid}.jsonl`);
+}
+
+/** The advertisement that makes a mailbox discoverable by its session's hook. */
+export function sessionMetaPath(dir: string, serverPid: number): string {
+  return join(dir, `agent-${serverPid}.json`);
+}
+
+export interface MailboxMeta {
+  /** The server's launch cwd (tie-breaker of last resort — see selection). */
+  cwd: string;
+  /** [server pid, parent, grandparent, ...] — see processTree.ts. */
+  chain: number[];
+}
+
+/** Resolved and (on Windows) case-folded, so different spellings converge. */
+function normalizeCwd(cwd: string): string {
   let normalized = resolve(cwd);
   if (process.platform === "win32") normalized = normalized.toLowerCase();
-  const hash = createHash("sha256")
-    .update(normalized)
-    .digest("hex")
-    .slice(0, 16);
-  return join(dir, `${hash}.jsonl`);
+  return normalized;
+}
+
+/**
+ * Write (or heartbeat-refresh) a mailbox meta. A full atomic rewrite each time:
+ * the payload is ~200 bytes and rewriting doubles as the mtime bump that keeps
+ * the mailbox live. Fail-open.
+ */
+export function writeMailboxMeta(
+  dir: string,
+  serverPid: number,
+  meta: MailboxMeta,
+): void {
+  try {
+    mkdirSync(dir, { recursive: true });
+    const dest = sessionMetaPath(dir, serverPid);
+    const tmp = `${dest}.tmp`;
+    writeFileSync(
+      tmp,
+      JSON.stringify({ v: 1, cwd: normalizeCwd(meta.cwd), chain: meta.chain }),
+    );
+    renameSync(tmp, dest);
+  } catch {
+    // Fail-open: an unadvertised mailbox just means no hook delivery for this
+    // session — the tool-call path still drains it.
+  }
+}
+
+/** Withdraw the advertisement (shutdown/unlink). Fail-open, idempotent. The
+ * mailbox file itself is left for the TTL sweep: it may still hold acked
+ * messages a late hook of this same session can rescue. */
+export function removeMailboxMeta(dir: string, serverPid: number): void {
+  try {
+    rmSync(sessionMetaPath(dir, serverPid), { force: true });
+  } catch {
+    /* fail-open */
+  }
+}
+
+/**
+ * Whether ANY live mailbox is advertised in `dir` — the cheap pre-check that
+ * lets the hook skip expensive chain discovery on machines with no new-format
+ * server at all. Fail-open to false.
+ */
+export function hasFreshSessionMeta(
+  dir: string,
+  staleMs: number = MAILBOX_FRESH_MS,
+  nowMs: number = Date.now(),
+): boolean {
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!/^agent-\d+\.json$/.test(name)) continue;
+      try {
+        if (nowMs - statSync(join(dir, name)).mtimeMs <= staleMs) return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The mailboxes a hook with ancestor chain `hookChain` (see processTree.ts)
+ * may drain. Selection, over metas fresh within `staleMs`:
+ *
+ *  1. Score each meta (i, j): i = the first index in hookChain whose pid
+ *     appears in the meta's chain (the closest shared ancestor — for the
+ *     session's own mailbox that is the client process itself; for any other
+ *     session it is something higher, like the terminal), j = that pid's depth
+ *     in the meta's chain (a nested agent's server reaches our client only
+ *     through its own nested client, so larger j = more distant relation).
+ *  2. Guard deep matches. The hook chain is truncated to three entries (self,
+ *     parent, grandparent) — the client can sit no deeper (direct spawn or one
+ *     shell hop). A match at index 2 is the client for Claude-under-bash, but
+ *     for a direct-spawn hook whose own session has NO mailbox it can be a
+ *     shared terminal — i.e. some OTHER session's mailbox — so an i=2 match
+ *     must corroborate: same cwd AND the pid low (j ≤ 2) in the server's chain
+ *     (a real client is just past the server and its npx shim; a terminal sits
+ *     deeper).
+ *  3. Keep the lexicographic-minimum scorers. They all matched the SAME pid,
+ *     so more than one means several server generations of one session
+ *     (crash + respawn) — drain them all…
+ *  4. …unless their cwds differ, which only happens when one client process
+ *     hosts several workspaces (Cursor's shared main process): then keep the
+ *     metas matching the hook's cwd, and select nothing on no match.
+ *
+ * Metas past {@link MAILBOX_TTL_MS} are deleted (with their mailboxes) during
+ * the scan. Fail-open: any error yields [] and the tool-call path delivers.
+ */
+export function selectSessionMailboxes(
+  dir: string,
+  hookChain: number[],
+  hookCwd: string | null,
+  staleMs: number = MAILBOX_FRESH_MS,
+  nowMs: number = Date.now(),
+): string[] {
+  try {
+    const chain = hookChain.slice(0, 3);
+    const wantedCwd = hookCwd === null ? null : normalizeCwd(hookCwd);
+    const candidates: Array<{ pid: number; i: number; j: number; cwd: string }> =
+      [];
+    for (const name of readdirSync(dir)) {
+      const m = /^agent-(\d+)\.json$/.exec(name);
+      if (!m) continue;
+      const serverPid = Number(m[1]);
+      const metaFile = join(dir, name);
+      let mtimeMs: number;
+      try {
+        mtimeMs = statSync(metaFile).mtimeMs;
+      } catch {
+        continue; // raced with a concurrent remove
+      }
+      if (nowMs - mtimeMs > MAILBOX_TTL_MS) {
+        try {
+          rmSync(metaFile, { force: true });
+          rmSync(sessionMailboxPath(dir, serverPid), { force: true });
+          rmSync(`${sessionMailboxPath(dir, serverPid)}.draining`, {
+            force: true,
+          });
+        } catch {
+          /* fail-open */
+        }
+        continue;
+      }
+      if (nowMs - mtimeMs > staleMs) continue;
+      let meta: MailboxMeta;
+      try {
+        meta = JSON.parse(readFileSync(metaFile, "utf8")) as MailboxMeta;
+      } catch {
+        continue; // malformed — skip, the TTL sweep will reap it
+      }
+      if (!Array.isArray(meta.chain) || typeof meta.cwd !== "string") continue;
+      const i = chain.findIndex((pid) => meta.chain.includes(pid));
+      if (i === -1) continue;
+      const j = meta.chain.indexOf(chain[i]!);
+      if (i >= 2 && (j > 2 || wantedCwd === null || meta.cwd !== wantedCwd))
+        continue;
+      candidates.push({ pid: serverPid, i, j, cwd: meta.cwd });
+    }
+    if (candidates.length === 0) return [];
+
+    const best = candidates.reduce((a, b) =>
+      b.i < a.i || (b.i === a.i && b.j < a.j) ? b : a,
+    );
+    let winners = candidates.filter((c) => c.i === best.i && c.j === best.j);
+    if (winners.length > 1 && new Set(winners.map((w) => w.cwd)).size > 1) {
+      if (wantedCwd === null) return [];
+      winners = winners.filter((w) => w.cwd === wantedCwd);
+    }
+    return winners.map((w) => sessionMailboxPath(dir, w.pid));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -165,10 +377,35 @@ export function indentContinuation(text: string): string {
 }
 
 /**
+ * Human-readable "Nm/Nh/Nd ago" since an ISO timestamp. Best-effort; on a
+ * bad/empty timestamp returns "recently" rather than throwing.
+ *
+ * Lives here (the leaf module every delivery path imports) because EVERY
+ * announcement render must carry its age: delivery lags the send — a fresh
+ * session replays its whole undelivered backlog — so an unstamped message
+ * reads as current coordination state when it may be days stale.
+ */
+export function relativeAge(iso: string): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "recently";
+  const ms = Date.now() - then;
+  if (ms < 0) return "just now";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
  * Render drained announcements into a context block for the hook to inject.
  * Returns "" for an empty list so callers can guard cheaply. Mirrors the
  * tool-path "Messages for you" formatting, with a header that flags it as an
- * out-of-band Shepherd delivery.
+ * out-of-band Shepherd delivery. Deliberately NOT "new announcements": a
+ * fresh session drains messages sent while nobody was listening, and each
+ * line's age stamp is what tells the reader how much to trust it.
  */
 export function formatInboxAnnouncements(
   announcements: AnnouncementT[],
@@ -176,7 +413,7 @@ export function formatInboxAnnouncements(
   if (!announcements || announcements.length === 0) return "";
   const count = announcements.length;
   const lines = [
-    `[Shepherd] ${count} new announcement${count === 1 ? "" : "s"} from your teammates:`,
+    `[Shepherd] ${count} announcement${count === 1 ? "" : "s"} from your teammates:`,
   ];
   for (const a of announcements) {
     // Names are teammate-controlled free-text too (see oneLine's note); collapse
@@ -185,7 +422,7 @@ export function formatInboxAnnouncements(
       ? ` → ${oneLine(a.targetAgentName)}`
       : " (broadcast)";
     lines.push(
-      `  [${oneLine(a.fromAgentName)}${target}] ${indentContinuation(a.body)}`,
+      `  [${oneLine(a.fromAgentName)}${target}, ${relativeAge(a.createdAt)}] ${indentContinuation(a.body)}`,
     );
   }
   lines.push(REPLY_ROUTING_HINT);
@@ -231,9 +468,44 @@ interface HookInput {
  * `resolve()` (in {@link inboxFilePath}) lands on the same native path the MCP
  * server's `process.cwd()` produces. Non-Windows roots pass through untouched.
  */
-function nativeWorkspacePath(root: string): string {
+export function nativeWorkspacePath(root: string): string {
   const win = /^\/([A-Za-z]:[/\\].*)$/.exec(root);
   return win ? win[1]! : root;
+}
+
+/**
+ * The fields the hook bin needs BEFORE calling {@link buildHookOutput}: the
+ * session id (pairing-cache key) and the effective cwd (selection tie-breaker),
+ * resolved with the same Cursor fallback buildHookOutput itself applies.
+ * Returns nulls on malformed input (fail-open).
+ */
+export function parseHookPairingInput(rawStdin: string): {
+  sessionId: string | undefined;
+  cwd: string | null;
+} {
+  try {
+    const input = JSON.parse(rawStdin.replace(/^\uFEFF/, "")) as {
+      session_id?: unknown;
+      cwd?: unknown;
+      workspace_roots?: unknown;
+    };
+    const sessionId =
+      typeof input.session_id === "string" && input.session_id.length > 0
+        ? input.session_id
+        : undefined;
+    const firstRoot = Array.isArray(input.workspace_roots)
+      ? input.workspace_roots[0]
+      : undefined;
+    const cwd =
+      typeof input.cwd === "string" && input.cwd.length > 0
+        ? input.cwd
+        : typeof firstRoot === "string" && firstRoot.length > 0
+          ? nativeWorkspacePath(firstRoot)
+          : null;
+    return { sessionId, cwd };
+  } catch {
+    return { sessionId: undefined, cwd: null };
+  }
 }
 
 /**
@@ -252,12 +524,17 @@ function nativeWorkspacePath(root: string): string {
  * inbox dir skips the drain but still allows the nudge. `hookEventName` is
  * echoed from the input so one script works on whichever event (PreToolUse,
  * SessionStart, UserPromptSubmit, …) the user wires it to.
+ *
+ * `sessionMailboxes` — this session's own mailboxes as resolved by the pairing
+ * layer (hookPairing.ts) — are drained alongside the legacy cwd-keyed file;
+ * the legacy drain survives only for servers older than session mailboxes.
  */
 export function buildHookOutput(
   rawStdin: string,
   inboxDir: string | undefined,
   drain: (file: string) => AnnouncementT[] = drainInbox,
   nudge: (cwd: string, toolName?: string) => string = buildLinkNudge,
+  sessionMailboxes: string[] = [],
 ): string {
   let input: HookInput;
   try {
@@ -296,7 +573,11 @@ export function buildHookOutput(
   if (nudgeText) parts.push(nudgeText);
 
   if (inboxDir) {
-    const text = formatInboxAnnouncements(drain(inboxFilePath(inboxDir, cwd)));
+    const drained = mergeAnnouncements(
+      ...sessionMailboxes.map((box) => drain(box)),
+      drain(inboxFilePath(inboxDir, cwd)),
+    );
+    const text = formatInboxAnnouncements(drained);
     if (text) parts.push(text);
   }
 
