@@ -5,6 +5,7 @@ import {
   writeFileSync,
   existsSync,
   readFileSync,
+  utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +18,11 @@ import {
   defaultInboxDir,
   mergeAnnouncements,
   REPLY_ROUTING_HINT,
+  presenceFilePath,
+  refreshPresence,
+  removePresence,
+  hasOtherLivePresence,
+  PRESENCE_TTL_MS,
 } from "../src/inbox.js";
 import type { AnnouncementT } from "@shepherd/shared";
 
@@ -399,5 +405,82 @@ describe("formatInboxAnnouncements", () => {
     const text = formatInboxAnnouncements([ann(1, "a"), ann(2, "b")]);
     expect(text).toContain("[Shepherd] 2 announcements from your teammates:");
     expect(text).not.toContain("new announcement");
+  });
+});
+
+describe("server presence (shared-directory contention)", () => {
+  const CWD = "C:\\repos\\projectA";
+  const OTHER_CWD = "C:\\repos\\projectB";
+  const STALE_MS = 90_000;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "shepherd-presence-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("keys the presence file by the same cwd hash as the inbox file", () => {
+    const inbox = inboxFilePath(dir, CWD);
+    const presence = presenceFilePath(dir, CWD, 1234);
+    const hash = /([0-9a-f]{16})\.jsonl$/.exec(inbox)![1];
+    expect(presence).toBe(join(dir, `${hash}.presence-1234`));
+  });
+
+  it("sees another live server in the same directory", () => {
+    refreshPresence(presenceFilePath(dir, CWD, 111));
+    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(true);
+  });
+
+  it("never counts its own presence file", () => {
+    refreshPresence(presenceFilePath(dir, CWD, 111));
+    expect(hasOtherLivePresence(dir, CWD, 111, STALE_MS)).toBe(false);
+  });
+
+  it("ignores a stale presence file (dead server)", () => {
+    const other = presenceFilePath(dir, CWD, 111);
+    refreshPresence(other);
+    const past = new Date(Date.now() - STALE_MS - 60_000);
+    utimesSync(other, past, past);
+    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(false);
+  });
+
+  it("ignores live servers in OTHER directories", () => {
+    refreshPresence(presenceFilePath(dir, OTHER_CWD, 111));
+    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(false);
+  });
+
+  it("fails open to 'not contended' when the inbox dir does not exist", () => {
+    expect(
+      hasOtherLivePresence(join(dir, "missing"), CWD, 222, STALE_MS),
+    ).toBe(false);
+  });
+
+  it("refresh bumps the mtime so a live server never goes stale", () => {
+    const other = presenceFilePath(dir, CWD, 111);
+    refreshPresence(other);
+    const past = new Date(Date.now() - STALE_MS - 60_000);
+    utimesSync(other, past, past);
+    refreshPresence(other);
+    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(true);
+  });
+
+  it("removePresence withdraws the mark and is a no-op on a missing file", () => {
+    const file = presenceFilePath(dir, CWD, 111);
+    refreshPresence(file);
+    removePresence(file);
+    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(false);
+    expect(() => removePresence(file)).not.toThrow();
+  });
+
+  it("prunes long-dead presence files during the scan", () => {
+    const dead = presenceFilePath(dir, CWD, 111);
+    refreshPresence(dead);
+    const ancient = new Date(Date.now() - PRESENCE_TTL_MS - 60_000);
+    utimesSync(dead, ancient, ancient);
+    hasOtherLivePresence(dir, CWD, 222, STALE_MS);
+    expect(existsSync(dead)).toBe(false);
   });
 });

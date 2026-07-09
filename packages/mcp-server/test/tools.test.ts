@@ -1770,6 +1770,38 @@ describe("registerTools", () => {
       }
     });
 
+    it("hot link of the SAME workspace reuses the live session — no second /join", async () => {
+      // Re-joining mints a brand-new agent identity (the hub hands out the
+      // lowest free ordinal, possibly a RECYCLED teammate name) and abandons
+      // the current session — so a same-workspace re-link (e.g. linking a
+      // second worktree of one repo) must keep the session it already has.
+      const cwd = mkdtempSync(join(tmpdir(), "shepherd-relink-"));
+      writeFileSync(join(cwd, ".git"), "gitdir: x\n", "utf8");
+      const mockPost = vi.fn().mockResolvedValueOnce(DEFAULT_JOIN);
+      const hubClient: HubClient = { post: mockPost, get: vi.fn() };
+      const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };
+      const { server, tools } = makeFakeServer();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { ready } = registerTools(server as any, {
+        hubClient,
+        config: fakeConfig,
+        context: fakeContext,
+        heartbeat,
+        cwd,
+      });
+      await ready;
+      const joins = () =>
+        mockPost.mock.calls.filter(([path]) => path === "/join");
+      expect(joins()).toHaveLength(1);
+      expect(heartbeat.start).toHaveBeenCalledTimes(1);
+
+      const result = await tools["link"].handler({ workspace: "acme" });
+
+      expect(joins()).toHaveLength(1); // still only the startup join
+      expect(heartbeat.start).toHaveBeenCalledTimes(1); // no session churn
+      expect(result.content[0].text).toContain("coordinating in `acme`");
+    });
+
     it("never surfaces the cached sessionId in any tool result text", async () => {
       const secret = "00000000-0000-0000-0000-00000000dead";
       const { mockPost, tools, ready } = setup({

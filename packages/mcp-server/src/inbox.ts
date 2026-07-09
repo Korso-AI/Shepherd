@@ -10,9 +10,12 @@
  *
  * The two processes find the same file via inboxFilePath(dir, cwd): both the MCP
  * server (process.cwd()) and the hook (the cwd Claude Code passes it) key off
- * the working directory, so a per-session file needs no shared id. This is the
- * common one-session-per-working-dir case; two Claude sessions in the SAME dir
- * would share one inbox (a documented, benign edge — both are the same repo).
+ * the working directory, so a per-session file needs no shared id. That works
+ * because of a one-session-per-working-dir assumption — two agents in the SAME
+ * dir would share one inbox and the first hook to drain would STEAL the other
+ * agent's messages. The presence marks below detect that contention, and a
+ * contended server stops feeding this file (heartbeat skips delivery; the
+ * hub-pending announcements reach the agent via its own tool calls instead).
  *
  * Everything here is FAIL-OPEN: a disk error never throws into the heartbeat or
  * the hook. Worst case a single announcement is missed, exactly like the rest of
@@ -24,8 +27,11 @@ import {
   appendFileSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
+  statSync,
+  writeFileSync,
   existsSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -51,19 +57,111 @@ export function defaultInboxDir(): string {
 }
 
 /**
+ * The per-working-directory rendezvous key: resolved, case-folded (Windows)
+ * cwd, hashed. Shared by the inbox file and the presence files so everything
+ * about one directory clusters under one prefix.
+ */
+function cwdHash(cwd: string): string {
+  let normalized = resolve(cwd);
+  if (process.platform === "win32") normalized = normalized.toLowerCase();
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
+}
+
+/**
  * Deterministic per-working-directory inbox file under `dir`. Both the MCP
  * server and the hook compute this from the same cwd, so they agree without any
  * shared handshake. Windows paths are case-folded so trivially-different
  * spellings of the same dir converge.
  */
 export function inboxFilePath(dir: string, cwd: string): string {
-  let normalized = resolve(cwd);
-  if (process.platform === "win32") normalized = normalized.toLowerCase();
-  const hash = createHash("sha256")
-    .update(normalized)
-    .digest("hex")
-    .slice(0, 16);
-  return join(dir, `${hash}.jsonl`);
+  return join(dir, `${cwdHash(cwd)}.jsonl`);
+}
+
+// ---------------------------------------------------------------------------
+// Server presence — shared-directory contention detection
+// ---------------------------------------------------------------------------
+// Two MCP servers launched in the SAME working directory share one inbox file,
+// and the hook's drain CONSUMES it — so whichever client session acts first
+// would steal the other agent's announcements, directed ones included. Each
+// server therefore marks itself live in the directory with a presence file
+// (refreshed every heartbeat); when a server sees ANOTHER live mark, it skips
+// heartbeat (passive) delivery entirely and announcements stay pending at the
+// hub until this session's own tool calls fetch them — a path where the server
+// knows exactly which session it is. All fail-open: a broken presence check
+// degrades to today's behavior, never to disabled delivery.
+
+/** How long a presence file may exist before the scan garbage-collects it. */
+export const PRESENCE_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** The presence mark for one server process in one working directory. */
+export function presenceFilePath(
+  dir: string,
+  cwd: string,
+  pid: number,
+): string {
+  return join(dir, `${cwdHash(cwd)}.presence-${pid}`);
+}
+
+/** Create or mtime-bump the presence mark. Fail-open. */
+export function refreshPresence(filePath: string): void {
+  try {
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, "");
+  } catch {
+    // Fail-open: an unwritable mark means siblings can't see us — no worse
+    // than the pre-presence behavior.
+  }
+}
+
+/** Withdraw the presence mark (shutdown/unlink). Fail-open, idempotent. */
+export function removePresence(filePath: string): void {
+  try {
+    rmSync(filePath, { force: true });
+  } catch {
+    /* fail-open */
+  }
+}
+
+/**
+ * Whether ANOTHER server process is live in `cwd` (a presence file for a
+ * different pid with an mtime within `staleMs`). Long-dead marks past
+ * {@link PRESENCE_TTL_MS} are garbage-collected during the scan. Fail-open:
+ * any error reads as "not contended" so delivery is never wrongly disabled.
+ */
+export function hasOtherLivePresence(
+  dir: string,
+  cwd: string,
+  ownPid: number,
+  staleMs: number,
+  nowMs: number = Date.now(),
+): boolean {
+  try {
+    const prefix = `${cwdHash(cwd)}.presence-`;
+    const own = `${prefix}${ownPid}`;
+    let contended = false;
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(prefix) || name === own) continue;
+      const full = join(dir, name);
+      let mtimeMs: number;
+      try {
+        mtimeMs = statSync(full).mtimeMs;
+      } catch {
+        continue; // raced with a concurrent remove
+      }
+      if (nowMs - mtimeMs > PRESENCE_TTL_MS) {
+        try {
+          rmSync(full, { force: true });
+        } catch {
+          /* fail-open */
+        }
+        continue;
+      }
+      if (nowMs - mtimeMs <= staleMs) contended = true;
+    }
+    return contended;
+  } catch {
+    return false;
+  }
 }
 
 /**

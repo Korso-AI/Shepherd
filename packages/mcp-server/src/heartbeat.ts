@@ -21,11 +21,27 @@ export interface Heartbeat {
   stop(): void;
 }
 
+/**
+ * This server's liveness mark in its working directory (see inbox.ts's server
+ * presence section). All three callbacks must be cheap; refresh/contended run
+ * once per beat. Errors are caught here — a broken presence check fails open
+ * to delivering (the pre-presence behavior), never to disabled delivery.
+ */
+export interface ServerPresence {
+  /** Create or mtime-bump this server's presence mark. */
+  refresh(): void;
+  /** Whether ANOTHER live server shares this working directory. */
+  contended(): boolean;
+  /** Withdraw the presence mark (called from stop()). */
+  remove(): void;
+}
+
 export function createHeartbeat({
   hubClient,
   intervalSeconds,
   buildReport,
   announcementSink,
+  presence,
 }: {
   hubClient: HubClient;
   intervalSeconds: number;
@@ -49,6 +65,16 @@ export function createHeartbeat({
    * therefore throw to signal a failed write; that is caught here.
    */
   announcementSink?: (announcements: AnnouncementT[]) => void;
+  /**
+   * Shared-directory contention guard. When present, every beat refreshes this
+   * server's presence mark and asks whether another live server shares the
+   * working directory; if one does, the beat is presence-only (no
+   * deliverAnnouncements), so the shared inbox file gets no new content and the
+   * hub-pending announcements reach this session via its own tool calls — the
+   * path where the server knows exactly which session it is. Omitted → the
+   * pre-presence single-session behavior.
+   */
+  presence?: ServerPresence;
 }): Heartbeat {
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -56,6 +82,13 @@ export function createHeartbeat({
     if (timer !== null) {
       clearInterval(timer);
       timer = null;
+      if (presence) {
+        try {
+          presence.remove();
+        } catch {
+          /* fail-open */
+        }
+      }
     }
   }
 
@@ -72,9 +105,27 @@ export function createHeartbeat({
     }
     const body: Record<string, unknown> = { sessionId };
     if (changeReport) body.changeReport = changeReport;
-    // Delivery is gated on having a sink: presence implies request. No sink ⇒
-    // never ask the hub to hand over announcements.
-    if (announcementSink) body.deliverAnnouncements = true;
+    // Delivery is gated on having a sink (a sink implies request — no sink ⇒
+    // never ask the hub to hand over announcements) AND on the working
+    // directory being uncontended: with a sibling server in the same dir, the
+    // shared inbox file would let one client's hook steal the other agent's
+    // messages, so a contended beat is presence-only and the hub keeps the
+    // announcements pending for this session's own tool calls. A throwing
+    // presence check fails open to delivering.
+    let contended = false;
+    if (presence) {
+      try {
+        presence.refresh();
+      } catch {
+        /* fail-open */
+      }
+      try {
+        contended = presence.contended();
+      } catch {
+        contended = false;
+      }
+    }
+    if (announcementSink && !contended) body.deliverAnnouncements = true;
 
     // Validate the response against the shared contract before trusting it — a
     // compromised/MITM hub could otherwise flow oversized/newline-laden
@@ -120,6 +171,16 @@ export function createHeartbeat({
   function start(sessionId: string): void {
     // Restart cleanly if a previous timer is still running.
     stop();
+
+    // Mark this server live immediately — a sibling starting in the same dir
+    // must be able to see us before our first beat fires.
+    if (presence) {
+      try {
+        presence.refresh();
+      } catch {
+        /* fail-open */
+      }
+    }
 
     timer = setInterval(() => {
       // The callback must never throw and never return a rejected promise that

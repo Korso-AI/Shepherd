@@ -12,6 +12,10 @@ import {
   inboxFilePath,
   appendAnnouncements,
   defaultInboxDir,
+  presenceFilePath,
+  refreshPresence,
+  removePresence,
+  hasOtherLivePresence,
 } from "./inbox.js";
 import { autoInstallHooks } from "./hookInstall.js";
 import { PACKAGE_VERSION } from "./version.js";
@@ -34,6 +38,25 @@ async function main(): Promise<void> {
   const inboxDir = config.SHEPHERD_INBOX_DIR ?? defaultInboxDir();
   const inboxFile = inboxFilePath(inboxDir, process.cwd());
 
+  // Shared-directory contention guard (see inbox.ts's server presence
+  // section): a sibling server in this same working dir means the shared inbox
+  // file would let one client's hook steal the other agent's announcements, so
+  // a contended heartbeat skips passive delivery. A mark is considered live
+  // within 3 heartbeat intervals, tolerating a missed beat either side.
+  const presenceFile = presenceFilePath(inboxDir, process.cwd(), process.pid);
+  const presenceStaleMs = config.HEARTBEAT_INTERVAL_SECONDS * 3 * 1000;
+  const presence = {
+    refresh: () => refreshPresence(presenceFile),
+    contended: () =>
+      hasOtherLivePresence(
+        inboxDir,
+        process.cwd(),
+        process.pid,
+        presenceStaleMs,
+      ),
+    remove: () => removePresence(presenceFile),
+  };
+
   const heartbeat = createHeartbeat({
     hubClient,
     intervalSeconds: config.HEARTBEAT_INTERVAL_SECONDS,
@@ -51,6 +74,7 @@ async function main(): Promise<void> {
     // ack the hub. appendAnnouncements is itself fail-open.
     announcementSink: (announcements) =>
       appendAnnouncements(inboxFile, announcements),
+    presence,
   });
   // Instructions are keyed on the repo's first-run state (linked / declined /
   // never-asked), so a declined repo costs one quiet paragraph instead of the

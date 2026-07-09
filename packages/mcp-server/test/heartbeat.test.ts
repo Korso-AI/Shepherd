@@ -342,6 +342,119 @@ describe("createHeartbeat", () => {
     }).not.toThrow();
   });
 
+  // ---- presence gating (shared-directory contention) -----------------------
+  function makePresence(contended: boolean) {
+    return {
+      refresh: vi.fn(),
+      contended: vi.fn(() => contended),
+      remove: vi.fn(),
+    };
+  }
+
+  it("refreshes presence on start and again on every beat", async () => {
+    const hubClient = makeHubClient();
+    const presence = makePresence(false);
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      presence,
+    });
+
+    heartbeat.start(SESSION_ID);
+    expect(presence.refresh).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
+    expect(presence.refresh).toHaveBeenCalledTimes(2);
+    heartbeat.stop();
+  });
+
+  it("omits deliverAnnouncements when another server shares the directory (contended)", async () => {
+    const hubClient = makeHubClient();
+    const presence = makePresence(true);
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      presence,
+    });
+
+    heartbeat.start(SESSION_ID);
+    await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
+
+    // Presence-only beat: announcements stay pending at the hub and reach this
+    // session via its own tool calls, where the server knows its identity.
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+    });
+    heartbeat.stop();
+  });
+
+  it("keeps delivering when the directory is NOT contended", async () => {
+    const hubClient = makeHubClient();
+    const presence = makePresence(false);
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      presence,
+    });
+
+    heartbeat.start(SESSION_ID);
+    await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
+
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+      deliverAnnouncements: true,
+    });
+    heartbeat.stop();
+  });
+
+  it("fails open to delivery when presence callbacks throw", async () => {
+    const hubClient = makeHubClient();
+    const presence = {
+      refresh: vi.fn(() => {
+        throw new Error("disk");
+      }),
+      contended: vi.fn(() => {
+        throw new Error("disk");
+      }),
+      remove: vi.fn(),
+    };
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      presence,
+    });
+
+    heartbeat.start(SESSION_ID);
+    await expect(
+      vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000),
+    ).resolves.not.toThrow();
+
+    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
+      sessionId: SESSION_ID,
+      deliverAnnouncements: true,
+    });
+    heartbeat.stop();
+  });
+
+  it("stop() withdraws the presence mark", () => {
+    const hubClient = makeHubClient();
+    const presence = makePresence(false);
+    const heartbeat = createHeartbeat({
+      hubClient,
+      intervalSeconds: INTERVAL_SECONDS,
+      announcementSink: vi.fn(),
+      presence,
+    });
+
+    heartbeat.start(SESSION_ID);
+    heartbeat.stop();
+    expect(presence.remove).toHaveBeenCalled();
+  });
+
   it("calls .unref() on the timer so it never keeps the process alive", () => {
     const hubClient = makeHubClient();
     const unref = vi.fn();

@@ -419,6 +419,10 @@ export function registerTools(
   // so it knows how to address itself / be addressed, without a `join` tool.
   let sessionId: string | null = null;
   let agentName: string | null = null;
+  // The workspace slug the LIVE session was joined under; null while dormant.
+  // Lets activate() recognize a same-workspace re-activation (hot re-link) and
+  // keep the session instead of minting a new identity.
+  let activeWorkspaceSlug: string | null = null;
 
   // ---- repo opt-in gating (design D8 / §5.1) --------------------------------
   // A repo participates ONLY when it carries a committed `.shepherd` marker
@@ -545,6 +549,16 @@ export function registerTools(
    * @param workspaceSlug - the marker's workspace slug to join under.
    */
   async function activate(workspaceSlug: string): Promise<ActivateResult> {
+    // A live session in this same workspace is REUSED, never re-joined: every
+    // /join mints a fresh agent identity (the hub hands out the lowest free
+    // ordinal — possibly a RECYCLED former teammate's name), so re-joining on a
+    // hot re-link would silently rename this agent mid-conversation and abandon
+    // its old session — teammates would see a ghost agent and announcements
+    // attributed to the wrong name.
+    if (sessionId !== null && activeWorkspaceSlug === workspaceSlug) {
+      return { ok: true };
+    }
+
     // Build the join body from the RESOLVED context (env → git → fallback), not
     // raw config, with the caller's slug. `model` is omitted entirely when unset
     // rather than sent as undefined, so the wire body stays clean for hubs that
@@ -589,6 +603,7 @@ export function registerTools(
         // the heartbeat started cleanly.
         sessionId = newSessionId;
         agentName = parsed.data.agentName;
+        activeWorkspaceSlug = workspaceSlug;
         linked = true;
         hostedWorkspaceRejected = false;
         joinFailure = null;
@@ -1158,6 +1173,7 @@ export function registerTools(
         await leave();
         sessionId = null;
         agentName = null;
+        activeWorkspaceSlug = null;
       }
       return advisory(
         "Unlinked — this repo will stay uncoordinated and won't ask again. Run `link` to re-enable.",
