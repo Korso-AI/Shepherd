@@ -1,6 +1,6 @@
 {
   "name": "@korso/shepherd-ui",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "Auth-agnostic React UI library for the Shepherd wallboard (Dashboard, client, provider). Host injects auth; the library never reads tokens.",
   "type": "module",
   "license": "AGPL-3.0-only",
