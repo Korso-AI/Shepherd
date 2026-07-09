@@ -20,7 +20,14 @@
 
 import type { EntitlementLimitsT } from "@shepherd/shared";
 import type { Config } from "./config.js";
-import type { WorkspaceEntitlementsRow } from "./repo.js";
+import type { TenantContext } from "./tenant.js";
+import { LimitExceededError } from "./errors.js";
+import {
+  countMembers,
+  getWorkspaceEntitlements,
+  type Queryable,
+  type WorkspaceEntitlementsRow,
+} from "./repo.js";
 
 /**
  * Whether this deployment enforces entitlements at all. Strictly "is
@@ -51,4 +58,63 @@ export function effectiveLimits(
     reposLimit: record.repos_limit,
     retentionDays: record.retention_days,
   };
+}
+
+/**
+ * Both guard no-op conditions in one place: enforcement never configured, or
+ * the caller is the self-host TEAM_TOKEN path (self-host is unlimited by
+ * construction even if the env is set).
+ */
+function guardDisabled(config: Config, tenant: TenantContext): boolean {
+  return !enforcementEnabled(config) || tenant.via === "team";
+}
+
+/**
+ * Serialize this guard's check-then-write against every other caller touching
+ * the same cap dimension of the same workspace. Transaction-scoped advisory
+ * lock, two-key form mirroring work.ts's `(workspaceId, repo)` lock; the
+ * fixed literal second key (`entitlements:seats` / `entitlements:repos`)
+ * keeps these locks disjoint from work.ts's keyspace and from each other.
+ * Released automatically at COMMIT/ROLLBACK.
+ */
+async function lockDimension(
+  tx: Queryable,
+  workspaceId: string,
+  dimension: "entitlements:seats" | "entitlements:repos",
+): Promise<void> {
+  await tx.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+    workspaceId,
+    dimension,
+  ]);
+}
+
+/**
+ * Throw LimitExceededError(402) when the workspace has no seat headroom for
+ * one more member. Call INSIDE the joining transaction, BEFORE any use is
+ * consumed or row written, and pass the transaction client — the advisory
+ * lock is what closes the concurrent-redeem race (two redeems on different
+ * codes both reading the same countMembers and both inserting; the invite-row
+ * lock never serializes across codes).
+ */
+export async function assertSeatAvailable(
+  tx: Queryable,
+  config: Config,
+  tenant: TenantContext,
+  workspaceId: string,
+): Promise<void> {
+  if (guardDisabled(config, tenant)) return;
+  await lockDimension(tx, workspaceId, "entitlements:seats");
+
+  const record = await getWorkspaceEntitlements(tx, workspaceId);
+  const limits = effectiveLimits(
+    record,
+    config.ENTITLEMENTS_DEFAULT_LIMITS!,
+    new Date(),
+  );
+  if (limits.seatsLimit === null) return;
+
+  const used = await countMembers(tx, workspaceId);
+  if (used >= limits.seatsLimit) {
+    throw new LimitExceededError("seats", used, limits.seatsLimit);
+  }
 }
