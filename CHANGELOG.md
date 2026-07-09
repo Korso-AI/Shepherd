@@ -6,6 +6,32 @@ monorepo packages and are not versioned independently on npm.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [@korso/shepherd 0.10.0](https://www.npmjs.com/package/@korso/shepherd/v/0.10.0) — 2026-07-09
+
+### Added
+
+- Per-session announcement mailboxes. The heartbeat's out-of-band delivery
+  now targets a mailbox owned by each MCP server process, and the client hook
+  pairs itself to its session's mailbox by process ancestry — so two agents
+  working in the same directory can no longer consume each other's messages,
+  and an agent that moves into a worktree mid-session no longer strands its
+  inbox under the launch directory. Hook (passive) delivery stays enabled in
+  shared directories.
+
+### Fixed
+
+- Announcement age stamps on every delivery path, and a 48-hour delivery
+  freshness bound, so a replayed backlog can't masquerade as current
+  coordination state.
+- Hub-side: an agent name is not recycled to a new joiner while announcements
+  sent by (or targeted at) it are still within the delivery window, so pending
+  messages can't be attributed to the wrong agent.
+- A hot `link` of the already-active workspace reuses the live session instead
+  of re-joining under a fresh (possibly recycled) identity.
+- On Windows, the auto-installed Claude Code hook command is written with
+  forward slashes (`node "C:/…"`) — hook commands run through a POSIX shell,
+  which ate backslash paths and broke every hook invocation.
+
 ## [@korso/shepherd-ui 0.17.0](https://www.npmjs.com/package/@korso/shepherd-ui/v/0.17.0) — 2026-07-07
 
 ### Fixed
