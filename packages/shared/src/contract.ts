@@ -659,6 +659,26 @@ export const FeedbackResponse = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Workspace entitlements — per-workspace numeric caps
+//
+// A neutral limits primitive: each cap bounds one dimension of a workspace
+// (members, distinct repos, announcement history age). `null` means unlimited
+// for that dimension. A deployment that wants enforcement configures default
+// caps via ENTITLEMENTS_DEFAULT_LIMITS (hub config); a per-workspace record
+// (migration 020) can override them. With no defaults configured the hub
+// enforces nothing.
+// ---------------------------------------------------------------------------
+
+/** A positive integer cap, or null = unlimited for that dimension. */
+const NullableCap = z.number().int().positive().nullable();
+
+export const EntitlementLimits = z.object({
+  seatsLimit: NullableCap,
+  reposLimit: NullableCap,
+  retentionDays: NullableCap,
+});
+
+// ---------------------------------------------------------------------------
 // platformAnalytics() -> ShepherdAnalyticsResponse (GET /admin/analytics)
 //
 // The cross-tenant, read-only product analytics rollup behind the Korso console

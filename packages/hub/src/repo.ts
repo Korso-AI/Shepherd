@@ -31,7 +31,7 @@ import { UnknownSessionError } from "./errors.js";
  * callers inside a transaction can pass `tx` and avoid checking out a SECOND
  * connection — see the pool-exhaustion note in operations/work.ts.
  */
-type Queryable = pg.Pool | pg.PoolClient;
+export type Queryable = pg.Pool | pg.PoolClient;
 
 /**
  * Max pending announcements delivered to a session in a single work/sync call.
@@ -2362,6 +2362,94 @@ export async function pruneChangeRecords(
        AND updated_at < $3::timestamptz - ($4 * interval '1 second')`,
     [workspaceId, repo, now, ttlSeconds],
   );
+}
+
+// ---------------------------------------------------------------------------
+// Workspace entitlements (migration 020)
+//
+// One optional row per workspace holding numeric caps; NULL = unlimited for
+// that dimension, no row = the deployment defaults apply, `expires_at` in the
+// past makes the row inert (a temporary grant self-reverts). The gating rules
+// that interpret these rows live in entitlements.ts (effectiveLimits); this
+// section is pure data access.
+// ---------------------------------------------------------------------------
+
+/** A workspace_entitlements row, as stored. */
+export interface WorkspaceEntitlementsRow {
+  seats_limit: number | null;
+  repos_limit: number | null;
+  retention_days: number | null;
+  expires_at: Date | null;
+  updated_at: Date;
+}
+
+const ENTITLEMENTS_COLUMNS =
+  "seats_limit, repos_limit, retention_days, expires_at, updated_at";
+
+/** The workspace's entitlements row, or null when it has none. */
+export async function getWorkspaceEntitlements(
+  db: Queryable,
+  workspaceId: string,
+): Promise<WorkspaceEntitlementsRow | null> {
+  const { rows } = await db.query<WorkspaceEntitlementsRow>(
+    `SELECT ${ENTITLEMENTS_COLUMNS}
+     FROM   workspace_entitlements
+     WHERE  workspace_id = $1`,
+    [workspaceId],
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Insert or replace the workspace's entitlements row (one row per workspace —
+ * the PK is workspace_id). Every cap is written verbatim, so a null clears a
+ * previously-set cap to unlimited rather than preserving it. Bumps updated_at.
+ */
+export async function upsertWorkspaceEntitlements(
+  db: Queryable,
+  workspaceId: string,
+  limits: {
+    seatsLimit: number | null;
+    reposLimit: number | null;
+    retentionDays: number | null;
+    expiresAt: Date | null;
+  },
+): Promise<WorkspaceEntitlementsRow> {
+  const { rows } = await db.query<WorkspaceEntitlementsRow>(
+    `INSERT INTO workspace_entitlements
+       (workspace_id, seats_limit, repos_limit, retention_days, expires_at)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (workspace_id) DO UPDATE SET
+       seats_limit    = EXCLUDED.seats_limit,
+       repos_limit    = EXCLUDED.repos_limit,
+       retention_days = EXCLUDED.retention_days,
+       expires_at     = EXCLUDED.expires_at,
+       updated_at     = now()
+     RETURNING ${ENTITLEMENTS_COLUMNS}`,
+    [
+      workspaceId,
+      limits.seatsLimit,
+      limits.reposLimit,
+      limits.retentionDays,
+      limits.expiresAt,
+    ],
+  );
+  return rows[0]!;
+}
+
+/**
+ * Delete the workspace's entitlements row, reverting it to the deployment
+ * defaults. Idempotent: returns whether a row was actually deleted.
+ */
+export async function deleteWorkspaceEntitlements(
+  db: Queryable,
+  workspaceId: string,
+): Promise<boolean> {
+  const result = await db.query(
+    `DELETE FROM workspace_entitlements WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+  return (result.rowCount ?? 0) > 0;
 }
 
 // ---------------------------------------------------------------------------

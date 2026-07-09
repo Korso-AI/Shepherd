@@ -1,11 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import pg from "pg";
+import type { EntitlementLimitsT } from "@shepherd/shared";
 import {
   dbAvailable,
   createTestPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
+import { loadConfig } from "../src/config.js";
+import { enforcementEnabled, effectiveLimits } from "../src/entitlements.js";
+import {
+  getWorkspaceEntitlements,
+  upsertWorkspaceEntitlements,
+  deleteWorkspaceEntitlements,
+  type WorkspaceEntitlementsRow,
+} from "../src/repo.js";
 
 /**
  * Seed a workspace with a suite-unique slug and return its uuid. The
@@ -161,5 +170,177 @@ describe.skipIf(!dbAvailable)("workspace_entitlements (migration 020)", () => {
       [workspaceId],
     );
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pure units — no Postgres needed
+// ---------------------------------------------------------------------------
+
+const DEFAULTS: EntitlementLimitsT = {
+  seatsLimit: 4,
+  reposLimit: 5,
+  retentionDays: 30,
+};
+
+const NOW = new Date("2026-07-09T12:00:00.000Z");
+
+/** A live (unexpired) row shape for the pure effectiveLimits cases. */
+function row(
+  overrides: Partial<WorkspaceEntitlementsRow> = {},
+): WorkspaceEntitlementsRow {
+  return {
+    seats_limit: 50,
+    repos_limit: 60,
+    retention_days: 365,
+    expires_at: null,
+    updated_at: NOW,
+    ...overrides,
+  };
+}
+
+describe("effectiveLimits — pure (no Postgres needed)", () => {
+  it("a live record with an expiry in the future wins over the defaults", () => {
+    const future = new Date(NOW.getTime() + 60_000);
+    expect(effectiveLimits(row({ expires_at: future }), DEFAULTS, NOW)).toEqual(
+      {
+        seatsLimit: 50,
+        reposLimit: 60,
+        retentionDays: 365,
+      },
+    );
+  });
+
+  it("an end-less record (expires_at null) wins over the defaults", () => {
+    expect(effectiveLimits(row(), DEFAULTS, NOW)).toEqual({
+      seatsLimit: 50,
+      reposLimit: 60,
+      retentionDays: 365,
+    });
+  });
+
+  it("an EXPIRED record is ignored — the defaults apply", () => {
+    const past = new Date(NOW.getTime() - 60_000);
+    expect(effectiveLimits(row({ expires_at: past }), DEFAULTS, NOW)).toEqual(
+      DEFAULTS,
+    );
+  });
+
+  it("no record at all — the defaults apply", () => {
+    expect(effectiveLimits(null, DEFAULTS, NOW)).toEqual(DEFAULTS);
+  });
+
+  it("a null cap in a live record means unlimited for that dimension", () => {
+    const limits = effectiveLimits(
+      row({ seats_limit: null, retention_days: null }),
+      DEFAULTS,
+      NOW,
+    );
+    expect(limits.seatsLimit).toBeNull();
+    expect(limits.reposLimit).toBe(60);
+    expect(limits.retentionDays).toBeNull();
+  });
+});
+
+describe("enforcementEnabled — pure (no Postgres needed)", () => {
+  const BASE_ENV = {
+    DATABASE_URL: "postgres://localhost/test",
+    TEAM_TOKEN: "tok-abc",
+    ALLOWED_WORKSPACE: "acme",
+  };
+
+  it("is true exactly when ENTITLEMENTS_DEFAULT_LIMITS is set", () => {
+    const on = loadConfig({
+      ...BASE_ENV,
+      ENTITLEMENTS_DEFAULT_LIMITS:
+        '{"seatsLimit":4,"reposLimit":5,"retentionDays":30}',
+    });
+    expect(enforcementEnabled(on)).toBe(true);
+  });
+
+  it("is false when the env var is unset (every check no-ops)", () => {
+    expect(enforcementEnabled(loadConfig(BASE_ENV))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Repo helpers — DB-gated
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
+
+  afterEach(async () => {
+    await truncateAll(pool);
+    await pool.query(`DELETE FROM workspaces WHERE slug LIKE 'ent-%'`);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("getWorkspaceEntitlements returns null when no row exists", async () => {
+    const workspaceId = await seedWorkspace(pool, "ent-helper-none");
+    expect(await getWorkspaceEntitlements(pool, workspaceId)).toBeNull();
+  });
+
+  it("upsert inserts, round-trips, then updates in place bumping updated_at", async () => {
+    const workspaceId = await seedWorkspace(pool, "ent-helper-upsert");
+
+    const inserted = await upsertWorkspaceEntitlements(pool, workspaceId, {
+      seatsLimit: 4,
+      reposLimit: 5,
+      retentionDays: 30,
+      expiresAt: null,
+    });
+    expect(inserted.seats_limit).toBe(4);
+    expect(inserted.repos_limit).toBe(5);
+    expect(inserted.retention_days).toBe(30);
+    expect(inserted.expires_at).toBeNull();
+
+    const fetched = await getWorkspaceEntitlements(pool, workspaceId);
+    expect(fetched).not.toBeNull();
+    expect(fetched!.seats_limit).toBe(4);
+
+    const expiresAt = new Date("2026-08-01T00:00:00.000Z");
+    const updated = await upsertWorkspaceEntitlements(pool, workspaceId, {
+      seatsLimit: 50,
+      reposLimit: null,
+      retentionDays: 365,
+      expiresAt,
+    });
+    expect(updated.seats_limit).toBe(50);
+    expect(updated.repos_limit).toBeNull();
+    expect(updated.retention_days).toBe(365);
+    expect(updated.expires_at?.toISOString()).toBe(expiresAt.toISOString());
+    expect(updated.updated_at.getTime()).toBeGreaterThanOrEqual(
+      inserted.updated_at.getTime(),
+    );
+
+    // Still exactly one row (ON CONFLICT updated in place).
+    const { rows } = await pool.query(
+      `SELECT count(*) AS count FROM workspace_entitlements WHERE workspace_id = $1`,
+      [workspaceId],
+    );
+    expect(Number(rows[0]!.count)).toBe(1);
+  });
+
+  it("deleteWorkspaceEntitlements deletes once, then reports false (idempotent)", async () => {
+    const workspaceId = await seedWorkspace(pool, "ent-helper-del");
+
+    await upsertWorkspaceEntitlements(pool, workspaceId, {
+      seatsLimit: null,
+      reposLimit: null,
+      retentionDays: null,
+      expiresAt: null,
+    });
+    expect(await deleteWorkspaceEntitlements(pool, workspaceId)).toBe(true);
+    expect(await deleteWorkspaceEntitlements(pool, workspaceId)).toBe(false);
+    expect(await getWorkspaceEntitlements(pool, workspaceId)).toBeNull();
   });
 });

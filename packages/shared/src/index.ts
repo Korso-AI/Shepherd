@@ -69,6 +69,7 @@ export {
   TrendPoint,
   TopWorkspace,
   ShepherdAnalyticsResponse,
+  EntitlementLimits,
 } from "./contract.js";
 
 // Inferred TypeScript types — consumers import these instead of z.infer<...>
@@ -136,6 +137,7 @@ import type {
   TrendPoint,
   TopWorkspace,
   ShepherdAnalyticsResponse,
+  EntitlementLimits,
 } from "./contract.js";
 
 export type ChangeRecordT = z.infer<typeof ChangeRecord>;
@@ -226,3 +228,5 @@ export type TopWorkspaceT = z.infer<typeof TopWorkspace>;
 export type ShepherdAnalyticsResponseT = z.infer<
   typeof ShepherdAnalyticsResponse
 >;
+
+export type EntitlementLimitsT = z.infer<typeof EntitlementLimits>;
