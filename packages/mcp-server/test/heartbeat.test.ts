@@ -342,62 +342,36 @@ describe("createHeartbeat", () => {
     }).not.toThrow();
   });
 
-  // ---- presence gating (shared-directory contention) -----------------------
-  function makePresence(contended: boolean) {
-    return {
-      refresh: vi.fn(),
-      contended: vi.fn(() => contended),
-      remove: vi.fn(),
-    };
+  // ---- mailbox liveness (session mailbox advertisement) --------------------
+  function makeLiveness() {
+    return { refresh: vi.fn(), remove: vi.fn() };
   }
 
-  it("refreshes presence on start and again on every beat", async () => {
+  it("refreshes mailbox liveness on start and again on every beat", async () => {
     const hubClient = makeHubClient();
-    const presence = makePresence(false);
+    const liveness = makeLiveness();
     const heartbeat = createHeartbeat({
       hubClient,
       intervalSeconds: INTERVAL_SECONDS,
       announcementSink: vi.fn(),
-      presence,
+      liveness,
     });
 
     heartbeat.start(SESSION_ID);
-    expect(presence.refresh).toHaveBeenCalledTimes(1);
+    expect(liveness.refresh).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
-    expect(presence.refresh).toHaveBeenCalledTimes(2);
+    expect(liveness.refresh).toHaveBeenCalledTimes(2);
     heartbeat.stop();
   });
 
-  it("omits deliverAnnouncements when another server shares the directory (contended)", async () => {
+  it("always requests delivery when a sink is present (per-session mailboxes need no gating)", async () => {
     const hubClient = makeHubClient();
-    const presence = makePresence(true);
     const heartbeat = createHeartbeat({
       hubClient,
       intervalSeconds: INTERVAL_SECONDS,
       announcementSink: vi.fn(),
-      presence,
-    });
-
-    heartbeat.start(SESSION_ID);
-    await vi.advanceTimersByTimeAsync(INTERVAL_SECONDS * 1000);
-
-    // Presence-only beat: announcements stay pending at the hub and reach this
-    // session via its own tool calls, where the server knows its identity.
-    expect(hubClient.post).toHaveBeenLastCalledWith("/heartbeat", {
-      sessionId: SESSION_ID,
-    });
-    heartbeat.stop();
-  });
-
-  it("keeps delivering when the directory is NOT contended", async () => {
-    const hubClient = makeHubClient();
-    const presence = makePresence(false);
-    const heartbeat = createHeartbeat({
-      hubClient,
-      intervalSeconds: INTERVAL_SECONDS,
-      announcementSink: vi.fn(),
-      presence,
+      liveness: makeLiveness(),
     });
 
     heartbeat.start(SESSION_ID);
@@ -410,22 +384,21 @@ describe("createHeartbeat", () => {
     heartbeat.stop();
   });
 
-  it("fails open to delivery when presence callbacks throw", async () => {
+  it("keeps beating and delivering when liveness callbacks throw", async () => {
     const hubClient = makeHubClient();
-    const presence = {
+    const liveness = {
       refresh: vi.fn(() => {
         throw new Error("disk");
       }),
-      contended: vi.fn(() => {
+      remove: vi.fn(() => {
         throw new Error("disk");
       }),
-      remove: vi.fn(),
     };
     const heartbeat = createHeartbeat({
       hubClient,
       intervalSeconds: INTERVAL_SECONDS,
       announcementSink: vi.fn(),
-      presence,
+      liveness,
     });
 
     heartbeat.start(SESSION_ID);
@@ -437,22 +410,22 @@ describe("createHeartbeat", () => {
       sessionId: SESSION_ID,
       deliverAnnouncements: true,
     });
-    heartbeat.stop();
+    expect(() => heartbeat.stop()).not.toThrow();
   });
 
-  it("stop() withdraws the presence mark", () => {
+  it("stop() withdraws the mailbox advertisement", () => {
     const hubClient = makeHubClient();
-    const presence = makePresence(false);
+    const liveness = makeLiveness();
     const heartbeat = createHeartbeat({
       hubClient,
       intervalSeconds: INTERVAL_SECONDS,
       announcementSink: vi.fn(),
-      presence,
+      liveness,
     });
 
     heartbeat.start(SESSION_ID);
     heartbeat.stop();
-    expect(presence.remove).toHaveBeenCalled();
+    expect(liveness.remove).toHaveBeenCalled();
   });
 
   it("calls .unref() on the timer so it never keeps the process alive", () => {

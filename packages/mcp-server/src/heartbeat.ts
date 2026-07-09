@@ -22,17 +22,16 @@ export interface Heartbeat {
 }
 
 /**
- * This server's liveness mark in its working directory (see inbox.ts's server
- * presence section). All three callbacks must be cheap; refresh/contended run
- * once per beat. Errors are caught here — a broken presence check fails open
- * to delivering (the pre-presence behavior), never to disabled delivery.
+ * This server's mailbox advertisement (see inbox.ts's session mailboxes
+ * section): refresh() re-writes the meta file so the hook keeps treating the
+ * mailbox as live; remove() withdraws it on stop. Both must be cheap (refresh
+ * runs once per beat) and both are called fail-open — a broken advertisement
+ * only costs hook delivery, never tool-call delivery.
  */
-export interface ServerPresence {
-  /** Create or mtime-bump this server's presence mark. */
+export interface MailboxLiveness {
+  /** Create or refresh this server's mailbox meta. */
   refresh(): void;
-  /** Whether ANOTHER live server shares this working directory. */
-  contended(): boolean;
-  /** Withdraw the presence mark (called from stop()). */
+  /** Withdraw the mailbox meta (called from stop()). */
   remove(): void;
 }
 
@@ -41,7 +40,7 @@ export function createHeartbeat({
   intervalSeconds,
   buildReport,
   announcementSink,
-  presence,
+  liveness,
 }: {
   hubClient: HubClient;
   intervalSeconds: number;
@@ -66,15 +65,11 @@ export function createHeartbeat({
    */
   announcementSink?: (announcements: AnnouncementT[]) => void;
   /**
-   * Shared-directory contention guard. When present, every beat refreshes this
-   * server's presence mark and asks whether another live server shares the
-   * working directory; if one does, the beat is presence-only (no
-   * deliverAnnouncements), so the shared inbox file gets no new content and the
-   * hub-pending announcements reach this session via its own tool calls — the
-   * path where the server knows exactly which session it is. Omitted → the
-   * pre-presence single-session behavior.
+   * The session mailbox's advertisement, kept fresh once per beat so the
+   * client hook keeps trusting (and draining) this server's mailbox. Optional
+   * for callers without a mailbox at all.
    */
-  presence?: ServerPresence;
+  liveness?: MailboxLiveness;
 }): Heartbeat {
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -82,9 +77,9 @@ export function createHeartbeat({
     if (timer !== null) {
       clearInterval(timer);
       timer = null;
-      if (presence) {
+      if (liveness) {
         try {
-          presence.remove();
+          liveness.remove();
         } catch {
           /* fail-open */
         }
@@ -105,27 +100,19 @@ export function createHeartbeat({
     }
     const body: Record<string, unknown> = { sessionId };
     if (changeReport) body.changeReport = changeReport;
-    // Delivery is gated on having a sink (a sink implies request — no sink ⇒
-    // never ask the hub to hand over announcements) AND on the working
-    // directory being uncontended: with a sibling server in the same dir, the
-    // shared inbox file would let one client's hook steal the other agent's
-    // messages, so a contended beat is presence-only and the hub keeps the
-    // announcements pending for this session's own tool calls. A throwing
-    // presence check fails open to delivering.
-    let contended = false;
-    if (presence) {
+    // Keep the mailbox advertised so the hook trusts it (fail-open).
+    if (liveness) {
       try {
-        presence.refresh();
+        liveness.refresh();
       } catch {
         /* fail-open */
       }
-      try {
-        contended = presence.contended();
-      } catch {
-        contended = false;
-      }
     }
-    if (announcementSink && !contended) body.deliverAnnouncements = true;
+    // Delivery is gated only on having a sink (a sink implies request — no
+    // sink ⇒ never ask the hub to hand over announcements). Mailboxes are
+    // per-session (see inbox.ts), so delivery needs no contention gating:
+    // another agent in the same directory has its own mailbox.
+    if (announcementSink) body.deliverAnnouncements = true;
 
     // Validate the response against the shared contract before trusting it — a
     // compromised/MITM hub could otherwise flow oversized/newline-laden
@@ -172,11 +159,11 @@ export function createHeartbeat({
     // Restart cleanly if a previous timer is still running.
     stop();
 
-    // Mark this server live immediately — a sibling starting in the same dir
-    // must be able to see us before our first beat fires.
-    if (presence) {
+    // Advertise the mailbox immediately — the session's first hook fire can
+    // precede the first beat.
+    if (liveness) {
       try {
-        presence.refresh();
+        liveness.refresh();
       } catch {
         /* fail-open */
       }

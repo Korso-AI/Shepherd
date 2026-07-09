@@ -30,6 +30,8 @@ import {
   drainInbox,
   formatInboxAnnouncements,
   defaultInboxDir,
+  mergeAnnouncements,
+  selectSessionMailboxes,
 } from "./inbox.js";
 import { buildLinkNudge } from "./linkNudge.js";
 import { buildInstructions } from "./instructions.js";
@@ -77,7 +79,16 @@ export default function shepherdInbox(pi: PiExtensionAPI): void {
     try {
       const dir = process.env["SHEPHERD_INBOX_DIR"] || defaultInboxDir();
       const cwd = ctx?.cwd ?? process.cwd();
-      const announcements = drainInbox(inboxFilePath(dir, cwd));
+      // This extension runs INSIDE the client process, so its own pid IS the
+      // client pid the server's chain contains — a one-entry chain pairs it to
+      // this session's mailbox(es) with no process-tree walk at all. (Not the
+      // ppid: that is the terminal ABOVE the client, which a foreign session
+      // may share.) The cwd-keyed legacy file is drained alongside for
+      // pre-mailbox servers.
+      const announcements = mergeAnnouncements(
+        ...selectSessionMailboxes(dir, [process.pid], cwd).map(drainInbox),
+        drainInbox(inboxFilePath(dir, cwd)),
+      );
       // Same two payloads as the hook bin: the unlinked-repo nudge (tool-less
       // here — Pi's before_agent_start is per user turn), then announcements.
       const messageContent = [

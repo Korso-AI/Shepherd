@@ -29,7 +29,12 @@
  * block or break a tool call.
  */
 
-import { buildHookOutput, defaultInboxDir } from "./inbox.js";
+import {
+  buildHookOutput,
+  defaultInboxDir,
+  parseHookPairingInput,
+} from "./inbox.js";
+import { resolveHookMailboxes } from "./hookPairing.js";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -44,7 +49,19 @@ async function main(): Promise<void> {
     const raw = await readStdin();
     const inboxDir =
       process.argv[2] || process.env["SHEPHERD_INBOX_DIR"] || defaultInboxDir();
-    const out = buildHookOutput(raw, inboxDir);
+    // Pair this invocation to its session's mailbox(es) by process ancestry
+    // (see hookPairing.ts). [] on any failure — the legacy cwd-keyed drain
+    // below still runs, and tool-call delivery covers the rest.
+    let mailboxes: string[] = [];
+    try {
+      mailboxes = await resolveHookMailboxes(
+        inboxDir,
+        parseHookPairingInput(raw),
+      );
+    } catch {
+      /* fail-open */
+    }
+    const out = buildHookOutput(raw, inboxDir, undefined, undefined, mailboxes);
     if (out) process.stdout.write(out);
   } catch {
     // Fail-open: never block a tool call on a hook error.

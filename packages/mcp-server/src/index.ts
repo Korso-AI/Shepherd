@@ -9,14 +9,13 @@ import { createHeartbeat } from "./heartbeat.js";
 import { buildChangeReport } from "./changeReport.js";
 import { buildInstructions } from "./instructions.js";
 import {
-  inboxFilePath,
   appendAnnouncements,
   defaultInboxDir,
-  presenceFilePath,
-  refreshPresence,
-  removePresence,
-  hasOtherLivePresence,
+  sessionMailboxPath,
+  writeMailboxMeta,
+  removeMailboxMeta,
 } from "./inbox.js";
+import { quickChain, ancestorChain } from "./processTree.js";
 import { autoInstallHooks } from "./hookInstall.js";
 import { PACKAGE_VERSION } from "./version.js";
 
@@ -30,32 +29,40 @@ async function main(): Promise<void> {
   const context = await resolveContext(config);
 
   // Announcement push (default-on). The background heartbeat asks the hub for
-  // pending announcements and stages them in this working dir's inbox file; that
-  // single file is then drained both by the Shepherd tool calls (universal
-  // delivery — every client, on the next work/sync/done/announce) and, where
-  // available, by a client hook for passive delivery with no tool call.
+  // pending announcements and stages them in this SESSION's mailbox (see
+  // inbox.ts's session mailboxes section); that single file is then drained
+  // both by the Shepherd tool calls (universal delivery — every client, on the
+  // next work/sync/done/announce) and, where available, by a client hook that
+  // pairs itself to this mailbox by process ancestry — per session, so two
+  // agents in one directory can't steal each other's messages, and a mid-
+  // session directory change (worktrees) strands nothing.
   // SHEPHERD_INBOX_DIR overrides the default root (a per-user dir under $HOME).
   const inboxDir = config.SHEPHERD_INBOX_DIR ?? defaultInboxDir();
-  const inboxFile = inboxFilePath(inboxDir, process.cwd());
+  const inboxFile = sessionMailboxPath(inboxDir, process.pid);
 
-  // Shared-directory contention guard (see inbox.ts's server presence
-  // section): a sibling server in this same working dir means the shared inbox
-  // file would let one client's hook steal the other agent's announcements, so
-  // a contended heartbeat skips passive delivery. A mark is considered live
-  // within 3 heartbeat intervals, tolerating a missed beat either side.
-  const presenceFile = presenceFilePath(inboxDir, process.cwd(), process.pid);
-  const presenceStaleMs = config.HEARTBEAT_INTERVAL_SECONDS * 3 * 1000;
-  const presence = {
-    refresh: () => refreshPresence(presenceFile),
-    contended: () =>
-      hasOtherLivePresence(
-        inboxDir,
-        process.cwd(),
-        process.pid,
-        presenceStaleMs,
-      ),
-    remove: () => removePresence(presenceFile),
+  // Advertise the mailbox with this server's ancestor chain. The free
+  // [self, parent] chain goes up immediately (enough for direct-spawn
+  // layouts); the full chain — needed when an npx shim sits between the
+  // client and us — replaces it as soon as the snapshot resolves (~1s on
+  // Windows). The heartbeat re-writes the meta every beat (mtime = liveness).
+  const launchCwd = process.cwd();
+  let serverChain = quickChain();
+  const liveness = {
+    refresh: () =>
+      writeMailboxMeta(inboxDir, process.pid, {
+        cwd: launchCwd,
+        chain: serverChain,
+      }),
+    remove: () => removeMailboxMeta(inboxDir, process.pid),
   };
+  void ancestorChain()
+    .then((chain) => {
+      serverChain = chain;
+      liveness.refresh();
+    })
+    .catch(() => {
+      /* fail-open: the quick chain stays */
+    });
 
   const heartbeat = createHeartbeat({
     hubClient,
@@ -69,12 +76,12 @@ async function main(): Promise<void> {
         return undefined;
       }
     },
-    // A model-visible sink (this working dir's inbox file). Its presence opts
-    // the heartbeat into two-phase announcement delivery: append locally, then
+    // A model-visible sink (this session's mailbox). Its presence opts the
+    // heartbeat into two-phase announcement delivery: append locally, then
     // ack the hub. appendAnnouncements is itself fail-open.
     announcementSink: (announcements) =>
       appendAnnouncements(inboxFile, announcements),
-    presence,
+    liveness,
   });
   // Instructions are keyed on the repo's first-run state (linked / declined /
   // never-asked), so a declined repo costs one quiet paragraph instead of the

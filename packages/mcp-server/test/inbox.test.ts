@@ -18,11 +18,12 @@ import {
   defaultInboxDir,
   mergeAnnouncements,
   REPLY_ROUTING_HINT,
-  presenceFilePath,
-  refreshPresence,
-  removePresence,
-  hasOtherLivePresence,
-  PRESENCE_TTL_MS,
+  sessionMailboxPath,
+  sessionMetaPath,
+  writeMailboxMeta,
+  removeMailboxMeta,
+  selectSessionMailboxes,
+  MAILBOX_TTL_MS,
 } from "../src/inbox.js";
 import type { AnnouncementT } from "@shepherd/shared";
 
@@ -277,6 +278,41 @@ describe("buildHookOutput", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Session mailboxes — the pairing layer (hookPairing.ts) resolves which
+  // mailboxes belong to this hook's session and passes them in.
+  // -------------------------------------------------------------------------
+
+  it("drains the session mailboxes resolved by the pairing layer", () => {
+    const box = sessionMailboxPath(dir, 111);
+    appendAnnouncements(box, [ann(1, "from my session's server")]);
+
+    const out = JSON.parse(
+      buildHookOutput(stdin(), dir, undefined, undefined, [box]),
+    );
+    expect(out.hookSpecificOutput.additionalContext).toContain(
+      "from my session's server",
+    );
+    // Consumed: a second fire finds nothing.
+    expect(buildHookOutput(stdin(), dir, undefined, undefined, [box])).toBe("");
+  });
+
+  it("merges legacy-file and session-mailbox announcements, deduped by id", () => {
+    const box = sessionMailboxPath(dir, 111);
+    appendAnnouncements(inboxFilePath(dir, cwd), [
+      ann(2, "legacy"),
+      ann(3, "both"),
+    ]);
+    appendAnnouncements(box, [ann(1, "mailbox"), ann(3, "both")]);
+
+    const out = JSON.parse(
+      buildHookOutput(stdin(), dir, undefined, undefined, [box]),
+    );
+    const ctx: string = out.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain("[Shepherd] 3 announcements");
+    expect(ctx.indexOf("mailbox")).toBeLessThan(ctx.indexOf("legacy"));
+  });
+
+  // -------------------------------------------------------------------------
   // Cursor dialect — verified by spike (Cursor 3.9.16): no cwd, URI-style
   // workspace_roots, a BOM prefix on stdin, and only a TOP-LEVEL
   // additionalContext (+ continue: true) reaches the model.
@@ -408,79 +444,165 @@ describe("formatInboxAnnouncements", () => {
   });
 });
 
-describe("server presence (shared-directory contention)", () => {
-  const CWD = "C:\\repos\\projectA";
-  const OTHER_CWD = "C:\\repos\\projectB";
+describe("session mailboxes (per-client-process pairing)", () => {
   const STALE_MS = 90_000;
   let dir: string;
 
+  // A hook chain: [hook node, shell, client (e.g. Claude), terminal].
+  const HOOK_CHAIN = [900, 800, 700, 600];
+  const CWD = "/repos/projectA";
+
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "shepherd-presence-"));
+    dir = mkdtempSync(join(tmpdir(), "shepherd-mailbox-"));
   });
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("keys the presence file by the same cwd hash as the inbox file", () => {
-    const inbox = inboxFilePath(dir, CWD);
-    const presence = presenceFilePath(dir, CWD, 1234);
-    const hash = /([0-9a-f]{16})\.jsonl$/.exec(inbox)![1];
-    expect(presence).toBe(join(dir, `${hash}.presence-1234`));
+  const select = (
+    chain: number[] = HOOK_CHAIN,
+    cwd: string | null = CWD,
+    staleMs = STALE_MS,
+    nowMs?: number,
+  ) => selectSessionMailboxes(dir, chain, cwd, staleMs, nowMs);
+
+  it("names the mailbox and meta after the server pid", () => {
+    expect(sessionMailboxPath(dir, 111)).toBe(join(dir, "agent-111.jsonl"));
+    expect(sessionMetaPath(dir, 111)).toBe(join(dir, "agent-111.json"));
   });
 
-  it("sees another live server in the same directory", () => {
-    refreshPresence(presenceFilePath(dir, CWD, 111));
-    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(true);
+  it("selects the mailbox whose server chain shares the hook's client pid", () => {
+    // Server spawned (via an npx hop) by client 700 — same client as the hook.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 50, 700, 600] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
   });
 
-  it("never counts its own presence file", () => {
-    refreshPresence(presenceFilePath(dir, CWD, 111));
-    expect(hasOtherLivePresence(dir, CWD, 111, STALE_MS)).toBe(false);
+  it("prefers the closest common ancestor when two sessions share a terminal", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700, 600] }); // our client
+    writeMailboxMeta(dir, 222, { cwd: CWD, chain: [222, 555, 600] }); // sibling session
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
   });
 
-  it("ignores a stale presence file (dead server)", () => {
-    const other = presenceFilePath(dir, CWD, 111);
-    refreshPresence(other);
+  it("prefers the server closest to the shared client (nested-agent case)", () => {
+    // A teammate's server reaches our client only THROUGH its own nested client
+    // (333); the main session's server hangs directly under 700.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    writeMailboxMeta(dir, 222, { cwd: CWD, chain: [222, 333, 700] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("drains ALL equally-matched mailboxes of the same client (crashed-server leftovers)", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    writeMailboxMeta(dir, 112, { cwd: CWD, chain: [112, 700] });
+    expect(select().sort()).toEqual([
+      sessionMailboxPath(dir, 111),
+      sessionMailboxPath(dir, 112),
+    ]);
+  });
+
+  it("breaks a cross-workspace tie by cwd (shared client main process)", () => {
+    writeMailboxMeta(dir, 111, { cwd: "/repos/projectA", chain: [111, 700] });
+    writeMailboxMeta(dir, 222, { cwd: "/repos/projectB", chain: [222, 700] });
+    expect(select([900, 700], "/repos/projectA")).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  it("selects nothing when a cross-workspace tie matches neither cwd", () => {
+    writeMailboxMeta(dir, 111, { cwd: "/repos/projectA", chain: [111, 700] });
+    writeMailboxMeta(dir, 222, { cwd: "/repos/projectB", chain: [222, 700] });
+    expect(select([900, 700], "/repos/projectC")).toEqual([]);
+  });
+
+  it("normalizes cwds before comparing them", () => {
+    writeMailboxMeta(dir, 111, {
+      cwd: "/repos/projectA",
+      chain: [111, 700],
+    });
+    writeMailboxMeta(dir, 222, { cwd: "/repos/projectB", chain: [222, 700] });
+    expect(select([900, 700], "/repos/./projectA")).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  // -- deep-match guard -------------------------------------------------------
+  // A match at hook-chain index 2 is the client for Claude-under-bash but can
+  // be a TERMINAL-level ancestor for direct-spawn clients whose session has no
+  // mailbox of its own (a shepherd-less sibling session). Those deep matches
+  // need corroboration: same cwd AND a shallow spot in the server's chain.
+
+  it("accepts a depth-2 match when cwd agrees and the pid sits low in the server chain", () => {
+    // Windows Claude Code: hook → bash → client(700); server → npx → client.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 50, 700] });
+    expect(select([900, 800, 700], CWD)).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  it("rejects a depth-2 match from a different cwd (worktree move degrades to tool delivery)", () => {
+    writeMailboxMeta(dir, 111, { cwd: "/repos/projectB", chain: [111, 50, 700] });
+    expect(select([900, 800, 700], CWD)).toEqual([]);
+  });
+
+  it("rejects a depth-2 match on a pid deep in the server chain (terminal, not client)", () => {
+    // A foreign server only shares the TERMINAL (600) with this hook — the
+    // terminal sits deep (j=3) in the server's chain; a real client sits at 1-2.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 50, 700, 600] });
+    expect(select([900, 800, 600], CWD)).toEqual([]);
+  });
+
+  it("never matches beyond the third hook-chain entry", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 600] });
+    expect(select([900, 800, 700, 600], CWD)).toEqual([]);
+  });
+
+  it("selects nothing when no fresh meta shares an ancestor", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 12, 13] });
+    expect(select()).toEqual([]);
+  });
+
+  it("ignores a stale meta (dead or wedged server)", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
     const past = new Date(Date.now() - STALE_MS - 60_000);
-    utimesSync(other, past, past);
-    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(false);
+    utimesSync(sessionMetaPath(dir, 111), past, past);
+    expect(select()).toEqual([]);
   });
 
-  it("ignores live servers in OTHER directories", () => {
-    refreshPresence(presenceFilePath(dir, OTHER_CWD, 111));
-    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(false);
+  it("a re-written meta (heartbeat refresh) is fresh again", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    const past = new Date(Date.now() - STALE_MS - 60_000);
+    utimesSync(sessionMetaPath(dir, 111), past, past);
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
   });
 
-  it("fails open to 'not contended' when the inbox dir does not exist", () => {
+  it("removeMailboxMeta withdraws the mailbox and is idempotent", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    removeMailboxMeta(dir, 111);
+    expect(select()).toEqual([]);
+    expect(() => removeMailboxMeta(dir, 111)).not.toThrow();
+  });
+
+  it("garbage-collects meta AND mailbox past the TTL", () => {
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    appendAnnouncements(sessionMailboxPath(dir, 111), [ann(1, "orphaned")]);
+    const ancient = new Date(Date.now() - MAILBOX_TTL_MS - 60_000);
+    utimesSync(sessionMetaPath(dir, 111), ancient, ancient);
+    select();
+    expect(existsSync(sessionMetaPath(dir, 111))).toBe(false);
+    expect(existsSync(sessionMailboxPath(dir, 111))).toBe(false);
+  });
+
+  it("skips a malformed meta file without failing the scan", () => {
+    writeFileSync(sessionMetaPath(dir, 99), "not json");
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    expect(select()).toEqual([sessionMailboxPath(dir, 111)]);
+  });
+
+  it("fails open to [] when the inbox dir does not exist", () => {
     expect(
-      hasOtherLivePresence(join(dir, "missing"), CWD, 222, STALE_MS),
-    ).toBe(false);
-  });
-
-  it("refresh bumps the mtime so a live server never goes stale", () => {
-    const other = presenceFilePath(dir, CWD, 111);
-    refreshPresence(other);
-    const past = new Date(Date.now() - STALE_MS - 60_000);
-    utimesSync(other, past, past);
-    refreshPresence(other);
-    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(true);
-  });
-
-  it("removePresence withdraws the mark and is a no-op on a missing file", () => {
-    const file = presenceFilePath(dir, CWD, 111);
-    refreshPresence(file);
-    removePresence(file);
-    expect(hasOtherLivePresence(dir, CWD, 222, STALE_MS)).toBe(false);
-    expect(() => removePresence(file)).not.toThrow();
-  });
-
-  it("prunes long-dead presence files during the scan", () => {
-    const dead = presenceFilePath(dir, CWD, 111);
-    refreshPresence(dead);
-    const ancient = new Date(Date.now() - PRESENCE_TTL_MS - 60_000);
-    utimesSync(dead, ancient, ancient);
-    hasOtherLivePresence(dir, CWD, 222, STALE_MS);
-    expect(existsSync(dead)).toBe(false);
+      selectSessionMailboxes(join(dir, "missing"), HOOK_CHAIN, CWD, STALE_MS),
+    ).toEqual([]);
   });
 });
