@@ -146,6 +146,68 @@ describe("ConfigPanel", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("appends extra sections to the nav after the built-ins and renders them on click", async () => {
+    renderPanel(ADMIN_WS, {
+      extraSections: [
+        {
+          id: "usage",
+          label: "Usage",
+          render: ({ workspaceId }) => <p>Usage for {workspaceId}</p>,
+        },
+      ],
+    });
+
+    // The extra nav item comes AFTER every built-in.
+    const items = screen.getAllByRole("button", {
+      name: /^(Workspace|Members|Agent|Account|Usage)$/,
+    });
+    expect(items.map((b) => b.textContent)).toEqual([
+      "Workspace",
+      "Members",
+      "Agent",
+      "Account",
+      "Usage",
+    ]);
+
+    // Not rendered until selected.
+    expect(screen.queryByText("Usage for ws_1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    expect(screen.getByText("Usage for ws_1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Usage" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    // The built-in panels are gone while an extra section is active.
+    expect(
+      screen.queryByRole("heading", { name: "Workspace" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores an extra section whose id shadows a built-in", async () => {
+    renderPanel(ADMIN_WS, {
+      extraSections: [
+        {
+          id: "members",
+          label: "Shadow",
+          render: () => <p>shadowed</p>,
+        },
+      ],
+    });
+
+    // The colliding entry never reaches the nav.
+    expect(
+      screen.queryByRole("button", { name: "Shadow" }),
+    ).not.toBeInTheDocument();
+
+    // The built-in Members section still renders its own panel.
+    await userEvent.click(screen.getByRole("button", { name: "Members" }));
+    expect(
+      screen.getByRole("heading", { name: "Members" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("shadowed")).not.toBeInTheDocument();
+  });
+
   it("marks the active nav item with aria-current", async () => {
     renderPanel();
     const workspace = screen.getByRole("button", { name: "Workspace" });

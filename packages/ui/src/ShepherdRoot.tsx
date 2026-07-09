@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { Dashboard } from "./components/Dashboard.js";
 import { WorkspaceSwitcher } from "./config/WorkspaceSwitcher.js";
-import { ConfigPanel } from "./config/ConfigPanel.js";
+import {
+  ConfigPanel,
+  type ExtraConfigSection,
+} from "./config/ConfigPanel.js";
 import { AccountSettings } from "./config/AccountSettings.js";
 import { useShepherdClient } from "./context.js";
 import { describeError } from "./client.js";
@@ -44,6 +47,11 @@ export interface ShepherdRootProps {
    * session state, and OIDC cleanup; Shepherd only renders the Config action.
    */
   onLogout?: () => void;
+  /**
+   * Embedder-provided settings sections, appended after the built-in
+   * ConfigPanel sections and scoped to the selected workspace.
+   */
+  extraSections?: ReadonlyArray<ExtraConfigSection>;
 }
 
 type LoadState =
@@ -51,7 +59,12 @@ type LoadState =
   | { status: "ready"; workspaces: WorkspaceSummaryT[] }
   | { status: "error"; message: string };
 
-export function ShepherdRoot({ brand, hubUrl, onLogout }: ShepherdRootProps) {
+export function ShepherdRoot({
+  brand,
+  hubUrl,
+  onLogout,
+  extraSections,
+}: ShepherdRootProps) {
   const client = useShepherdClient();
 
   const [load, setLoad] = useState<LoadState>({ status: "loading" });
@@ -133,6 +146,7 @@ export function ShepherdRoot({ brand, hubUrl, onLogout }: ShepherdRootProps) {
           onLeft={() => void fetchWorkspaces()}
           onDeleted={() => void fetchWorkspaces()}
           onLogout={onLogout}
+          extraSections={extraSections}
         />
       ) : (
         <>

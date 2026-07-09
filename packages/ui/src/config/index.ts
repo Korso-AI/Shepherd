@@ -1,7 +1,7 @@
 // Config-surface components. Re-exported so consumers can compose the pieces
 // directly if they don't use the full ShepherdRoot shell.
 export { ConfigPanel } from "./ConfigPanel.js";
-export type { ConfigPanelProps } from "./ConfigPanel.js";
+export type { ConfigPanelProps, ExtraConfigSection } from "./ConfigPanel.js";
 export { WorkspaceSwitcher } from "./WorkspaceSwitcher.js";
 export type { WorkspaceSwitcherProps } from "./WorkspaceSwitcher.js";
 export { WorkspaceSettings } from "./WorkspaceSettings.js";
