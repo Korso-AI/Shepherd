@@ -33,6 +33,7 @@ import {
   resolveTenant,
   hashToken,
   requireOperator,
+  requireInternal,
   __resetRateLimiter,
   type TenantContext,
 } from "../src/tenant.js";
@@ -940,6 +941,125 @@ describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
         pool,
       );
       expect(ctx.via).toBe("team");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Internal (BFF service-call) resolution — via: "internal"
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!dbAvailable)('internal resolution (via: "internal")', () => {
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
+
+  beforeEach(() => {
+    __resetRateLimiter();
+  });
+
+  afterEach(async () => {
+    await truncateAll(pool);
+    await truncateTenancy(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("matched token + /internal/ path + NO x-account-id → via internal, sentinel workspace", async () => {
+    const ctx = await resolveTenant(
+      fakeRequest({
+        headers: { "x-internal-token": BFF_INTERNAL_TOKEN },
+        url: "/internal/workspaces/some-uuid/entitlements",
+        method: "PUT",
+      }) as never,
+      makeConfig(),
+      pool,
+    );
+    expect(ctx.via).toBe("internal");
+    expect(ctx.workspaceId).toBe("");
+    expect(ctx.accountId).toBeUndefined();
+  });
+
+  it("a query string does not defeat the pathname check", async () => {
+    const ctx = await resolveTenant(
+      fakeRequest({
+        headers: { "x-internal-token": BFF_INTERNAL_TOKEN },
+        url: "/internal/workspaces/some-uuid/entitlements?debug=1",
+        method: "GET",
+      }) as never,
+      makeConfig(),
+      pool,
+    );
+    expect(ctx.via).toBe("internal");
+  });
+
+  it("matched token + NO x-account-id on a NON-internal path keeps today's 400", async () => {
+    await expect(
+      resolveTenant(
+        fakeRequest({
+          headers: { "x-internal-token": BFF_INTERNAL_TOKEN },
+          url: "/workspaces",
+          method: "POST",
+        }) as never,
+        makeConfig(),
+        pool,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("matched token WITH x-account-id on an /internal/ path keeps today's browser behavior", async () => {
+    const ctx = await resolveTenant(
+      fakeRequest({
+        headers: {
+          "x-internal-token": BFF_INTERNAL_TOKEN,
+          "x-account-id": "gh:proxied",
+        },
+        url: "/internal/workspaces/some-uuid/entitlements",
+        method: "PUT",
+      }) as never,
+      makeConfig(),
+      pool,
+    );
+    // The proxied-browser confused-deputy case: still a browser context (it
+    // will 403 at requireInternal), never silently promoted to internal.
+    expect(ctx.via).toBe("browser");
+  });
+
+  it("a WRONG internal token on an /internal/ path is still a 401", async () => {
+    await expect(
+      resolveTenant(
+        fakeRequest({
+          headers: { "x-internal-token": "not-the-secret" },
+          url: "/internal/workspaces/some-uuid/entitlements",
+          method: "PUT",
+        }) as never,
+        makeConfig(),
+        pool,
+      ),
+    ).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("requireInternal passes an internal context and 403s every other via", () => {
+    expect(() =>
+      requireInternal({ workspaceId: "", via: "internal" } as TenantContext),
+    ).not.toThrow();
+    for (const via of ["browser", "agent", "team"] as const) {
+      try {
+        requireInternal({
+          workspaceId: "",
+          accountId: "gh:someone",
+          via,
+        } as TenantContext);
+        expect.unreachable(`requireInternal must reject via=${via}`);
+      } catch (err) {
+        expect(err).toBeInstanceOf(AuthError);
+        expect((err as AuthError).status).toBe(403);
+      }
     }
   });
 });
