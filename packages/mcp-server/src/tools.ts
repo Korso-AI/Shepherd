@@ -578,6 +578,25 @@ export function registerTools(
   // Stays null while the join is in flight or after it succeeds.
   let joinFailure: JoinFailureReason | null = null;
 
+  // Whether that failure was a TRANSIENT wire fault (hub unreachable, or a
+  // non-permanent HTTP status like a 5xx) — the only class the gate's lazy
+  // retry re-attempts. Permanent rejections (400/401/403/404) and LOCAL
+  // unexpected errors (e.g. a heartbeat that can't start — retrying those
+  // would mint an orphaned hub session per tool call) are never retried.
+  let joinFailureTransient = false;
+
+  // The workspace slug the most recent activation TARGETED (the marker slug at
+  // boot, or the slug of the latest hot `link`). The gate's lazy retry re-joins
+  // this slug after a transient failure — `activeWorkspaceSlug` can't serve
+  // here because it is only set on a SUCCESSFUL join.
+  let targetWorkspaceSlug: string | null = null;
+
+  // Dedupes the gate's lazy retry: concurrent tool calls that both find
+  // `sessionId === null` after a transient failure must share ONE re-join —
+  // two would mint two agent identities on the hub. Non-null exactly while a
+  // gate-initiated retry is in flight.
+  let gateRetry: Promise<unknown> | null = null;
+
   // ---- activation seam ------------------------------------------------------
   // The agent never calls a `join` tool — an identity is registered
   // automatically. `activate()` is the single seam that does it: build the join
@@ -605,6 +624,10 @@ export function registerTools(
    * @param workspaceSlug - the marker's workspace slug to join under.
    */
   async function activate(workspaceSlug: string): Promise<ActivateResult> {
+    // Record the intended workspace FIRST (success or not) so the gate's lazy
+    // retry re-joins the slug this agent last chose, not a stale one.
+    targetWorkspaceSlug = workspaceSlug;
+
     // A live session in this same workspace is REUSED, never re-joined: every
     // /join mints a fresh agent identity (the hub hands out the lowest free
     // ordinal — possibly a RECYCLED former teammate's name), so re-joining on a
@@ -640,6 +663,7 @@ export function registerTools(
         const parsed = JoinResponse.safeParse(raw);
         if (!parsed.success || !parsed.data.sessionId) {
           joinFailure = "validation";
+          joinFailureTransient = false;
           // stderr only — stdout is the stdio MCP protocol channel.
           console.error(
             "[shepherd] join failed (validation): hub returned a malformed join response (no usable sessionId)",
@@ -665,12 +689,20 @@ export function registerTools(
         linked = true;
         hostedWorkspaceRejected = false;
         joinFailure = null;
+        joinFailureTransient = false;
         return { ok: true };
       } catch (err) {
         // Capture WHY it failed so sessionNotReady() reports the real cause, and
         // log to stderr — consistent with heartbeat.ts and leave().
         const reason = classifyActivateFailure(err);
         joinFailure = classifyJoinFailure(err);
+        // Transient = a wire fault: the hub was unreachable, or answered with a
+        // non-permanent status (5xx etc.). A local throw (heartbeat.start) also
+        // classifies "unknown" but is NOT transient — it would recur on every
+        // retry, orphaning a fresh hub session each time.
+        joinFailureTransient =
+          err instanceof HubUnreachable ||
+          (err instanceof HubRequestError && reason === "unknown");
         if (reason === "workspaceRejected") {
           // Hosted workspace-match guard: the token isn't scoped to the marker's
           // workspace, so the Hub rejected the join (403 forbidden / 404 unknown
@@ -809,7 +841,25 @@ export function registerTools(
     if (!linked) return notLinked();
     // Linked but the workspace can't match the credential → mismatch advisory.
     if (selfHostMismatch || hostedWorkspaceRejected) return workspaceMismatch();
-    // Linked and within scope, but no session (hub unreachable at startup).
+    // Linked and within scope but no session, and the last join failed for a
+    // TRANSIENT reason (hub down / 5xx at boot): lazily retry — once per tool
+    // call, shared by concurrent racers — so one boot-time blip doesn't leave
+    // the whole session uncoordinated. Permanent failures (auth/validation/
+    // workspaceRejected) and local errors are never retried: a real misconfig
+    // keeps failing fast instead of hammering the hub.
+    if (
+      sessionId === null &&
+      targetWorkspaceSlug !== null &&
+      joinFailureTransient
+    ) {
+      gateRetry ??= activate(targetWorkspaceSlug).finally(() => {
+        gateRetry = null;
+      });
+      await gateRetry;
+      // The retry may have surfaced a workspace-scoping rejection (403/404).
+      if (hostedWorkspaceRejected) return workspaceMismatch();
+    }
+    // Still no session → the retry failed too (or wasn't warranted).
     if (sessionId === null) return sessionNotReady();
     return null;
   }
