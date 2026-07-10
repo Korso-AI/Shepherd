@@ -1,6 +1,6 @@
 {
   "name": "@korso/shepherd",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Shepherd MCP server — gives any MCP-capable agent (Claude Code, Codex, etc.) advisory cross-session coordination tools (work/done/announce/sync, plus link/unlink/decline) backed by the shared Shepherd hub. Joins the workspace automatically and ships standing instructions so the agent self-coordinates.",
   "homepage": "https://github.com/Korso-AI/shepherd#readme",
   "bugs": {

@@ -6,6 +6,16 @@ monorepo packages and are not versioned independently on npm.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [@korso/shepherd 0.11.1](https://www.npmjs.com/package/@korso/shepherd/v/0.11.1) — 2026-07-10
+
+### Fixed
+
+- A transient hub fault at startup (an unreachable hub or a 5xx on `/join`) no
+  longer leaves the session uncoordinated until a restart: the coordination
+  gate now lazily re-joins on the next tool call, with concurrent calls
+  sharing a single retry. Permanent rejections (bad token, disallowed
+  workspace) still fail fast and are never retried.
+
 ## [@korso/shepherd 0.11.0](https://www.npmjs.com/package/@korso/shepherd/v/0.11.0) — 2026-07-09
 
 ### Added
