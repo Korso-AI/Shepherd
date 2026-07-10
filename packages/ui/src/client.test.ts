@@ -180,7 +180,6 @@ describe("createShepherdClient", () => {
         limit: "workspace_count",
         current: 2,
         max: 2,
-        internal: { traceId: "hidden" },
       };
       fetchMock.mockResolvedValueOnce(
         jsonResponse(details, { status: 402, statusText: "Response Error" }),
@@ -200,6 +199,51 @@ describe("createShepherdClient", () => {
         max: 2,
       });
       expect(onResponseError).toHaveBeenCalledOnce();
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+    });
+
+    it("rejects an otherwise valid response body with an extra field", async () => {
+      const onResponseError = vi.fn();
+      const c = createShepherdClient({ baseUrl: BASE, onResponseError });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: "Repository limit reached",
+            code: "limit_exceeded",
+            limit: "repos",
+            current: 3,
+            max: 3,
+            unexpected: true,
+          },
+          { status: 402, statusText: "Response Error" },
+        ),
+      );
+
+      const caught = await c.listWorkspaces().catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({ message: "HTTP 402", status: 402 });
+      expect((caught as ShepherdClientError).details).toBeUndefined();
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+    });
+
+    it("carries the encoded relative request path on the response error hook", async () => {
+      const onResponseError = vi.fn();
+      const c = createShepherdClient({ baseUrl: BASE, onResponseError });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          { error: "Repository limit reached", code: "limit_exceeded" },
+          { status: 402, statusText: "Response Error" },
+        ),
+      );
+
+      const caught = await c
+        .redeemInvite("invite code")
+        .catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({
+        status: 402,
+        requestPath: "/invites/invite%20code/redeem",
+      });
       expect(onResponseError).toHaveBeenCalledWith(caught);
     });
 

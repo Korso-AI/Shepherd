@@ -53,9 +53,15 @@ const ResponseErrorDetails = z
     current: z.number().finite().int().nonnegative().optional(),
     max: z.number().finite().int().nonnegative().optional(),
   })
-  .strip();
+  .strict();
 
 type ResponseErrorDetailsT = z.infer<typeof ResponseErrorDetails>;
+const RelativeRequestPath = z
+  .string()
+  .min(1)
+  .max(2048)
+  .startsWith("/")
+  .refine((path) => !path.startsWith("//"));
 
 /**
  * The single error type surfaced by the client. A missing `status` means a
@@ -69,13 +75,21 @@ export class ShepherdClientError extends Error {
   readonly status?: number;
   /** Validated generic response fields; absent when parsing fails. */
   readonly details?: unknown;
+  /** Bounded relative path of the request that received the response. */
+  readonly requestPath?: string;
 
   /**
    * @param message - Human-readable failure description.
    * @param status - Upstream HTTP status, omitted for network/abort failures.
    * @param details - Validated generic response fields, when available.
+   * @param requestPath - Bounded relative request path, when available.
    */
-  constructor(message: string, status?: number, details?: unknown) {
+  constructor(
+    message: string,
+    status?: number,
+    details?: unknown,
+    requestPath?: string,
+  ) {
     super(message);
     this.name = "ShepherdClientError";
     if (status !== undefined) {
@@ -83,6 +97,10 @@ export class ShepherdClientError extends Error {
     }
     if (details !== undefined) {
       this.details = details;
+    }
+    const parsedPath = RelativeRequestPath.safeParse(requestPath);
+    if (parsedPath.success) {
+      this.requestPath = parsedPath.data;
     }
   }
 }
@@ -367,6 +385,7 @@ export function createShepherdClient(
               : `HTTP ${res.status}`,
           res.status,
           responseError.details,
+          path,
         );
         try {
           config.onResponseError?.(error);
