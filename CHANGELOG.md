@@ -6,6 +6,19 @@ monorepo packages and are not versioned independently on npm.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [@korso/shepherd 0.11.0](https://www.npmjs.com/package/@korso/shepherd/v/0.11.0) — 2026-07-09
+
+### Added
+
+- Update nudge. The hub now advertises the latest published client version on
+  join (baked from the monorepo at deploy time, plus an optional
+  `MIN_CLIENT_VERSION` floor), and an out-of-date client appends a one-line
+  note to the first coordination tool result of the session asking the agent
+  to let their human know — suggesting the update command that matches how
+  Shepherd is installed on that machine. At most once per session, with a
+  ~24-hour per-machine cooldown; a client below the minimum supported version
+  is warned every session.
+
 ## [@korso/shepherd 0.10.0](https://www.npmjs.com/package/@korso/shepherd/v/0.10.0) — 2026-07-09
 
 ### Added
