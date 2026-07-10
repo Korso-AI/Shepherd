@@ -80,6 +80,11 @@ COPY --from=builder /build/packages/hub/package.json    ./packages/hub/package.j
 COPY --from=builder /build/packages/ui/package.json     ./packages/ui/package.json
 COPY --from=builder /build/package.json                 ./package.json
 
+# The mcp-server manifest is how the hub knows which client version to
+# advertise on join (clientVersion.ts resolves ../../mcp-server/package.json
+# relative to packages/hub/dist/). Fail-open if absent — but keep it present.
+COPY --from=builder /build/packages/mcp-server/package.json ./packages/mcp-server/package.json
+
 # Copy production node_modules from the builder stage.
 # The workspace symlinks inside node_modules point to packages/* which we
 # copy above, so resolution works correctly.

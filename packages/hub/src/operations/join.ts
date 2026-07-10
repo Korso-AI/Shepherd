@@ -14,6 +14,7 @@
 
 import type { JoinRequestT, JoinResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
+import { advertisedClientVersion } from "../clientVersion.js";
 import { DEFAULT_UNCOMMITTED_GRACE_SECONDS } from "../config.js";
 import { assertRepoAllowed } from "../entitlements.js";
 import { ValidationError, AuthError, HubError } from "../errors.js";
@@ -290,9 +291,14 @@ export async function join(
       branch: input.branch,
     });
 
+    const latestClientVersion = advertisedClientVersion();
     return {
       agentName: agent.name,
       sessionId: session.id,
+      ...(latestClientVersion !== null ? { latestClientVersion } : {}),
+      ...(config.MIN_CLIENT_VERSION !== undefined
+        ? { minimumClientVersion: config.MIN_CLIENT_VERSION }
+        : {}),
     };
   });
 }
