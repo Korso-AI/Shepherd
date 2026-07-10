@@ -273,22 +273,36 @@ describe("registerTools", () => {
     });
 
     it("degrades gracefully (NOT isError) when the hub is unreachable at startup", async () => {
-      const { mockPost, tools, ready } = setup({
-        joinError: new HubUnreachable("Connection refused at /join"),
-      });
-      await ready;
+      // Restored in finally: the 401 test below counts console.error calls on a
+      // fresh spy, so this suppression must not leak forward.
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const { mockPost, tools, ready } = setup({
+          joinError: new HubUnreachable("Connection refused at /join"),
+        });
+        await ready;
 
-      const result = await tools["work"].handler({
-        intent: "do something",
-        pathGlobs: ["src/auth/**"],
-      });
+        // The gate lazily retries the join on this tool call — keep the hub
+        // down so the call still degrades.
+        mockPost.mockRejectedValueOnce(
+          new HubUnreachable("Connection refused at /join"),
+        );
 
-      expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain("proceeding uncoordinated");
-      // The cached failure reason surfaces (not a generic message).
-      expect(result.content[0].text).toContain("hub unreachable at startup");
-      // No /work call is attempted without a session.
-      expect(mockPost).toHaveBeenCalledOnce(); // only the failed /join
+        const result = await tools["work"].handler({
+          intent: "do something",
+          pathGlobs: ["src/auth/**"],
+        });
+
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toContain("proceeding uncoordinated");
+        // The cached failure reason surfaces (not a generic message).
+        expect(result.content[0].text).toContain("hub unreachable at startup");
+        // Only /join attempts were made — never a /work without a session.
+        const paths = mockPost.mock.calls.map((c) => c[0]);
+        expect(paths).toEqual(["/join", "/join"]);
+      } finally {
+        errSpy.mockRestore();
+      }
     });
 
     it("emits ONE stderr line and keeps degrading when the token is revoked/invalid (401)", async () => {
@@ -354,6 +368,147 @@ describe("registerTools", () => {
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain("invalid response");
       expect(result.content[0].text).toContain("proceeding uncoordinated");
+    });
+  });
+
+  // ---- gate retry: transient join failures self-heal on the next tool call --
+
+  describe("gate retry after a transient join failure", () => {
+    it("re-joins on the next tool call after the hub was unreachable at boot, and recovers", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready, heartbeat } = setup({
+        joinError: new HubUnreachable("Connection refused at /join"),
+      });
+      await ready;
+
+      // The retried /join succeeds, then the /work proceeds on the new session.
+      mockPost.mockResolvedValueOnce({
+        agentName: "agent-retry",
+        sessionId: "00000000-0000-0000-0000-0000000000bb",
+      });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "bbbbbbbb-0000-0000-0000-000000000002",
+        landscape: fakeLandscape,
+      });
+
+      const result = await tools["work"].handler({
+        intent: "do something",
+        pathGlobs: ["src/auth/**"],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("You are agent-retry.");
+      // Boot /join (failed) + retried /join + the /work itself.
+      const paths = mockPost.mock.calls.map((c) => c[0]);
+      expect(paths).toEqual(["/join", "/join", "/work"]);
+      // The retry re-joins the marker workspace with the resolved context.
+      const retryBody = mockPost.mock.calls[1][1] as Record<string, unknown>;
+      expect(retryBody.workspace).toBe("acme");
+      // The /work call carries the fresh session, and the heartbeat started.
+      const workBody = mockPost.mock.calls[2][1] as Record<string, unknown>;
+      expect(workBody.sessionId).toBe("00000000-0000-0000-0000-0000000000bb");
+      expect(heartbeat.start).toHaveBeenCalledWith(
+        "00000000-0000-0000-0000-0000000000bb",
+      );
+    });
+
+    it("re-joins on the next tool call after an unexpected hub error (5xx) at boot, and recovers", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubRequestError(
+          500,
+          "Hub returned HTTP 500 for /join: Internal Server Error",
+        ),
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        agentName: "agent-healed",
+        sessionId: "00000000-0000-0000-0000-0000000000cc",
+      });
+      mockPost.mockResolvedValueOnce({ landscape: fakeLandscape });
+
+      const result = await tools["sync"].handler({});
+
+      expect(result.isError).toBeUndefined();
+      const paths = mockPost.mock.calls.map((c) => c[0]);
+      expect(paths).toEqual(["/join", "/join", "/sync"]);
+    });
+
+    it("does NOT re-join when the boot failure was auth (401)", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubRequestError(
+          401,
+          "Hub returned HTTP 401 for /join: Unauthorized",
+        ),
+      });
+      await ready;
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("rejected the team token");
+      // A permanent misconfig is never retried — only the boot /join happened.
+      expect(mockPost).toHaveBeenCalledOnce();
+    });
+
+    it("does NOT re-join when the boot failure was validation (400)", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubRequestError(
+          400,
+          "Hub returned HTTP 400 for /join: Bad Request",
+        ),
+      });
+      await ready;
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("rejected the join");
+      expect(mockPost).toHaveBeenCalledOnce();
+    });
+
+    it("concurrent tool calls after a transient failure share ONE retry join", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubUnreachable("Connection refused at /join"),
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        agentName: "agent-shared",
+        sessionId: "00000000-0000-0000-0000-0000000000dd",
+      });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "bbbbbbbb-0000-0000-0000-000000000003",
+        landscape: fakeLandscape,
+      });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "bbbbbbbb-0000-0000-0000-000000000004",
+        landscape: fakeLandscape,
+      });
+
+      const [r1, r2] = await Promise.all([
+        tools["work"].handler({ intent: "a", pathGlobs: ["src/a/**"] }),
+        tools["work"].handler({ intent: "b", pathGlobs: ["src/b/**"] }),
+      ]);
+
+      expect(r1.content[0].text).toContain("You are agent-shared.");
+      expect(r2.content[0].text).toContain("You are agent-shared.");
+      // Exactly TWO /join posts ever: the failed boot join + ONE shared retry.
+      // A second concurrent retry would mint a duplicate agent identity.
+      const joinPaths = mockPost.mock.calls
+        .map((c) => c[0])
+        .filter((p) => p === "/join");
+      expect(joinPaths).toHaveLength(2);
     });
   });
 
