@@ -121,12 +121,18 @@ const DEFAULT_JOIN = {
  * `ready` resolves once the auto-join settles.
  */
 function setup(opts?: {
-  join?: { agentName: string; sessionId: string };
+  join?: {
+    agentName: string;
+    sessionId: string;
+    latestClientVersion?: string;
+    minimumClientVersion?: string;
+  };
   joinError?: Error;
   joinNeverResolves?: boolean;
   overrideMock?: Partial<HubClient>;
   context?: JoinContext;
   inboxFile?: string;
+  updateNudge?: (versions: { latest?: string; minimum?: string }) => string;
 }) {
   const mockPost = vi.fn();
   // `get` is part of the HubClient interface (link tool, Task 5.4) but these
@@ -159,6 +165,7 @@ function setup(opts?: {
     context: opts?.context ?? fakeContext,
     heartbeat,
     inboxFile: opts?.inboxFile,
+    updateNudge: opts?.updateNudge,
   });
 
   return { mockPost, tools, hubClient, ready, heartbeat };
@@ -507,6 +514,118 @@ describe("registerTools", () => {
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain("released");
       expect(result.content[0].text).toContain("work");
+    });
+  });
+
+  // ---- update nudge -----------------------------------------------------------
+
+  describe("update nudge", () => {
+    const JOIN_WITH_VERSIONS = {
+      agentName: "agent-9",
+      sessionId: "00000000-0000-0000-0000-000000000009",
+      latestClientVersion: "9.9.9",
+      minimumClientVersion: "9.0.0",
+    };
+
+    it("appends the nudge to the first successful result, with the advertised versions", async () => {
+      const updateNudge = vi.fn(() => "NUDGE-LINE");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+
+      expect(result.content[0].text).toContain("NUDGE-LINE");
+      expect(updateNudge).toHaveBeenCalledWith({
+        latest: "9.9.9",
+        minimum: "9.0.0",
+      });
+    });
+
+    it("nudges at most once per session", async () => {
+      const updateNudge = vi.fn(() => "NUDGE-LINE");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+
+      mockPost.mockResolvedValueOnce({ landscape: fakeLandscape });
+      const second = await tools["sync"].handler({});
+      expect(second.content[0].text).not.toContain("NUDGE-LINE");
+      expect(updateNudge).toHaveBeenCalledTimes(1);
+    });
+
+    it("appends the nudge when the session's first tool call is done", async () => {
+      const updateNudge = vi.fn(() => "NUDGE-LINE");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({ ok: true });
+      const result = await tools["done"].handler({
+        workItemId: "ffff0000-0000-0000-0000-000000000002",
+      });
+      expect(result.content[0].text).toContain("NUDGE-LINE");
+    });
+
+    it("never invokes the nudge when the hub advertises no versions", async () => {
+      const updateNudge = vi.fn(() => "SHOULD-NOT-APPEAR");
+      // DEFAULT_JOIN carries no version fields (an older hub).
+      const { mockPost, tools, ready } = setup({ updateNudge });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+      expect(result.content[0].text).not.toContain("SHOULD-NOT-APPEAR");
+      expect(updateNudge).not.toHaveBeenCalled();
+    });
+
+    it("appends nothing when the nudge function returns empty (cooldown)", async () => {
+      const updateNudge = vi.fn(() => "");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+      const text: string = result.content[0].text;
+      expect(text.trimEnd()).toBe(text);
+      expect(text.endsWith("renews it.")).toBe(true);
     });
   });
 

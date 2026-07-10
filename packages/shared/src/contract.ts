@@ -238,6 +238,11 @@ export const JoinRequest = z.object({
 export const JoinResponse = z.object({
   agentName: z.string(),
   sessionId: z.string().uuid(),
+  // Advertised so clients can nudge their humans to update. Optional: older
+  // hubs omit them, and a hub that cannot determine its bundled client
+  // version fails open by leaving them out.
+  latestClientVersion: z.string().optional(),
+  minimumClientVersion: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------

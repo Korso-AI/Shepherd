@@ -65,6 +65,11 @@ const ConfigSchema = z
     // to your email today; a future login flow will supply a real per-user
     // identity and override it per request.
     HUB_ADMIN_LABEL: z.string().min(1).default("admin"),
+    // Oldest client version this hub still supports, advertised to clients on
+    // join (see operations/join.ts + clientVersion.ts). Clients below it warn
+    // their human every session instead of respecting the nudge cooldown.
+    // OPTIONAL and inert: unset means no minimum is advertised.
+    MIN_CLIENT_VERSION: z.string().min(1).optional(),
     // Email invites (POST /workspaces/:id/invites/email) are an OPTIONAL feature:
     // unset RESEND_API_KEY and the endpoint 501s rather than the Hub refusing to
     // boot — self-host operators who don't want it just skip these three vars.

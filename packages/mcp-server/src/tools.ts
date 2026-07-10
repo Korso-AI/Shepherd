@@ -36,6 +36,10 @@ import {
   relativeAge,
 } from "./inbox.js";
 import { createEditTripwire, type EditTripwire } from "./editTripwire.js";
+import { maybeUpdateNudge } from "./updateNudge.js";
+import { PACKAGE_VERSION } from "./version.js";
+import { homedir } from "node:os";
+import nodePath from "node:path";
 import { offerLinkPopup, type ElicitFn } from "./linkPopup.js";
 import {
   isAncestor,
@@ -377,6 +381,14 @@ export function registerTools(
      */
     inboxFile?: string;
     /**
+     * Builds the one-line update nudge appended to the first successful tool
+     * result of the session when the hub's join response advertised client
+     * versions. Defaults to the real cooldown-stamped maybeUpdateNudge against
+     * this package's version; tests inject a deterministic function so no
+     * per-machine stamp file is touched.
+     */
+    updateNudge?: (versions: { latest?: string; minimum?: string }) => string;
+    /**
      * The working directory whose repo root owns the `.shepherd` marker that
      * link/unlink read and write. Defaults to process.cwd(); tests inject a
      * throwaway repo dir so marker round-trips never touch the real repo.
@@ -407,6 +419,50 @@ export function registerTools(
   const { hubClient, config, context, heartbeat, inboxFile } = deps;
   const markerCwd = deps.cwd ?? process.cwd();
   const declinedDir = deps.declinedDir;
+
+  // ---- update nudge ---------------------------------------------------------
+  // Versions the hub advertised on /join (older hubs omit them). The first
+  // successful work/done/announce/sync result of the session gets one nudge
+  // line appended — the module behind the default seam owns the semver compare
+  // and the per-machine 24h cooldown (bypassed below the minimum version).
+  const updateNudge =
+    deps.updateNudge ??
+    ((versions: { latest?: string; minimum?: string }) =>
+      maybeUpdateNudge({
+        current: PACKAGE_VERSION,
+        latest: versions.latest,
+        minimum: versions.minimum,
+        stampFile: nodePath.join(homedir(), ".shepherd", "update-nudge.json"),
+      }));
+  let latestClientVersion: string | undefined;
+  let minimumClientVersion: string | undefined;
+  let nudgeDelivered = false;
+
+  /**
+   * Append the session's one update nudge to a successful tool result. No-op
+   * (without consuming the nudge) until a join has advertised versions, so a
+   * degraded start followed by a hot re-link still gets its nudge.
+   */
+  function withUpdateNudge(text: string): string {
+    if (nudgeDelivered) return text;
+    if (
+      latestClientVersion === undefined &&
+      minimumClientVersion === undefined
+    ) {
+      return text;
+    }
+    nudgeDelivered = true;
+    let nudge = "";
+    try {
+      nudge = updateNudge({
+        latest: latestClientVersion,
+        minimum: minimumClientVersion,
+      });
+    } catch {
+      // The nudge is advisory — never let it break a tool response.
+    }
+    return nudge ? `${text}\n\n${nudge}` : text;
+  }
 
   // Repo root that owns both the `.shepherd` marker and this user's local
   // declined record. Null when not inside a repo — the declined helpers below
@@ -603,6 +659,8 @@ export function registerTools(
         // the heartbeat started cleanly.
         sessionId = newSessionId;
         agentName = parsed.data.agentName;
+        latestClientVersion = parsed.data.latestClientVersion;
+        minimumClientVersion = parsed.data.minimumClientVersion;
         activeWorkspaceSlug = workspaceSlug;
         linked = true;
         hostedWorkspaceRejected = false;
@@ -851,7 +909,7 @@ export function registerTools(
               `or it expires (~60 min). Calling work or sync renews it.`,
           ),
         );
-        return { content: [{ type: "text", text }] };
+        return { content: [{ type: "text", text: withUpdateNudge(text) }] };
       } catch (err) {
         if (err instanceof HubUnreachable || err instanceof HubRequestError) {
           return degradedResult(err);
@@ -888,7 +946,12 @@ export function registerTools(
           mergeAnnouncements(result.announcements, drainLocalInbox()),
         );
         return {
-          content: [{ type: "text", text: msgs ? `${base}\n\n${msgs}` : base }],
+          content: [
+            {
+              type: "text",
+              text: withUpdateNudge(msgs ? `${base}\n\n${msgs}` : base),
+            },
+          ],
         };
       } catch (err) {
         if (err instanceof HubUnreachable || err instanceof HubRequestError) {
@@ -934,7 +997,12 @@ export function registerTools(
           mergeAnnouncements(result.announcements, drainLocalInbox()),
         );
         return {
-          content: [{ type: "text", text: msgs ? `${base}\n\n${msgs}` : base }],
+          content: [
+            {
+              type: "text",
+              text: withUpdateNudge(msgs ? `${base}\n\n${msgs}` : base),
+            },
+          ],
         };
       } catch (err) {
         if (err instanceof HubUnreachable || err instanceof HubRequestError) {
@@ -978,7 +1046,7 @@ export function registerTools(
             formatLandscape(result.landscape),
           ),
         );
-        return { content: [{ type: "text", text }] };
+        return { content: [{ type: "text", text: withUpdateNudge(text) }] };
       } catch (err) {
         if (err instanceof HubUnreachable || err instanceof HubRequestError) {
           return degradedResult(err);
