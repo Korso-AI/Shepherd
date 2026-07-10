@@ -109,6 +109,82 @@ describe("ShepherdRoot", () => {
     expect(screen.getByText("Usage for ws_1")).toBeInTheDocument();
   });
 
+  it("opens a requested injected Settings section and handles a new nonce", async () => {
+    const extraSections = [
+      {
+        id: "host-tools",
+        label: "Host tools",
+        render: ({ workspaceId }: { workspaceId: string }) => (
+          <p>Host tools for {workspaceId}</p>
+        ),
+      },
+    ];
+    const view = renderRoot({
+      extraSections,
+      configSectionRequest: { id: "host-tools", nonce: 1 },
+    });
+
+    expect(await screen.findByText("Host tools for ws_1")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    view.rerender(
+      <ShepherdClientProvider
+        client={makeMockClient({
+          listWorkspaces: vi.fn().mockResolvedValue({ workspaces: [WS] }),
+        })}
+      >
+        <ShepherdRoot
+          extraSections={extraSections}
+          configSectionRequest={{ id: "host-tools", nonce: 2 }}
+        />
+      </ShepherdClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole("tab", { name: "Settings" }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("Host tools for ws_1")).toBeInTheDocument();
+  });
+
+  it("ignores an unknown section request without changing the active tab", async () => {
+    renderRoot({
+      configSectionRequest: { id: "missing", nonce: 1 },
+    });
+
+    expect(await screen.findByRole("tab", { name: "Tasks" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Settings" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  });
+
+  it("notifies the host of the selected workspace without rerender duplicates", async () => {
+    const onWorkspaceChange = vi.fn();
+    const view = renderRoot({ onWorkspaceChange });
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(WS));
+    expect(onWorkspaceChange).toHaveBeenCalledTimes(1);
+
+    view.rerender(
+      <ShepherdClientProvider
+        client={makeMockClient({
+          listWorkspaces: vi.fn().mockResolvedValue({ workspaces: [WS] }),
+        })}
+      >
+        <ShepherdRoot onWorkspaceChange={onWorkspaceChange} />
+      </ShepherdClientProvider>,
+    );
+    await screen.findByRole("tab", { name: "Tasks" });
+    expect(onWorkspaceChange).toHaveBeenCalledTimes(1);
+  });
+
   it("applies a roving tabindex (selected tab = 0, others = -1)", async () => {
     renderRoot();
     const tasks = await screen.findByRole("tab", { name: "Tasks" });

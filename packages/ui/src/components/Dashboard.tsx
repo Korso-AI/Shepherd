@@ -15,6 +15,7 @@ import { DoneList } from "./DoneList.js";
 import { Chat } from "./Chat.js";
 import { Composer } from "./Composer.js";
 import { EmptyState } from "../config/EmptyState.js";
+import type { ConfigSectionRequest } from "../config/ConfigPanel.js";
 import { FeedbackWidget } from "./FeedbackWidget.js";
 import { SetupGuideDialog } from "../onboarding/SetupGuideDialog.js";
 import { useSetupStage } from "../onboarding/useSetupStage.js";
@@ -182,6 +183,8 @@ export interface DashboardProps {
    * never render the checklist.
    */
   onWorkspacesChanged?: () => void;
+  /** Optional host request that switches the dashboard to Settings. */
+  configSectionRequest?: ConfigSectionRequest;
 }
 
 /**
@@ -216,6 +219,7 @@ export function Dashboard({
   onLogout,
   hubUrl,
   onWorkspacesChanged,
+  configSectionRequest,
 }: DashboardProps = {}): ReactElement {
   const hasConfig = config != null;
   // The hosted shell is the only mode with a first-run setup checklist; the
@@ -322,6 +326,19 @@ export function Dashboard({
     setActiveTab(tab);
     writeStored(TAB_KEY, tab);
   }, []);
+
+  const lastConfigRequestNonce = useRef<number | null>(null);
+  useEffect(() => {
+    if (
+      !hasConfig ||
+      !configSectionRequest ||
+      lastConfigRequestNonce.current === configSectionRequest.nonce
+    ) {
+      return;
+    }
+    lastConfigRequestNonce.current = configSectionRequest.nonce;
+    onTab("config");
+  }, [configSectionRequest, hasConfig, onTab]);
 
   const onSelectRepo = useCallback((repo: string | null) => {
     // app.js stores the "__all__" sentinel for All repos (RepoSelect reports null).

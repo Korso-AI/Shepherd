@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { WorkspaceSettings } from "./WorkspaceSettings.js";
 import { Members } from "./Members.js";
@@ -49,6 +49,33 @@ export interface ExtraConfigSection {
   render: (ctx: { workspaceId: string }) => ReactNode;
 }
 
+/** A host request to activate a Settings section. Change `nonce` to repeat it. */
+export interface ConfigSectionRequest {
+  /** Built-in or injected section id to activate. */
+  id: string;
+  /** Request identity; a new value triggers the request. */
+  nonce: number;
+}
+
+interface ResolvedConfigSections {
+  extras: ReadonlyArray<ExtraConfigSection>;
+  ids: ReadonlySet<string>;
+}
+
+/** Resolves the accepted built-in and first-wins injected Settings sections. */
+export function resolveConfigSections(
+  extraSections?: ReadonlyArray<ExtraConfigSection>,
+): ResolvedConfigSections {
+  const ids = new Set<string>(SECTIONS.map(({ id }) => id));
+  const extras: ExtraConfigSection[] = [];
+  for (const extra of extraSections ?? []) {
+    if (ids.has(extra.id)) continue;
+    ids.add(extra.id);
+    extras.push(extra);
+  }
+  return { extras, ids };
+}
+
 export interface ConfigPanelProps {
   /** The active workspace all sections configure. */
   workspace: WorkspaceSummaryT;
@@ -75,6 +102,8 @@ export interface ConfigPanelProps {
   onLogout?: () => void;
   /** Embedder-provided sections, appended to the nav after the built-ins. */
   extraSections?: ReadonlyArray<ExtraConfigSection>;
+  /** Optional host request to activate a built-in or injected section. */
+  sectionRequest?: ConfigSectionRequest;
 }
 
 export function ConfigPanel({
@@ -87,16 +116,24 @@ export function ConfigPanel({
   onDeleted,
   onLogout,
   extraSections,
+  sectionRequest,
 }: ConfigPanelProps) {
   const [section, setSection] = useState<Section | string>("workspace");
+  const lastRequestNonce = useRef<number | null>(null);
   const isAdmin = workspace.role === "admin";
 
-  // A built-in section id always wins: a colliding extra entry is dropped so
-  // it can never shadow (or duplicate) a built-in nav item.
-  const extras = (extraSections ?? []).filter(
-    (extra) => !SECTIONS.some((builtin) => builtin.id === extra.id),
-  );
+  const { extras, ids } = resolveConfigSections(extraSections);
   const activeExtra = extras.find((extra) => extra.id === section);
+
+  useEffect(() => {
+    if (!sectionRequest || lastRequestNonce.current === sectionRequest.nonce) {
+      return;
+    }
+    lastRequestNonce.current = sectionRequest.nonce;
+    if (ids.has(sectionRequest.id)) {
+      setSection(sectionRequest.id);
+    }
+  }, [ids, sectionRequest]);
 
   return (
     <div className="config-layout">

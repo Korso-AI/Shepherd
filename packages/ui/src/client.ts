@@ -16,7 +16,7 @@ import {
   WorkspaceAnnounceResponse,
   FeedbackResponse,
 } from "@shepherd/shared";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import type {
   ListWorkspacesResponseT,
   CreateWorkspaceRequestT,
@@ -45,6 +45,18 @@ import type {
 /** Per-request abort fires after this many ms when no timeoutMs is configured. */
 const DEFAULT_TIMEOUT_MS = 5000;
 
+const ResponseErrorDetails = z
+  .object({
+    error: z.string().min(1).max(512),
+    code: z.string().min(1).max(128).optional(),
+    limit: z.string().min(1).max(128).optional(),
+    current: z.number().finite().int().nonnegative().optional(),
+    max: z.number().finite().int().nonnegative().optional(),
+  })
+  .strip();
+
+type ResponseErrorDetailsT = z.infer<typeof ResponseErrorDetails>;
+
 /**
  * The single error type surfaced by the client. A missing `status` means a
  * transport failure (network error or request timeout); a present `status` is
@@ -55,16 +67,22 @@ const DEFAULT_TIMEOUT_MS = 5000;
 export class ShepherdClientError extends Error {
   /** Upstream HTTP status for a non-2xx response; absent for transport errors. */
   readonly status?: number;
+  /** Validated generic response fields; absent when parsing fails. */
+  readonly details?: unknown;
 
   /**
    * @param message - Human-readable failure description.
    * @param status - Upstream HTTP status, omitted for network/abort failures.
+   * @param details - Validated generic response fields, when available.
    */
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, details?: unknown) {
     super(message);
     this.name = "ShepherdClientError";
     if (status !== undefined) {
       this.status = status;
+    }
+    if (details !== undefined) {
+      this.details = details;
     }
   }
 }
@@ -196,7 +214,8 @@ export interface ShepherdClient {
  * Construction options for {@link createShepherdClient}. Auth is supplied
  * externally via `getAuthHeader` so the core client stays auth-agnostic — it
  * never reads tokens, localStorage, or a BFF; it only merges whatever the host
- * injects and notifies the host on a 401 via `onUnauthorized`.
+ * injects. Response hooks let the host react without coupling the client to
+ * host behavior.
  */
 export interface ShepherdClientConfig {
   /** Hub origin; a trailing slash is tolerated and normalised away. "" = same-origin. */
@@ -216,33 +235,53 @@ export interface ShepherdClientConfig {
     | Promise<string | Record<string, string> | undefined>;
   /** Invoked once when the hub responds 401, before the error is thrown. */
   onUnauthorized?: () => void;
+  /** Invoked once for each non-2xx HTTP response, before its error is thrown. */
+  onResponseError?: (error: ShepherdClientError) => void;
   /** Per-request abort timeout in ms; defaults to {@link DEFAULT_TIMEOUT_MS}. */
   timeoutMs?: number;
 }
 
 /**
- * Reads a best-effort `{ error: string }` message from a non-2xx response body
- * so the thrown error carries the hub's own explanation. A non-JSON or bodyless
- * response degrades to an empty string — the status code is still informative.
+ * Validates a non-2xx JSON response against the bounded generic detail schema.
+ * A malformed, non-JSON, or bodyless response keeps only the status code.
  *
  * @param res - The non-2xx response to inspect.
- * @returns The upstream error string, or "" when none could be read.
+ * @returns The optional parsed body and its display message, when available.
  */
-async function readErrorDetail(res: Response): Promise<string> {
+async function readResponseError(
+  res: Response,
+  signal: AbortSignal,
+): Promise<{ message: string; details?: ResponseErrorDetailsT }> {
   try {
-    const data: unknown = await res.json();
-    if (
-      data !== null &&
-      typeof data === "object" &&
-      "error" in data &&
-      typeof (data as { error: unknown }).error === "string"
-    ) {
-      return (data as { error: string }).error;
+    const parsed = ResponseErrorDetails.safeParse(
+      await readResponseJson(res, signal),
+    );
+    if (parsed.success) {
+      return { message: parsed.data.error, details: parsed.data };
     }
   } catch {
-    // Body wasn't JSON; the status code alone remains informative.
+    // A missing, stalled, or non-JSON body leaves the status informative.
   }
-  return "";
+  return { message: "" };
+}
+
+/** Reads JSON while ensuring an abort also settles a stalled body promise. */
+function readResponseJson(
+  res: Response,
+  signal: AbortSignal,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const rejectOnAbort = () => reject(new Error("The operation was aborted"));
+    if (signal.aborted) {
+      rejectOnAbort();
+      return;
+    }
+    signal.addEventListener("abort", rejectOnAbort, { once: true });
+    void res
+      .json()
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener("abort", rejectOnAbort));
+  });
 }
 
 /**
@@ -253,7 +292,7 @@ async function readErrorDetail(res: Response): Promise<string> {
  * its input shape. void-returning methods (revoke/remove/leave) await the
  * request and parse nothing.
  *
- * @param config - Base URL, optional injected auth, 401 hook, and timeout.
+ * @param config - Base URL, optional injected auth, response hooks, and timeout.
  * @returns A {@link ShepherdClient}.
  */
 export function createShepherdClient(
@@ -280,7 +319,6 @@ export function createShepherdClient(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    let res: Response;
     try {
       // Only advertise a JSON body when there actually IS one. A bodyless
       // POST/DELETE (leave, revoke, deleteWorkspace) that still sent
@@ -309,49 +347,65 @@ export function createShepherdClient(
       if (opts.body !== undefined) {
         init.body = JSON.stringify(opts.body);
       }
-      res = await fetch(`${baseUrl}${path}`, init);
+      const res = await fetch(`${baseUrl}${path}`, init);
+
+      if (res.status === 401) {
+        try {
+          config.onUnauthorized?.();
+        } catch {
+          // A host callback must not replace the response error.
+        }
+      }
+
+      if (!res.ok) {
+        const responseError = await readResponseError(res, controller.signal);
+        const error = new ShepherdClientError(
+          res.status === 401
+            ? "Unauthorized"
+            : responseError.message !== ""
+              ? `HTTP ${res.status}: ${responseError.message}`
+              : `HTTP ${res.status}`,
+          res.status,
+          responseError.details,
+        );
+        try {
+          config.onResponseError?.(error);
+        } catch {
+          // A host callback must not replace the response error.
+        }
+        throw error;
+      }
+
+      if (!opts.schema) {
+        // void endpoint: no dedicated response schema. Drain any body and resolve
+        // undefined — callers of these methods don't depend on the payload.
+        try {
+          await readResponseJson(res, controller.signal);
+        } catch (err) {
+          if (controller.signal.aborted) throw err;
+          // empty / non-JSON body is fine for a void endpoint.
+        }
+        // void endpoints are called as request<void>(...); the undefined resolve
+        // is the intended value, asserted to T since the no-schema branch is only
+        // reached for the void-typed callers.
+        return undefined as T;
+      }
+
+      const parsed = opts.schema.safeParse(
+        await readResponseJson(res, controller.signal),
+      );
+      if (!parsed.success) {
+        throw new ShepherdClientError("Invalid response schema");
+      }
+      return parsed.data;
     } catch (err) {
-      // Network error or abort/timeout: no HTTP status exists, so the error is
-      // thrown WITHOUT one to mark it a transport failure.
+      if (err instanceof ShepherdClientError) throw err;
       throw new ShepherdClientError(
         err instanceof Error ? err.message : String(err),
       );
     } finally {
       clearTimeout(timer);
     }
-
-    if (res.status === 401) {
-      config.onUnauthorized?.();
-      throw new ShepherdClientError("Unauthorized", 401);
-    }
-
-    if (!res.ok) {
-      const detail = await readErrorDetail(res);
-      throw new ShepherdClientError(
-        detail !== "" ? `HTTP ${res.status}: ${detail}` : `HTTP ${res.status}`,
-        res.status,
-      );
-    }
-
-    if (!opts.schema) {
-      // void endpoint: no dedicated response schema. Drain any body and resolve
-      // undefined — callers of these methods don't depend on the payload.
-      try {
-        await res.json();
-      } catch {
-        // empty / non-JSON body is fine for a void endpoint.
-      }
-      // void endpoints are called as request<void>(...); the undefined resolve
-      // is the intended value, asserted to T since the no-schema branch is only
-      // reached for the void-typed callers.
-      return undefined as T;
-    }
-
-    const parsed = opts.schema.safeParse(await res.json());
-    if (!parsed.success) {
-      throw new ShepherdClientError("Invalid response schema");
-    }
-    return parsed.data;
   }
 
   return {
