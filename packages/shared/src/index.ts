@@ -66,7 +66,13 @@ export {
   FeedbackContext,
   FeedbackRequest,
   FeedbackResponse,
+  AnalyticsRange,
+  DEFAULT_ANALYTICS_RANGE,
+  AnalyticsBucket,
+  PeriodMetric,
+  DurationPercentiles,
   TrendPoint,
+  TrendSeries,
   TopWorkspace,
   ShepherdAnalyticsResponse,
 } from "./contract.js";
@@ -133,7 +139,12 @@ import type {
   FeedbackContext,
   FeedbackRequest,
   FeedbackResponse,
+  AnalyticsRange,
+  AnalyticsBucket,
+  PeriodMetric,
+  DurationPercentiles,
   TrendPoint,
+  TrendSeries,
   TopWorkspace,
   ShepherdAnalyticsResponse,
 } from "./contract.js";
@@ -221,7 +232,12 @@ export type FeedbackContextT = z.infer<typeof FeedbackContext>;
 export type FeedbackRequestT = z.infer<typeof FeedbackRequest>;
 export type FeedbackResponseT = z.infer<typeof FeedbackResponse>;
 
+export type AnalyticsRangeT = z.infer<typeof AnalyticsRange>;
+export type AnalyticsBucketT = z.infer<typeof AnalyticsBucket>;
+export type PeriodMetricT = z.infer<typeof PeriodMetric>;
+export type DurationPercentilesT = z.infer<typeof DurationPercentiles>;
 export type TrendPointT = z.infer<typeof TrendPoint>;
+export type TrendSeriesT = z.infer<typeof TrendSeries>;
 export type TopWorkspaceT = z.infer<typeof TopWorkspace>;
 export type ShepherdAnalyticsResponseT = z.infer<
   typeof ShepherdAnalyticsResponse
