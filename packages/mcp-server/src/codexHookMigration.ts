@@ -2,22 +2,9 @@
  * Versioned, crash-safe migration of Shepherd-owned legacy Codex hooks.
  */
 
-import {
-  chmodSync,
-  closeSync,
-  existsSync,
-  fchmodSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { createHash, randomUUID } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { z } from "zod";
 import {
   appendMissingCodexHandlers,
@@ -25,6 +12,12 @@ import {
   planCodexConfig,
   type CodexHookInstallStatus,
 } from "./codexHookInstall.js";
+import {
+  acquireMigrationLock,
+  atomicWrite,
+  ensureMigrationBackup,
+  releaseMigrationLock,
+} from "./codexHookFs.js";
 
 type MigrationOutcome =
   | "migrated"
@@ -55,7 +48,6 @@ interface MigrationContext {
 }
 
 const MIGRATION_VERSION = 2;
-const STALE_LOCK_MS = 30_000;
 const migrationOutcomeSchema = z.enum([
   "migrated",
   "already-canonical",
@@ -72,10 +64,6 @@ const recordSchema = z
     migrationOutcome: migrationOutcomeSchema.optional(),
   })
   .passthrough();
-const lockSchema = z.object({
-  pid: z.number().int().positive(),
-  createdAt: z.string(),
-});
 
 function migrationPaths(homeDir: string): MigrationPaths {
   const hooksDir = join(homeDir, ".shepherd", "hooks");
@@ -140,129 +128,12 @@ function readConfigBytes(configFile: string): Buffer {
   return existsSync(configFile) ? readFileSync(configFile) : Buffer.alloc(0);
 }
 
-function syncFile(path: string): void {
-  const descriptor = openSync(path, "r+");
+function decodeConfig(bytes: Buffer): string | null {
   try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
-function fileMode(path: string): number {
-  try {
-    return statSync(path).mode & 0o777;
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return 0o600;
+    return null;
   }
-}
-
-function atomicWrite(
-  path: string,
-  contents: string | Buffer,
-  mode = fileMode(path),
-): void {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = join(
-    dirname(path),
-    "." + basename(path) + "." + process.pid + "." + randomUUID() + ".tmp",
-  );
-  let descriptor: number | null = null;
-  try {
-    descriptor = openSync(temporary, "wx", mode);
-    writeFileSync(descriptor, contents);
-    fchmodSync(descriptor, mode);
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = null;
-    renameSync(temporary, path);
-    syncFile(path);
-  } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // The temp may already have been renamed or never created.
-    }
-    throw error;
-  }
-}
-
-function processIsLive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !(
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "ESRCH"
-    );
-  }
-}
-
-function staleDeadLock(lockFile: string): boolean {
-  try {
-    const decoded: unknown = JSON.parse(readFileSync(lockFile, "utf8"));
-    const parsed = lockSchema.safeParse(decoded);
-    if (!parsed.success) return false;
-    const createdAt = Date.parse(parsed.data.createdAt);
-    return (
-      Number.isFinite(createdAt) &&
-      Date.now() - createdAt > STALE_LOCK_MS &&
-      !processIsLive(parsed.data.pid)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function acquireLock(lockFile: string, retried = false): boolean {
-  mkdirSync(dirname(lockFile), { recursive: true });
-  let descriptor: number | null = null;
-  try {
-    descriptor = openSync(lockFile, "wx", 0o600);
-    writeFileSync(
-      descriptor,
-      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
-      "utf8",
-    );
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    return true;
-  } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
-    if (
-      !retried &&
-      error instanceof Error &&
-      "code" in error &&
-      error.code === "EEXIST" &&
-      staleDeadLock(lockFile)
-    ) {
-      unlinkSync(lockFile);
-      return acquireLock(lockFile, true);
-    }
-    return false;
-  }
-}
-
-function ensureBackup(backupFile: string, source: Buffer): void {
-  mkdirSync(dirname(backupFile), { recursive: true });
-  if (existsSync(backupFile)) {
-    if (!readFileSync(backupFile).equals(source)) {
-      throw new Error("existing Codex migration backup does not match config");
-    }
-    chmodSync(backupFile, 0o600);
-    return;
-  }
-  const descriptor = openSync(backupFile, "wx", 0o600);
-  try {
-    writeFileSync(descriptor, source);
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
-  chmodSync(backupFile, 0o600);
 }
 
 function advanceRecord(
@@ -317,9 +188,9 @@ function migrateLegacy(
   context: MigrationContext,
   state: RecordState,
   sourceBytes: Buffer,
+  source: string,
 ): CodexHookInstallStatus {
   const { paths, command, log } = context;
-  const source = sourceBytes.toString("utf8");
   const candidate = appendMissingCodexHandlers(source, command);
   if (candidate === null) {
     advanceRecord(paths.recordFile, state, "skipped", "unsupported-shape");
@@ -327,17 +198,19 @@ function migrateLegacy(
   }
 
   const recordBytes = readFileSync(paths.recordFile);
-  const configMode = fileMode(paths.configFile);
-  const recordMode = fileMode(paths.recordFile);
   const configChanged = candidate !== source;
-  ensureBackup(paths.backupFile, sourceBytes);
+  ensureMigrationBackup(paths.backupFile, sourceBytes);
   if (!readConfigBytes(paths.configFile).equals(sourceBytes)) return "skipped";
-  if (configChanged) atomicWrite(paths.configFile, candidate, configMode);
   try {
+    if (configChanged) atomicWrite(paths.configFile, candidate);
     advanceRecord(paths.recordFile, state, "installed", "migrated");
   } catch (error) {
-    if (configChanged) atomicWrite(paths.configFile, sourceBytes, configMode);
-    atomicWrite(paths.recordFile, recordBytes, recordMode);
+    if (!readConfigBytes(paths.configFile).equals(sourceBytes)) {
+      atomicWrite(paths.configFile, sourceBytes);
+    }
+    if (!readFileSync(paths.recordFile).equals(recordBytes)) {
+      atomicWrite(paths.recordFile, recordBytes);
+    }
     throw error;
   }
   log(
@@ -361,7 +234,11 @@ function processLockedConfig(
 
   const sourceBytes = readConfigBytes(paths.configFile);
   if (fingerprint(sourceBytes) !== expectedFingerprint) return "skipped";
-  const source = sourceBytes.toString("utf8");
+  const source = decodeConfig(sourceBytes);
+  if (source === null) {
+    advanceRecord(paths.recordFile, state, "skipped", "unsupported-shape");
+    return "skipped";
+  }
   const plan = planCodexConfig(source, command);
   if (plan.kind === "skip") {
     advanceRecord(paths.recordFile, state, "skipped", plan.outcome);
@@ -379,7 +256,7 @@ function processLockedConfig(
 
   const ownedBlock = exactOwnedLegacyBlock(source, paths.hooksDir);
   if (state.kind === "legacy" && ownedBlock !== undefined) {
-    return migrateLegacy(context, state, sourceBytes);
+    return migrateLegacy(context, state, sourceBytes, source);
   }
   if (
     ownedBlock !== undefined ||
@@ -430,7 +307,8 @@ export async function installCodexHooks({
     return "skipped";
   }
   const expectedFingerprint = fingerprint(initialBytes);
-  if (!acquireLock(paths.lockFile)) return "skipped";
+  const owner = acquireMigrationLock(paths.lockFile);
+  if (owner === null) return "skipped";
 
   try {
     await Promise.resolve();
@@ -439,12 +317,6 @@ export async function installCodexHooks({
     log("[shepherd] Codex hook migration skipped: " + String(error));
     return "skipped";
   } finally {
-    try {
-      unlinkSync(paths.lockFile);
-    } catch (error) {
-      log(
-        "[shepherd] Codex hook migration lock cleanup failed: " + String(error),
-      );
-    }
+    releaseMigrationLock(paths.lockFile, owner, log);
   }
 }

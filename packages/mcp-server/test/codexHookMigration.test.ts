@@ -41,7 +41,8 @@ vi.mock("node:fs", async (importOriginal) => {
       const path = String(args[0]);
       faults.events.push("open:" + path + ":" + String(args[1]));
       if (
-        path.endsWith("codex-config-before-v2.toml") &&
+        path.includes("codex-config-before-v2.toml.") &&
+        path.endsWith(".tmp") &&
         args[1] === "wx" &&
         faults.replaceOnBackupOpen !== null
       ) {
@@ -72,7 +73,7 @@ vi.mock("node:fs", async (importOriginal) => {
       faults.events.push("fsync:" + path);
       if (
         faults.failFsyncOnceSuffix !== null &&
-        path.endsWith(faults.failFsyncOnceSuffix)
+        path.includes(faults.failFsyncOnceSuffix)
       ) {
         faults.failFsyncOnceSuffix = null;
         throw new Error("injected fsync failure");
@@ -357,7 +358,7 @@ describe("Codex v2 migration durability", () => {
     const root = home();
     const source = setupLegacy(root);
     const record = readFileSync(recordFile(root), "utf8");
-    faults.failFsyncOnceSuffix = "codex.json";
+    faults.failFsyncOnceSuffix = ".codex.json.";
 
     expect((await install(root)).result.status).toBe("skipped");
     expect(readFileSync(configFile(root), "utf8")).toBe(source);
@@ -422,7 +423,9 @@ describe("Codex v2 migration durability", () => {
     const root = home();
     setupLegacy(root);
     await install(root);
-    const configSync = faults.events.indexOf("fsync:" + configFile(root));
+    const configSync = faults.events.findIndex(
+      (event) => event.startsWith("fsync:") && event.includes(".config.toml."),
+    );
     const recordRename = faults.events.indexOf("rename:" + recordFile(root));
     expect(configSync).toBeGreaterThanOrEqual(0);
     expect(recordRename).toBeGreaterThan(configSync);
