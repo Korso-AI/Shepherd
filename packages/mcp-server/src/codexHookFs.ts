@@ -30,7 +30,7 @@ const lockSchema = z.object({
 
 interface LockSnapshot {
   bytes: Buffer;
-  stale: boolean;
+  reclaimable: boolean;
 }
 
 function errorCode(error: unknown): string | undefined {
@@ -108,40 +108,39 @@ function lockSnapshot(lockFile: string): LockSnapshot | null {
   try {
     const bytes = readFileSync(lockFile);
     const modifiedAt = statSync(lockFile).mtimeMs;
-    let stale = Date.now() - modifiedAt > STALE_LOCK_MS;
+    let reclaimable = false;
     try {
       const decoded: unknown = JSON.parse(bytes.toString("utf8"));
       const parsed = lockSchema.safeParse(decoded);
       if (parsed.success) {
         const createdAt = Date.parse(parsed.data.createdAt);
-        if (Number.isFinite(createdAt)) {
-          stale =
-            Date.now() - createdAt > STALE_LOCK_MS &&
-            !processIsLive(parsed.data.pid);
-        }
+        const ageBasis = Number.isFinite(createdAt) ? createdAt : modifiedAt;
+        reclaimable =
+          Date.now() - ageBasis > STALE_LOCK_MS &&
+          !processIsLive(parsed.data.pid);
       }
     } catch {
-      // Malformed locks fall back to their filesystem modification time.
+      // A lock without a proven-dead recorded PID is never safe to reclaim.
     }
-    return { bytes, stale };
+    return { bytes, reclaimable };
   } catch {
     return null;
   }
+}
+
+function lockContents(owner: string): string {
+  return JSON.stringify({
+    pid: process.pid,
+    createdAt: new Date().toISOString(),
+    owner,
+  });
 }
 
 function createOwnedLock(lockFile: string, owner: string): boolean {
   let descriptor: number | null = null;
   try {
     descriptor = openSync(lockFile, "wx", 0o600);
-    writeFileSync(
-      descriptor,
-      JSON.stringify({
-        pid: process.pid,
-        createdAt: new Date().toISOString(),
-        owner,
-      }),
-      "utf8",
-    );
+    writeFileSync(descriptor, lockContents(owner), "utf8");
     fsyncSync(descriptor);
     closeSync(descriptor);
     return true;
@@ -151,43 +150,84 @@ function createOwnedLock(lockFile: string, owner: string): boolean {
   }
 }
 
-function restoreQuarantine(lockFile: string, quarantine: string): boolean {
+function ownedBy(lockFile: string, owner: string): boolean {
   try {
-    if (existsSync(lockFile)) return false;
-    renameSync(quarantine, lockFile);
-    return true;
+    const decoded: unknown = JSON.parse(readFileSync(lockFile, "utf8"));
+    const parsed = lockSchema.safeParse(decoded);
+    return parsed.success && parsed.data.owner === owner;
   } catch {
     return false;
   }
 }
 
+function removeOwnedLock(lockFile: string, owner: string): void {
+  if (ownedBy(lockFile, owner)) unlinkSync(lockFile);
+}
+
+function snapshotMatches(
+  current: LockSnapshot | null,
+  expected: LockSnapshot,
+): boolean {
+  return (
+    current !== null &&
+    current.reclaimable &&
+    current.bytes.equals(expected.bytes)
+  );
+}
+
+function replaceStaleLock(
+  lockFile: string,
+  claimFile: string,
+  owner: string,
+  expected: LockSnapshot,
+): boolean {
+  const replacement = lockFile + ".replacement-" + owner;
+  let published = false;
+  try {
+    durableTemp(replacement, lockContents(owner), 0o600);
+    if (!ownedBy(claimFile, owner)) return false;
+    if (!snapshotMatches(lockSnapshot(lockFile), expected)) return false;
+    renameSync(replacement, lockFile);
+    published = true;
+    syncParent(lockFile);
+    if (ownedBy(claimFile, owner)) return true;
+    removeOwnedLock(lockFile, owner);
+    return false;
+  } catch {
+    if (published) removeOwnedLock(lockFile, owner);
+    return false;
+  } finally {
+    try {
+      unlinkSync(replacement);
+    } catch {
+      // The replacement may have been published or never created.
+    }
+  }
+}
+
 /**
- * Acquire an exclusive lock, reclaiming only the exact stale snapshot moved
- * into this claimant's unique quarantine file.
+ * Acquire an exclusive lock, atomically replacing only an unchanged stale
+ * snapshot while a fixed claim file serializes competing reclaimers.
  */
 export function acquireMigrationLock(lockFile: string): string | null {
   mkdirSync(dirname(lockFile), { recursive: true });
   const owner = randomUUID();
   if (createOwnedLock(lockFile, owner)) return owner;
   const snapshot = lockSnapshot(lockFile);
-  if (snapshot === null || !snapshot.stale) return null;
+  if (snapshot === null || !snapshot.reclaimable) return null;
 
-  const quarantine = lockFile + ".quarantine-" + owner;
+  const claimFile = lockFile + ".reclaim";
+  if (!createOwnedLock(claimFile, owner)) return null;
   try {
-    renameSync(lockFile, quarantine);
-  } catch {
-    return null;
-  }
-  let retainQuarantine = false;
-  try {
-    const moved = readFileSync(quarantine);
-    if (!moved.equals(snapshot.bytes)) {
-      retainQuarantine = !restoreQuarantine(lockFile, quarantine);
-      return null;
-    }
-    return createOwnedLock(lockFile, owner) ? owner : null;
+    return replaceStaleLock(lockFile, claimFile, owner, snapshot)
+      ? owner
+      : null;
   } finally {
-    if (!retainQuarantine && existsSync(quarantine)) unlinkSync(quarantine);
+    try {
+      removeOwnedLock(claimFile, owner);
+    } catch {
+      // A cleanup failure leaves a fail-closed claim, never an unlocked gap.
+    }
   }
 }
 
@@ -200,9 +240,7 @@ export function releaseMigrationLock(
   log: (message: string) => void,
 ): void {
   try {
-    const decoded: unknown = JSON.parse(readFileSync(lockFile, "utf8"));
-    const parsed = lockSchema.safeParse(decoded);
-    if (parsed.success && parsed.data.owner === owner) unlinkSync(lockFile);
+    removeOwnedLock(lockFile, owner);
   } catch (error) {
     log(
       "[shepherd] Codex hook migration lock cleanup failed: " + String(error),
@@ -225,9 +263,12 @@ export function ensureMigrationBackup(
   backupFile: string,
   source: Buffer,
 ): void {
-  mkdirSync(dirname(backupFile), { recursive: true });
+  const backupDirectory = dirname(backupFile);
+  mkdirSync(backupDirectory, { recursive: true });
+  syncParent(backupDirectory);
   if (existsSync(backupFile)) {
     validateBackup(backupFile, source);
+    syncParent(backupFile);
     return;
   }
 
