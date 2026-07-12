@@ -17,7 +17,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 
@@ -30,6 +30,7 @@ const lockSchema = z.object({
 
 interface LockSnapshot {
   bytes: Buffer;
+  owner: string | null;
   reclaimable: boolean;
 }
 
@@ -108,11 +109,13 @@ function lockSnapshot(lockFile: string): LockSnapshot | null {
   try {
     const bytes = readFileSync(lockFile);
     const modifiedAt = statSync(lockFile).mtimeMs;
+    let owner: string | null = null;
     let reclaimable = false;
     try {
       const decoded: unknown = JSON.parse(bytes.toString("utf8"));
       const parsed = lockSchema.safeParse(decoded);
       if (parsed.success) {
+        owner = parsed.data.owner ?? null;
         const createdAt = Date.parse(parsed.data.createdAt);
         const ageBasis = Number.isFinite(createdAt) ? createdAt : modifiedAt;
         reclaimable =
@@ -122,7 +125,7 @@ function lockSnapshot(lockFile: string): LockSnapshot | null {
     } catch {
       // A lock without a proven-dead recorded PID is never safe to reclaim.
     }
-    return { bytes, reclaimable };
+    return { bytes, owner, reclaimable };
   } catch {
     return null;
   }
@@ -178,36 +181,22 @@ function snapshotMatches(
   );
 }
 
-function replaceStaleClaim(
-  claimFile: string,
-  owner: string,
-  expected: LockSnapshot,
-): boolean {
-  const replacement = claimFile + ".owner-" + owner + ".tmp";
-  try {
-    durableTemp(replacement, lockContents(owner), 0o600);
-    if (!snapshotMatches(lockSnapshot(claimFile), expected)) return false;
-    renameSync(replacement, claimFile);
-    return ownedBy(claimFile, owner);
-  } catch {
-    return false;
-  } finally {
-    try {
-      unlinkSync(replacement);
-    } catch {
-      // The replacement may have been published or never created.
-    }
-  }
+function nextReclaimClaim(rootClaim: string, snapshot: LockSnapshot): string {
+  const generation = createHash("sha256").update(snapshot.bytes).digest("hex");
+  return rootClaim + ".generation-" + generation;
 }
 
-function acquireReclaimClaim(claimFile: string, owner: string): boolean {
-  if (createOwnedLock(claimFile, owner)) return true;
-  const snapshot = lockSnapshot(claimFile);
-  return (
-    snapshot !== null &&
-    snapshot.reclaimable &&
-    replaceStaleClaim(claimFile, owner, snapshot)
-  );
+function acquireReclaimClaim(rootClaim: string, owner: string): string | null {
+  let claimFile = rootClaim;
+  for (let generation = 0; generation < 32; generation += 1) {
+    if (createOwnedLock(claimFile, owner)) return claimFile;
+    const snapshot = lockSnapshot(claimFile);
+    if (snapshot === null || !snapshot.reclaimable || snapshot.owner === null) {
+      return null;
+    }
+    claimFile = nextReclaimClaim(rootClaim, snapshot);
+  }
+  return null;
 }
 
 function replaceStaleLock(
@@ -242,7 +231,8 @@ function replaceStaleLock(
 
 /**
  * Acquire an exclusive lock, atomically replacing only an unchanged stale
- * snapshot while a fixed claim file serializes competing reclaimers.
+ * snapshot while append-only claim generations serialize reclaimers using
+ * atomic no-overwrite publication.
  */
 export function acquireMigrationLock(lockFile: string): string | null {
   mkdirSync(dirname(lockFile), { recursive: true });
@@ -251,8 +241,8 @@ export function acquireMigrationLock(lockFile: string): string | null {
   const snapshot = lockSnapshot(lockFile);
   if (snapshot === null || !snapshot.reclaimable) return null;
 
-  const claimFile = lockFile + ".reclaim";
-  if (!acquireReclaimClaim(claimFile, owner)) return null;
+  const claimFile = acquireReclaimClaim(lockFile + ".reclaim", owner);
+  if (claimFile === null) return null;
   try {
     return replaceStaleLock(lockFile, claimFile, owner, snapshot)
       ? owner

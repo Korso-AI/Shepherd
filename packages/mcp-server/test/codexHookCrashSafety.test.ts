@@ -26,6 +26,8 @@ const faults = vi.hoisted(() => ({
   },
   onLockPublication: null as ((target: string) => void) | null,
   onLockMutation: null as (() => void) | null,
+  watchedMigrationLock: null as string | null,
+  observedUnlockedMigration: false,
   events: [] as string[],
   descriptors: new Map<number, string>(),
 }));
@@ -39,6 +41,17 @@ vi.mock("node:fs", async (importOriginal) => {
       : !path.includes(".reclaim"));
   return {
     ...fs,
+    existsSync: (...args: Parameters<typeof fs.existsSync>) => {
+      const path = String(args[0]);
+      if (
+        path.endsWith("config.toml") &&
+        faults.watchedMigrationLock !== null &&
+        !fs.existsSync(faults.watchedMigrationLock)
+      ) {
+        faults.observedUnlockedMigration = true;
+      }
+      return fs.existsSync(...args);
+    },
     readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
       const path = String(args[0]);
       if (
@@ -162,6 +175,8 @@ beforeEach(() => {
   faults.failLockCreationOnce = null;
   faults.onLockPublication = null;
   faults.onLockMutation = null;
+  faults.watchedMigrationLock = null;
+  faults.observedUnlockedMigration = false;
   faults.events.length = 0;
   faults.descriptors.clear();
 });
@@ -238,7 +253,6 @@ describe("Codex atomic replacement durability", () => {
     const root = home();
     const original = setupLegacy(root);
     faults.denyConfigReopenOnce = true;
-
     expect((await install(root)).status).toBe("installed");
     expect(
       readFileSync(configFile(root)).subarray(0, original.config.length),
@@ -253,7 +267,6 @@ describe("Codex atomic replacement durability", () => {
     const root = home();
     const original = setupLegacy(root);
     faults.failDirectoryFsyncOnce = join(root, ".codex");
-
     expect((await install(root)).status).toBe("skipped");
     expect(readFileSync(configFile(root))).toEqual(original.config);
     expect(readFileSync(recordFile(root))).toEqual(original.record);
@@ -263,7 +276,6 @@ describe("Codex atomic replacement durability", () => {
     if (process.platform === "win32") return;
     const root = home();
     setupLegacy(root);
-
     expect((await install(root)).status).toBe("installed");
     expect(faults.events).toContain("fsync:" + dirname(configFile(root)));
     expect(faults.events).toContain("fsync:" + dirname(recordFile(root)));
@@ -296,7 +308,6 @@ describe("Codex migration lock ownership", () => {
       expect(existsSync(lockFile(root))).toBe(!reclaimable);
     }
   });
-
   it("publishes no lock path when ownership write or fsync fails", async () => {
     for (const target of ["main", "reclaim"] as const) {
       for (const stage of ["write", "fsync"] as const) {
@@ -323,7 +334,6 @@ describe("Codex migration lock ownership", () => {
       }
     }
   });
-
   it("recovers recorded-dead reclaim claims but holds malformed claims", async () => {
     for (const [claim, expected] of [
       [deadLock("claim"), "installed"],
@@ -336,10 +346,9 @@ describe("Codex migration lock ownership", () => {
       const old = new Date("2000-01-01T00:00:00.000Z");
       utimesSync(reclaimFile(root), old, old);
       expect((await install(root)).status).toBe(expected);
-      expect(existsSync(reclaimFile(root))).toBe(expected === "skipped");
+      expect(existsSync(reclaimFile(root))).toBe(true);
     }
   });
-
   it("cannot remove another owner during no-overwrite publication", async () => {
     for (const target of ["main", "reclaim"] as const) {
       const root = home();
@@ -365,29 +374,28 @@ describe("Codex migration lock ownership", () => {
     }
   });
 
-  it("allows only one claimant to atomically replace a stale lock", async () => {
+  it("serializes a claimant that already validated the stale reclaim claim", async () => {
     const root = home();
     mkdirSync(hooksDir(root), { recursive: true });
     writeFileSync(lockFile(root), deadLock(), "utf8");
-
-    const results = await Promise.all([install(root), install(root)]);
-    expect(results.filter(({ status }) => status === "installed")).toHaveLength(
-      1,
-    );
-    expect(
-      faults.events.some(
-        (event) =>
-          event.includes(".replacement-") &&
-          event.endsWith("->" + lockFile(root)),
-      ),
-    ).toBe(true);
-    expect(
-      readdirSync(hooksDir(root)).some(
-        (name) => name.includes(".replacement-") || name.endsWith(".reclaim"),
-      ),
-    ).toBe(false);
+    const validatedClaim = deadLock("claim");
+    writeFileSync(reclaimFile(root), validatedClaim, "utf8");
+    const contenders: Array<ReturnType<typeof install>> = [];
+    faults.onLockMutation = () => {
+      faults.onLockMutation = null;
+      // Replay the claim snapshot a contender validated before this claimant
+      // replaced it, then let that contender resume its acquisition.
+      writeFileSync(reclaimFile(root), validatedClaim, "utf8");
+      faults.watchedMigrationLock = lockFile(root);
+      contenders.push(install(root));
+    };
+    const primary = await install(root);
+    expect(contenders).toHaveLength(1);
+    const contender = await contenders[0]!;
+    expect.soft(primary.status).toBe("installed");
+    expect.soft(contender.status).toBe("skipped");
+    expect(faults.observedUnlockedMigration).toBe(false);
   });
-
   it("does not reclaim a fresh lock that replaced the stale snapshot", async () => {
     const root = home();
     mkdirSync(hooksDir(root), { recursive: true });
@@ -397,7 +405,6 @@ describe("Codex migration lock ownership", () => {
     expect((await install(root)).status).toBe("skipped");
     expect(readFileSync(lockFile(root), "utf8")).toBe(replacement);
   });
-
   it("keeps a third claimant out while atomically replacing a stale lock", async () => {
     const root = home();
     mkdirSync(hooksDir(root), { recursive: true });
@@ -441,7 +448,6 @@ describe("Codex backup publication and byte boundaries", () => {
   it("publishes with create-if-absent semantics", async () => {
     const root = home();
     const original = setupLegacy(root);
-
     expect((await install(root)).status).toBe("installed");
     expect(readFileSync(backupFile(root))).toEqual(original.config);
     expect(faults.events.some((event) => event.startsWith("link:"))).toBe(true);
@@ -453,11 +459,9 @@ describe("Codex backup publication and byte boundaries", () => {
     setupLegacy(root);
     const backups = dirname(backupFile(root));
     faults.failDirectoryFsyncOnce = backups;
-
     expect((await install(root)).status).toBe("skipped");
     expect(existsSync(backupFile(root))).toBe(true);
     faults.events.length = 0;
-
     expect((await install(root)).status).toBe("installed");
     expect(faults.events).toContain("fsync:" + backups);
   });
@@ -466,7 +470,6 @@ describe("Codex backup publication and byte boundaries", () => {
     if (process.platform === "win32") return;
     const root = home();
     setupLegacy(root);
-
     expect((await install(root)).status).toBe("installed");
     const hooksSync = faults.events.indexOf("fsync:" + hooksDir(root));
     const configRename = faults.events.findIndex(
@@ -486,7 +489,6 @@ describe("Codex backup publication and byte boundaries", () => {
       Buffer.from("\n"),
     ]);
     writeFileSync(configFile(root), invalid);
-
     expect((await install(root)).status).toBe("skipped");
     expect(readFileSync(configFile(root))).toEqual(invalid);
     expect(JSON.parse(readFileSync(recordFile(root), "utf8"))).toMatchObject({
