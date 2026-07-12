@@ -171,18 +171,27 @@ export async function autoInstallHooks({
     // "the user may have removed it since" — which we must respect, so the
     // record is checked BEFORE looking at the client config.
     const recordFile = join(homeDir, ".shepherd", "hooks", `${client}.json`);
+    if (client === "codex") {
+      const status = await installCodexHooks({
+        homeDir,
+        command: hookCommandFor(scriptPath),
+        hookMarker: HOOK_MARKER,
+        packageVersion: PACKAGE_VERSION,
+        log,
+      });
+      if (status === "installed") {
+        log(
+          "[shepherd] Installed the announcement-delivery hook for codex " +
+            "(disable by removing it, or set SHEPHERD_NO_AUTO_HOOKS=1 to never auto-install).",
+        );
+      }
+      return { client, status };
+    }
     if (existsSync(recordFile)) return { client, status: "already-attempted" };
 
     let status: InstallResult["status"];
     if (client === "claude") {
       status = installClaude(homeDir, scriptPath, log);
-    } else if (client === "codex") {
-      status = installCodexHooks({
-        homeDir,
-        command: hookCommandFor(scriptPath),
-        hookMarker: HOOK_MARKER,
-        log,
-      });
     } else if (client === "cursor") {
       status = installCursor(homeDir, scriptPath, log);
     } else {
