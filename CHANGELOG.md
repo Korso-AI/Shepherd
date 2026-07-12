@@ -6,6 +6,13 @@ monorepo packages and are not versioned independently on npm.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Fixed
+
+- Codex hook setup now installs `UserPromptSubmit`, `SessionStart`, and wildcard
+  `PreToolUse` handlers, and safely migrates Shepherd-owned legacy configs.
+
 ## [@korso/shepherd 0.11.1](https://www.npmjs.com/package/@korso/shepherd/v/0.11.1) — 2026-07-10
 
 ### Fixed

@@ -304,6 +304,9 @@ describe("ConnectAgent", () => {
     await waitFor(() => {
       const toml = screen.getByTestId("hook-snippet").textContent ?? "";
       expect(toml).toContain("[[hooks.UserPromptSubmit]]");
+      expect(toml).toContain("[[hooks.SessionStart]]");
+      expect(toml).toContain("[[hooks.PreToolUse]]");
+      expect(toml).toContain('matcher = "*"');
       expect(toml).toContain("shepherd-inbox-hook");
     });
     expect(screen.getByText(/config\.toml/)).toBeInTheDocument();
