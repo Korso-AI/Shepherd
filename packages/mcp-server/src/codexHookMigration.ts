@@ -6,6 +6,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  fchmodSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -170,6 +171,7 @@ function atomicWrite(
   try {
     descriptor = openSync(temporary, "wx", mode);
     writeFileSync(descriptor, contents);
+    fchmodSync(descriptor, mode);
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = null;

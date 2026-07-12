@@ -364,16 +364,20 @@ describe("Codex v2 migration durability", () => {
     expect(readFileSync(recordFile(root), "utf8")).toBe(record);
   });
 
-  it("preserves config mode while keeping the backup user-only", async () => {
+  it("preserves config mode despite a restrictive process umask", async () => {
     if (process.platform === "win32") return;
     const root = home();
     setupLegacy(root);
-    chmodSync(configFile(root), 0o640);
+    chmodSync(configFile(root), 0o664);
+    const previousUmask = process.umask(0o077);
+    try {
+      await install(root);
 
-    await install(root);
-
-    expect(statSync(configFile(root)).mode & 0o777).toBe(0o640);
-    expect(statSync(backupFile(root)).mode & 0o077).toBe(0);
+      expect(statSync(configFile(root)).mode & 0o777).toBe(0o664);
+      expect(statSync(backupFile(root)).mode & 0o077).toBe(0);
+    } finally {
+      process.umask(previousUmask);
+    }
   });
 
   it("logs the persistent backup path and removal guidance", async () => {
