@@ -597,7 +597,7 @@ describe("autoInstallHooks — locally cached hook script", () => {
     expect(command).toMatch(/^npx -y --package=@korso\/shepherd@\d/);
   });
 
-  it("codex TOML uses the cached script as a valid two-element command array", async () => {
+  it("codex TOML uses the cached script as a normalized command string", async () => {
     const home = freshHome();
     const source = join(home, "bundled-inboxHook.js");
     writeFileSync(source, "// bundled\n");
@@ -610,6 +610,8 @@ describe("autoInstallHooks — locally cached hook script", () => {
 
     const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
     const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
-    expect(toml).toContain(`command = ["node", ${JSON.stringify(cached)}]`);
+    expect(toml).toContain(
+      `command = ${JSON.stringify(`node "${cached.replace(/\\/g, "/")}"`)}`,
+    );
   });
 });

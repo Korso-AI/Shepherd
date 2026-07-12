@@ -34,6 +34,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installCodexHooks } from "./codexHookInstall.js";
 import { PACKAGE_VERSION } from "./version.js";
 
 /** The clients we know how to install into. */
@@ -129,22 +130,6 @@ export function hookCommandFor(scriptPath: string | null): string {
     : `node "${scriptPath.replace(/\\/g, "/")}"`;
 }
 
-function codexHookBlock(scriptPath: string | null): string {
-  // JSON.stringify escapes backslashes/quotes — valid TOML basic strings, so
-  // Windows paths survive.
-  const command =
-    scriptPath === null
-      ? `["npx", "-y", "--package=@korso/shepherd@${PACKAGE_VERSION}", "shepherd-inbox-hook"]`
-      : `["node", ${JSON.stringify(scriptPath)}]`;
-  return [
-    "",
-    "# Added by Shepherd: delivers teammate announcements to the agent. Remove to disable.",
-    "[[hooks.UserPromptSubmit]]",
-    `command = ${command}`,
-    "",
-  ].join("\n");
-}
-
 /**
  * Attempt the once-per-machine+client hook install. Never throws.
  *
@@ -192,7 +177,12 @@ export async function autoInstallHooks({
     if (client === "claude") {
       status = installClaude(homeDir, scriptPath, log);
     } else if (client === "codex") {
-      status = installCodex(homeDir, scriptPath, log);
+      status = installCodexHooks({
+        homeDir,
+        command: hookCommandFor(scriptPath),
+        hookMarker: HOOK_MARKER,
+        log,
+      });
     } else if (client === "cursor") {
       status = installCursor(homeDir, scriptPath, log);
     } else {
@@ -291,69 +281,6 @@ function installClaude(
 
   mkdirSync(dirname(settingsFile), { recursive: true });
   writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n", "utf8");
-  return "installed";
-}
-
-// ---------------------------------------------------------------------------
-// Codex: ~/.codex/config.toml (TOML, conservative text-level append)
-// ---------------------------------------------------------------------------
-// No TOML parser is shipped, so edits are append/insert-only with hard bails:
-// any shape we can't extend by appending valid TOML is skipped untouched.
-
-function installCodex(
-  homeDir: string,
-  scriptPath: string | null,
-  log: (msg: string) => void,
-): InstallResult["status"] {
-  const configFile = join(homeDir, ".codex", "config.toml");
-  const manualHint =
-    "Add the hook manually (see the dashboard's Connect screen).";
-  const hookBlock = codexHookBlock(scriptPath);
-
-  if (!existsSync(configFile)) {
-    mkdirSync(dirname(configFile), { recursive: true });
-    writeFileSync(configFile, `[features]\nhooks = true\n${hookBlock}`, "utf8");
-    return "installed";
-  }
-
-  const toml = readFileSync(configFile, "utf8");
-  if (toml.includes(HOOK_MARKER)) return "already-present";
-
-  // A non-array [hooks.UserPromptSubmit] table exists: appending our
-  // array-of-tables entry would make the file invalid TOML. Bail.
-  if (/^\s*\[hooks\.UserPromptSubmit\]\s*$/m.test(toml)) {
-    log(
-      `[shepherd] ${configFile} defines [hooks.UserPromptSubmit] — not touching it. ${manualHint}`,
-    );
-    return "skipped";
-  }
-
-  if (/^\s*\[features\]/m.test(toml)) {
-    const hooksKey = /^\s*hooks\s*=\s*(.+)$/m.exec(toml);
-    if (hooksKey && hooksKey[1].trim() !== "true") {
-      // The user explicitly set hooks = false (or something else): their call.
-      log(
-        `[shepherd] ${configFile} sets hooks = ${hooksKey[1].trim()} — respecting it. ${manualHint}`,
-      );
-      return "skipped";
-    }
-    let updated = toml;
-    if (!hooksKey) {
-      // Insert the flag directly under the [features] header — the only spot
-      // that is guaranteed to be inside that table.
-      updated = toml.replace(/^(\s*\[features\]\s*)$/m, `$1\nhooks = true`);
-    }
-    writeFileSync(configFile, updated + hookBlock, "utf8");
-    return "installed";
-  }
-
-  // No [features] table anywhere: append both (a trailing table header ends
-  // whatever table the file was in — valid TOML).
-  writeFileSync(
-    configFile,
-    `${toml}\n[features]\nhooks = true\n${hookBlock}`,
-    "utf8",
-  );
   return "installed";
 }
 

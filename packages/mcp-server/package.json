@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29",
+    "smol-toml": "1.7.0",
     "zod": "^3"
   },
   "devDependencies": {
