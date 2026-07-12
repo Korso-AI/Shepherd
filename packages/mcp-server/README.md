@@ -115,8 +115,9 @@ default `~/.shepherd/inbox`). That file is then drained by two paths:
 > Fresh installs are **additive only** (existing keys/entries are never removed
 > or reordered), **record-guarded** under `~/.shepherd/hooks/`,
 > **version-pinned** (the installed command runs the exact shipped build, not a
-> floating `npx latest`), and **fail-open** (any file it can't confidently parse
-> is left untouched with a stderr notice). Codex also has a one-time, versioned
+> floating `npx latest`). Unsupported client config shapes are left untouched;
+> installer and migration failures never block or break the agent session, and
+> failure logs may be emitted to stderr. Codex also has a one-time, versioned
 > migration, but only when it finds both a legacy auto-install record at
 > `~/.shepherd/hooks/codex.json` and the exact Shepherd-owned legacy block. It
 > preserves that block and appends only the missing handlers after saving a
@@ -152,8 +153,9 @@ and installs the delivery hook **once per machine**:
 
 A record under `~/.shepherd/hooks/` guarantees at-most-once installation (and
 tracks the current Codex migration version): if you remove the hook, Shepherd
-won't re-add it. Everything is fail-open (an error just means no hook, never a
-broken session), and `SHEPHERD_NO_AUTO_HOOKS=1` disables the whole mechanism.
+won't re-add it. Installation and migration are fail-open: a failure never
+blocks or breaks the agent session. `SHEPHERD_NO_AUTO_HOOKS=1` disables the
+whole mechanism.
 
 Both paths read the **same** inbox file and de-duplicate by announcement id, so
 running both is safe (the hub hands each announcement to exactly one drain; the
