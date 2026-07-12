@@ -20,6 +20,11 @@ const faults = vi.hoisted(() => ({
   replaceStaleBeforeClaimVerification: null as string | null,
   replaceLockOnSecondConfigRead: null as string | null,
   failBackupLinkOnce: false,
+  failLockCreationOnce: null as null | {
+    stage: "write" | "fsync";
+    target: "main" | "reclaim";
+  },
+  onLockPublication: null as ((target: string) => void) | null,
   onLockMutation: null as (() => void) | null,
   events: [] as string[],
   descriptors: new Map<number, string>(),
@@ -27,6 +32,11 @@ const faults = vi.hoisted(() => ({
 
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
+  const isLockTarget = (path: string, target: "main" | "reclaim") =>
+    path.includes("codex-migration-v2.lock") &&
+    (target === "reclaim"
+      ? path.includes(".reclaim")
+      : !path.includes(".reclaim"));
   return {
     ...fs,
     readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
@@ -76,9 +86,29 @@ vi.mock("node:fs", async (importOriginal) => {
       faults.descriptors.set(descriptor, path);
       return descriptor;
     },
+    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+      const path =
+        typeof args[0] === "number"
+          ? (faults.descriptors.get(args[0]) ?? "")
+          : String(args[0]);
+      const failure = faults.failLockCreationOnce;
+      if (failure?.stage === "write" && isLockTarget(path, failure.target)) {
+        faults.failLockCreationOnce = null;
+        throw new Error("injected lock write failure");
+      }
+      return fs.writeFileSync(...args);
+    },
     fsyncSync: (descriptor: number) => {
       const path = faults.descriptors.get(descriptor) ?? "";
       faults.events.push("fsync:" + path);
+      const lockFailure = faults.failLockCreationOnce;
+      if (
+        lockFailure?.stage === "fsync" &&
+        isLockTarget(path, lockFailure.target)
+      ) {
+        faults.failLockCreationOnce = null;
+        throw new Error("injected lock fsync failure");
+      }
       if (
         faults.failDirectoryFsyncOnce !== null &&
         path.endsWith(faults.failDirectoryFsyncOnce)
@@ -107,8 +137,13 @@ vi.mock("node:fs", async (importOriginal) => {
       return result;
     },
     linkSync: (...args: Parameters<typeof fs.linkSync>) => {
-      faults.events.push("link:" + String(args[0]) + "->" + String(args[1]));
-      if (faults.failBackupLinkOnce) {
+      const target = String(args[1]);
+      faults.events.push("link:" + String(args[0]) + "->" + target);
+      if (target.includes("codex-migration-v2.lock")) {
+        faults.onLockPublication?.(target);
+      }
+      const isBackup = target.endsWith("codex-config-before-v2.toml");
+      if (faults.failBackupLinkOnce && isBackup) {
         faults.failBackupLinkOnce = false;
         throw new Error("injected backup publication failure");
       }
@@ -124,6 +159,8 @@ beforeEach(() => {
   faults.replaceStaleBeforeClaimVerification = null;
   faults.replaceLockOnSecondConfigRead = null;
   faults.failBackupLinkOnce = false;
+  faults.failLockCreationOnce = null;
+  faults.onLockPublication = null;
   faults.onLockMutation = null;
   faults.events.length = 0;
   faults.descriptors.clear();
@@ -146,6 +183,9 @@ function recordFile(root: string): string {
 }
 function lockFile(root: string): string {
   return join(hooksDir(root), "codex-migration-v2.lock");
+}
+function reclaimFile(root: string): string {
+  return lockFile(root) + ".reclaim";
 }
 function backupFile(root: string): string {
   return join(hooksDir(root), "backups", "codex-config-before-v2.toml");
@@ -181,8 +221,15 @@ async function install(root: string) {
     log: vi.fn(),
   });
 }
-function lock(owner = "owner", createdAt = new Date().toISOString()): string {
-  return JSON.stringify({ pid: process.pid, createdAt, owner });
+function lock(
+  owner = "owner",
+  createdAt = new Date().toISOString(),
+  pid = process.pid,
+): string {
+  return JSON.stringify({ pid, createdAt, owner });
+}
+function deadLock(owner = "dead"): string {
+  return lock(owner, "2000-01-01T00:00:00.000Z", 2_147_483_647);
 }
 
 describe("Codex atomic replacement durability", () => {
@@ -243,7 +290,6 @@ describe("Codex migration lock ownership", () => {
       writeFileSync(lockFile(root), malformed, "utf8");
       const old = new Date("2000-01-01T00:00:00.000Z");
       utimesSync(lockFile(root), old, old);
-
       expect((await install(root)).status).toBe(
         reclaimable ? "installed" : "skipped",
       );
@@ -251,21 +297,80 @@ describe("Codex migration lock ownership", () => {
     }
   });
 
+  it("publishes no lock path when ownership write or fsync fails", async () => {
+    for (const target of ["main", "reclaim"] as const) {
+      for (const stage of ["write", "fsync"] as const) {
+        const root = home();
+        mkdirSync(hooksDir(root), { recursive: true });
+        if (target === "reclaim") {
+          writeFileSync(lockFile(root), deadLock(), "utf8");
+        }
+        faults.failLockCreationOnce = { stage, target };
+        expect.soft((await install(root)).status).toBe("skipped");
+        expect
+          .soft(
+            existsSync(target === "main" ? lockFile(root) : reclaimFile(root)),
+          )
+          .toBe(false);
+        expect
+          .soft(
+            readdirSync(hooksDir(root)).some((name) =>
+              name.includes(".owner-"),
+            ),
+          )
+          .toBe(false);
+        expect.soft((await install(root)).status).toBe("installed");
+      }
+    }
+  });
+
+  it("recovers recorded-dead reclaim claims but holds malformed claims", async () => {
+    for (const [claim, expected] of [
+      [deadLock("claim"), "installed"],
+      ["{truncated", "skipped"],
+    ] as const) {
+      const root = home();
+      mkdirSync(hooksDir(root), { recursive: true });
+      writeFileSync(lockFile(root), deadLock(), "utf8");
+      writeFileSync(reclaimFile(root), claim, "utf8");
+      const old = new Date("2000-01-01T00:00:00.000Z");
+      utimesSync(reclaimFile(root), old, old);
+      expect((await install(root)).status).toBe(expected);
+      expect(existsSync(reclaimFile(root))).toBe(expected === "skipped");
+    }
+  });
+
+  it("cannot remove another owner during no-overwrite publication", async () => {
+    for (const target of ["main", "reclaim"] as const) {
+      const root = home();
+      mkdirSync(hooksDir(root), { recursive: true });
+      if (target === "reclaim") {
+        writeFileSync(lockFile(root), deadLock(), "utf8");
+      }
+      const contenders: Array<ReturnType<typeof install>> = [];
+      const publication =
+        target === "main" ? lockFile(root) : reclaimFile(root);
+      faults.onLockPublication = (published) => {
+        if (published !== publication) return;
+        faults.onLockPublication = null;
+        contenders.push(install(root));
+      };
+      const primary = await install(root);
+      expect(contenders).toHaveLength(1);
+      if (contenders[0] === undefined) continue;
+      const statuses = [primary.status, (await contenders[0]).status].sort();
+      expect(statuses).toEqual(["installed", "skipped"]);
+      expect(existsSync(lockFile(root))).toBe(false);
+      expect(existsSync(reclaimFile(root))).toBe(false);
+    }
+  });
+
   it("allows only one claimant to atomically replace a stale lock", async () => {
     const root = home();
     mkdirSync(hooksDir(root), { recursive: true });
-    writeFileSync(
-      lockFile(root),
-      JSON.stringify({
-        pid: 2_147_483_647,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        owner: "dead",
-      }),
-      "utf8",
-    );
+    writeFileSync(lockFile(root), deadLock(), "utf8");
 
     const results = await Promise.all([install(root), install(root)]);
-
     expect(results.filter(({ status }) => status === "installed")).toHaveLength(
       1,
     );
@@ -286,18 +391,9 @@ describe("Codex migration lock ownership", () => {
   it("does not reclaim a fresh lock that replaced the stale snapshot", async () => {
     const root = home();
     mkdirSync(hooksDir(root), { recursive: true });
-    writeFileSync(
-      lockFile(root),
-      JSON.stringify({
-        pid: 2_147_483_647,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        owner: "dead",
-      }),
-      "utf8",
-    );
+    writeFileSync(lockFile(root), deadLock(), "utf8");
     const replacement = lock("replacement");
     faults.replaceStaleBeforeClaimVerification = replacement;
-
     expect((await install(root)).status).toBe("skipped");
     expect(readFileSync(lockFile(root), "utf8")).toBe(replacement);
   });
@@ -305,25 +401,15 @@ describe("Codex migration lock ownership", () => {
   it("keeps a third claimant out while atomically replacing a stale lock", async () => {
     const root = home();
     mkdirSync(hooksDir(root), { recursive: true });
-    writeFileSync(
-      lockFile(root),
-      JSON.stringify({
-        pid: 2_147_483_647,
-        createdAt: "2000-01-01T00:00:00.000Z",
-        owner: "dead",
-      }),
-      "utf8",
-    );
+    writeFileSync(lockFile(root), deadLock(), "utf8");
     const contenders: Array<ReturnType<typeof install>> = [];
     faults.onLockMutation = () => {
       faults.onLockMutation = null;
       contenders.push(install(root));
     };
-
     const primary = await install(root);
     expect(contenders).toHaveLength(1);
     const contender = await contenders[0]!;
-
     expect(primary.status).toBe("installed");
     expect(contender.status).toBe("skipped");
   });
@@ -334,9 +420,7 @@ describe("Codex migration lock ownership", () => {
     writeFileSync(configFile(root), "[features]\nhooks = true\n", "utf8");
     const replacement = lock("replacement");
     faults.replaceLockOnSecondConfigRead = replacement;
-
     await install(root);
-
     expect(readFileSync(lockFile(root), "utf8")).toBe(replacement);
     unlinkSync(lockFile(root));
   });
@@ -347,7 +431,6 @@ describe("Codex backup publication and byte boundaries", () => {
     const root = home();
     const original = setupLegacy(root);
     faults.failBackupLinkOnce = true;
-
     expect((await install(root)).status).toBe("skipped");
     expect(existsSync(backupFile(root))).toBe(false);
     const backups = dirname(backupFile(root));

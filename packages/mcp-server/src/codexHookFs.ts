@@ -137,16 +137,19 @@ function lockContents(owner: string): string {
 }
 
 function createOwnedLock(lockFile: string, owner: string): boolean {
-  let descriptor: number | null = null;
+  const temporary = lockFile + ".owner-" + owner + ".tmp";
   try {
-    descriptor = openSync(lockFile, "wx", 0o600);
-    writeFileSync(descriptor, lockContents(owner), "utf8");
-    fsyncSync(descriptor);
-    closeSync(descriptor);
+    durableTemp(temporary, lockContents(owner), 0o600);
+    linkSync(temporary, lockFile);
     return true;
   } catch {
-    if (descriptor !== null) closeSync(descriptor);
     return false;
+  } finally {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // Only this claimant's unique unpublished name is safe to remove.
+    }
   }
 }
 
@@ -172,6 +175,38 @@ function snapshotMatches(
     current !== null &&
     current.reclaimable &&
     current.bytes.equals(expected.bytes)
+  );
+}
+
+function replaceStaleClaim(
+  claimFile: string,
+  owner: string,
+  expected: LockSnapshot,
+): boolean {
+  const replacement = claimFile + ".owner-" + owner + ".tmp";
+  try {
+    durableTemp(replacement, lockContents(owner), 0o600);
+    if (!snapshotMatches(lockSnapshot(claimFile), expected)) return false;
+    renameSync(replacement, claimFile);
+    return ownedBy(claimFile, owner);
+  } catch {
+    return false;
+  } finally {
+    try {
+      unlinkSync(replacement);
+    } catch {
+      // The replacement may have been published or never created.
+    }
+  }
+}
+
+function acquireReclaimClaim(claimFile: string, owner: string): boolean {
+  if (createOwnedLock(claimFile, owner)) return true;
+  const snapshot = lockSnapshot(claimFile);
+  return (
+    snapshot !== null &&
+    snapshot.reclaimable &&
+    replaceStaleClaim(claimFile, owner, snapshot)
   );
 }
 
@@ -217,7 +252,7 @@ export function acquireMigrationLock(lockFile: string): string | null {
   if (snapshot === null || !snapshot.reclaimable) return null;
 
   const claimFile = lockFile + ".reclaim";
-  if (!createOwnedLock(claimFile, owner)) return null;
+  if (!acquireReclaimClaim(claimFile, owner)) return null;
   try {
     return replaceStaleLock(lockFile, claimFile, owner, snapshot)
       ? owner
