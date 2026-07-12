@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse } from "smol-toml";
 import { autoInstallHooks, HOOK_COMMAND } from "../src/hookInstall.js";
 
 function freshHome(): string {
@@ -90,6 +91,32 @@ describe("Codex canonical hook installation", () => {
     expect(result.status).toBe("installed");
     const source = readFileSync(configFile(home), "utf8");
     expect(source).toMatch(/^\[features\]\nhooks = true\nweb_search = true$/m);
+    expectCanonicalHandlers(source, HOOK_COMMAND);
+  });
+
+  it("ignores a features-like line inside a multiline string", async () => {
+    const home = freshHome();
+    const existing = [
+      'notice = """',
+      "[features]",
+      '"""',
+      "",
+      "[features]",
+      "web_search = true",
+      "",
+    ].join("\n");
+    writeConfig(home, existing);
+
+    const result = await install(home);
+
+    expect(result.status).toBe("installed");
+    const source = readFileSync(configFile(home), "utf8");
+    const expectedPrefix = existing.replace(
+      "\n[features]\nweb_search = true",
+      "\n[features]\nhooks = true\nweb_search = true",
+    );
+    expect(source.startsWith(expectedPrefix)).toBe(true);
+    expect(parse(source)["features"]).toMatchObject({ hooks: true });
     expectCanonicalHandlers(source, HOOK_COMMAND);
   });
 

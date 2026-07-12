@@ -48,10 +48,24 @@ function isTomlTable(value: unknown): value is TomlTableWithoutBigInt {
   );
 }
 
+function hasEnabledHooks(config: TomlTableWithoutBigInt): boolean {
+  const features = config["features"];
+  return isTomlTable(features) && features["hooks"] === true;
+}
+
 function insertHooksFeature(source: string): string | null {
-  const featuresHeader = /^(\s*\[features\]\s*(?:#.*)?)$/m;
-  if (!featuresHeader.test(source)) return null;
-  return source.replace(featuresHeader, "$1\nhooks = true");
+  const featuresHeader = /^(\s*\[features\]\s*(?:#.*)?)$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = featuresHeader.exec(source)) !== null) {
+    const insertionPoint = match.index + match[0].length;
+    const candidate =
+      source.slice(0, insertionPoint) +
+      "\nhooks = true" +
+      source.slice(insertionPoint);
+    const config = parseConfig(candidate);
+    if (config !== null && hasEnabledHooks(config)) return candidate;
+  }
+  return null;
 }
 
 /**
@@ -108,7 +122,12 @@ export function installCodexHooks({
     candidate = null;
   }
 
-  if (candidate === null || parseConfig(candidate) === null) {
+  const candidateConfig = candidate === null ? null : parseConfig(candidate);
+  if (
+    candidate === null ||
+    candidateConfig === null ||
+    !hasEnabledHooks(candidateConfig)
+  ) {
     log(
       `[shepherd] ${configFile} could not be safely extended — not touching it. ${manualHint}`,
     );
