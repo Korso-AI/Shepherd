@@ -117,10 +117,13 @@ default `~/.shepherd/inbox`). That file is then drained by two paths:
 > **version-pinned** (the installed command runs the exact shipped build, not a
 > floating `npx latest`), and **fail-open** (any file it can't confidently parse
 > is left untouched with a stderr notice). Codex also has a one-time, versioned
-> migration for the exact legacy Shepherd block: it preserves that block and
-> appends only the missing handlers after saving a persistent backup at
+> migration, but only when it finds both a legacy auto-install record at
+> `~/.shepherd/hooks/codex.json` and the exact Shepherd-owned legacy block. It
+> preserves that block and appends only the missing handlers after saving a
+> persistent backup at
 > `~/.shepherd/hooks/backups/codex-config-before-v2.toml`. Ambiguous or manually
-> removed hooks are left alone.
+> removed hooks are left alone. Existing users receive the migration after they
+> update `@korso/shepherd` and restart Codex so the updated MCP server starts.
 >
 > **To opt out entirely, set `SHEPHERD_NO_AUTO_HOOKS=1`** — the server then never
 > touches any client config, and you can wire the hook manually using the
@@ -135,9 +138,11 @@ and installs the delivery hook **once per machine**:
 - **Codex** — enables `features.hooks` and appends canonical
   `UserPromptSubmit`, `SessionStart`, and wildcard `PreToolUse` handlers to
   `~/.codex/config.toml`. An explicit `hooks = false` is respected. Existing
-  installs with Shepherd's exact legacy `UserPromptSubmit` block are migrated
-  once by retaining that block and appending the two missing handlers; a
-  persistent pre-migration backup is written first.
+  installs are migrated only when a legacy `~/.shepherd/hooks/codex.json`
+  auto-install record and Shepherd's exact legacy `UserPromptSubmit` block are
+  both present. The migration retains that block, appends the two missing
+  handlers, and first writes a persistent backup. Update `@korso/shepherd` and
+  restart Codex to run it.
 - **Pi** — copies the bundled extension to
   `~/.pi/agent/extensions/shepherd-inbox.js`.
 - **Cursor** — merges a `beforeSubmitPrompt` entry into `~/.cursor/hooks.json`
@@ -237,9 +242,10 @@ for reference/manual setup.)_
 
 Codex uses the **same** hook contract as Claude Code (JSON on stdin, a
 `hookSpecificOutput.additionalContext` reply), so the **same bin** serves it.
-`UserPromptSubmit` and `SessionStart` cover turn and session boundaries, while
-wildcard `PreToolUse` provides passive delivery before supported tool calls
-(including Bash, `apply_patch`, and MCP calls). Hooks must be enabled with
+`UserPromptSubmit` and `SessionStart` cover turn and session boundaries. In
+local Codex testing, wildcard `PreToolUse` delivered before Bash,
+`apply_patch`, and MCP calls. Other richer tool paths, including WebSearch, are
+not guaranteed by the current Codex hook coverage. Hooks must be enabled with
 `features.hooks = true`. In `~/.codex/config.toml`:
 
 ```toml

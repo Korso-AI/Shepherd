@@ -303,11 +303,33 @@ describe("ConnectAgent", () => {
     await userEvent.selectOptions(screen.getByLabelText(/tool/i), "codex");
     await waitFor(() => {
       const toml = screen.getByTestId("hook-snippet").textContent ?? "";
-      expect(toml).toContain("[[hooks.UserPromptSubmit]]");
-      expect(toml).toContain("[[hooks.SessionStart]]");
-      expect(toml).toContain("[[hooks.PreToolUse]]");
-      expect(toml).toContain('matcher = "*"');
-      expect(toml).toContain("shepherd-inbox-hook");
+      const command =
+        'command = "npx -y --package=@korso/shepherd shepherd-inbox-hook"';
+      expect(toml).toBe(
+        [
+          "[features]",
+          "hooks = true",
+          "",
+          "[[hooks.UserPromptSubmit]]",
+          "[[hooks.UserPromptSubmit.hooks]]",
+          'type = "command"',
+          command,
+          "timeout = 20",
+          "",
+          "[[hooks.SessionStart]]",
+          "[[hooks.SessionStart.hooks]]",
+          'type = "command"',
+          command,
+          "timeout = 20",
+          "",
+          "[[hooks.PreToolUse]]",
+          'matcher = "*"',
+          "[[hooks.PreToolUse.hooks]]",
+          'type = "command"',
+          command,
+          "timeout = 20",
+        ].join("\n"),
+      );
     });
     expect(screen.getByText(/config\.toml/)).toBeInTheDocument();
     expect(screen.getByText(/sets itself up/i)).toBeInTheDocument();
