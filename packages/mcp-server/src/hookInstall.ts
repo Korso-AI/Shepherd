@@ -34,7 +34,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installCodexHooks } from "./codexHookInstall.js";
+import { installCodexHooks } from "./codexHookMigration.js";
 import { PACKAGE_VERSION } from "./version.js";
 
 /** The clients we know how to install into. */
@@ -176,7 +176,6 @@ export async function autoInstallHooks({
         homeDir,
         command: hookCommandFor(scriptPath),
         hookMarker: HOOK_MARKER,
-        packageVersion: PACKAGE_VERSION,
         log,
       });
       if (status === "installed") {
