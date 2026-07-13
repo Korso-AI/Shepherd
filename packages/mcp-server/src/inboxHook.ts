@@ -9,10 +9,11 @@
  * `hook_event_name` and take a `{"hookSpecificOutput":{"hookEventName",
  * "additionalContext"}}` reply; Cursor sends `workspace_roots` (no cwd, BOM
  * prefix) and takes a top-level `{"continue":true,"additionalContext"}` reply.
- * So one bin serves all — wire it to a frequent event (Claude Code: PreToolUse,
- * plus SessionStart to front-load the link ask; Codex: UserPromptSubmit, since
- * its PreToolUse only fires for Bash; Cursor: beforeSubmitPrompt, the one event
- * verified to inject context).
+ * So one bin serves all — wire it to frequent events (Claude Code: PreToolUse,
+ * plus SessionStart to front-load the link ask; Codex: UserPromptSubmit,
+ * SessionStart, and wildcard PreToolUse, verified for Bash, apply_patch, and
+ * MCP calls but not guaranteed for richer paths such as WebSearch; Cursor:
+ * beforeSubmitPrompt, the one event verified to inject context).
  * On each invocation it drains this working directory's inbox file and prints
  * the announcements as additionalContext, prefixed by the link nudge when the
  * cwd's repo is neither linked nor declined (see linkNudge.ts). Cheap: local
@@ -29,7 +30,12 @@
  * block or break a tool call.
  */
 
-import { buildHookOutput, defaultInboxDir } from "./inbox.js";
+import {
+  buildHookOutput,
+  defaultInboxDir,
+  parseHookPairingInput,
+} from "./inbox.js";
+import { resolveHookMailboxes } from "./hookPairing.js";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -44,7 +50,19 @@ async function main(): Promise<void> {
     const raw = await readStdin();
     const inboxDir =
       process.argv[2] || process.env["SHEPHERD_INBOX_DIR"] || defaultInboxDir();
-    const out = buildHookOutput(raw, inboxDir);
+    // Pair this invocation to its session's mailbox(es) by process ancestry
+    // (see hookPairing.ts). [] on any failure — the legacy cwd-keyed drain
+    // below still runs, and tool-call delivery covers the rest.
+    let mailboxes: string[] = [];
+    try {
+      mailboxes = await resolveHookMailboxes(
+        inboxDir,
+        parseHookPairingInput(raw),
+      );
+    } catch {
+      /* fail-open */
+    }
+    const out = buildHookOutput(raw, inboxDir, undefined, undefined, mailboxes);
     if (out) process.stdout.write(out);
   } catch {
     // Fail-open: never block a tool call on a hook error.

@@ -20,8 +20,13 @@ import type {
   TokenSummaryT,
   MemberSummaryT,
   TrendPointT,
+  TrendSeriesT,
   TopWorkspaceT,
   ShepherdAnalyticsResponseT,
+  AnalyticsRangeT,
+  AnalyticsBucketT,
+  PeriodMetricT,
+  DurationPercentilesT,
 } from "@shepherd/shared";
 import { UnknownSessionError } from "./errors.js";
 
@@ -39,6 +44,16 @@ export type Queryable = pg.Pool | pg.PoolClient;
  * into the SQL text. Surplus is delivered on later calls, oldest-id first.
  */
 const DELIVERY_BATCH_LIMIT = 200;
+
+/**
+ * Freshness window for agent delivery: announcements older than this are never
+ * delivered, only kept for the dashboard feed. The pending anti-join is per
+ * SESSION, so without a window a brand-new session replays the workspace's
+ * entire announcement history as if it were current — days-stale claims about
+ * branches and files read as live coordination state. Hardcoded integer,
+ * safe to interpolate (see DELIVERY_BATCH_LIMIT).
+ */
+const DELIVERY_MAX_AGE_HOURS = 48;
 
 // ---------------------------------------------------------------------------
 // Identity & tenancy (migration 011) — lookups used by resolveTenant
@@ -1083,7 +1098,14 @@ export async function reservedAgentNamesForHandle(
   //       ONLY while the agent has a session within `graceSeconds`, exactly the
   //       grace gate in listOtherChangeRecords: once a dead agent's dirty snapshot
   //       stops showing, its ordinal must not stay parked (it would otherwise hold
-  //       an invisible name for the full change-record TTL).
+  //       an invisible name for the full change-record TTL), OR
+  //   (4) an announcement ATTRIBUTED to the name that is still deliverable —
+  //       one the agent sent, or one directed AT the name, within the
+  //       fetchPendingAnnouncements freshness window. A name must not change
+  //       hands while words in its name can still reach a teammate: a new
+  //       joiner adopting the ordinal would silently become the apparent author
+  //       (fromAgentName resolves through the reclaimed agents row) or the
+  //       recipient of the dead agent's messages.
   const { rows } = await db.query<{ name: string }>(
     `SELECT a.name
      FROM   agents a
@@ -1114,6 +1136,18 @@ export async function reservedAgentNamesForHandle(
                    AND  s3.last_heartbeat_at > $3::timestamptz - ($6 * interval '1 second')
                )
              )
+         )
+         OR EXISTS (
+           SELECT 1 FROM announcements ann
+           JOIN   sessions s4 ON s4.id = ann.from_session_id
+           WHERE  s4.agent_id = a.id
+             AND  ann.created_at > $3::timestamptz - interval '${DELIVERY_MAX_AGE_HOURS} hours'
+         )
+         OR EXISTS (
+           SELECT 1 FROM announcements ann2
+           WHERE  ann2.workspace_id = $1
+             AND  ann2.target_agent_name = a.name
+             AND  ann2.created_at > $3::timestamptz - interval '${DELIVERY_MAX_AGE_HOURS} hours'
          )
        )`,
     [
@@ -1789,6 +1823,11 @@ export async function fetchPendingAnnouncements(
        -- and (NULL <> $4) is NULL (falsy) -- which would silently drop them -- so
        -- the IS NULL branch keeps admin messages deliverable.
        AND  (ann.from_session_id IS NULL OR ann.from_session_id <> $4)
+       -- Freshness window: a NEW session has no delivery rows at all, so the
+       -- anti-join alone would replay the full history as "pending". Old
+       -- announcements stay readable on the dashboard; agents only get
+       -- recent ones (and every delivery path renders each message's age).
+       AND  ann.created_at > now() - interval '${DELIVERY_MAX_AGE_HOURS} hours'
        AND  NOT EXISTS (
              SELECT 1
              FROM   announcement_deliveries ad
@@ -2536,8 +2575,10 @@ export async function insertFeedback(
 // A cross-tenant, READ-ONLY aggregate over the whole hub with NO workspace
 // scoping on purpose — which is exactly why the calling route is operator-gated
 // (see requireOperator in tenant.ts for the trust model). No user input reaches
-// the SQL: the only bound parameter is the trend window start computed
-// server-side; table/column fragments are hardcoded constants.
+// the SQL: the ONLY bound parameters are the window bounds computed server-side
+// from the (validated) preset range and the injected `now`; every table/column/
+// bucket/predicate fragment is a HARDCODED constant. This is the SQL-injection
+// safety invariant — keep it if this section is refactored.
 // ---------------------------------------------------------------------------
 
 // The wire shapes are canonically defined in @shepherd/shared (contract.ts);
@@ -2547,34 +2588,103 @@ export type TrendPoint = TrendPointT;
 export type TopWorkspace = TopWorkspaceT;
 export type ShepherdAnalytics = ShepherdAnalyticsResponseT;
 
+/** Window length (seconds) for each preset — a whole number of buckets. */
+const RANGE_WINDOW_SECONDS: Record<AnalyticsRangeT, number> = {
+  "24h": 24 * 60 * 60,
+  "7d": 7 * 24 * 60 * 60,
+  "30d": 30 * 24 * 60 * 60,
+  "90d": 90 * 24 * 60 * 60,
+};
+
 /**
- * A zero-filled daily trend over `[since, now]` for one table's timestamp
- * column. `table`/`tsColumn`/`extraWhere` are HARDCODED constants supplied by
+ * A zero-filled trend series over the half-open window `[windowStart, windowEnd)`
+ * for one table's timestamp column, bucketed hourly (`24h`) or daily (otherwise).
+ * `table`/`tsColumn`/`bucket`/`extraWhere` are HARDCODED constants supplied by
  * the single caller below — never user input — so interpolating them into the
- * SQL text is safe; the window bound is the only bound parameter.
+ * SQL text is safe; the window bounds are the only bound parameters. Because
+ * the window length is a whole number of buckets, calling this for the current
+ * and the equal-length previous window yields series with an IDENTICAL bucket
+ * count, so the chart can overlay them point-for-point.
  */
-async function dailyTrend(
+async function bucketedTrend(
   db: Queryable,
   table: string,
   tsColumn: string,
-  since: Date,
+  bucket: AnalyticsBucketT,
+  windowStart: Date,
+  windowEnd: Date,
   extraWhere = "",
 ): Promise<TrendPoint[]> {
+  // Daily buckets label as YYYY-MM-DD; hourly buckets as an ISO timestamp.
+  const label =
+    bucket === "hour"
+      ? `to_char(d, 'YYYY-MM-DD"T"HH24:00:00"Z"')`
+      : `to_char(d, 'YYYY-MM-DD')`;
   const { rows } = await db.query<{ date: string; count: string }>(
-    `SELECT to_char(d, 'YYYY-MM-DD') AS date, COALESCE(b.count, 0) AS count
-       FROM generate_series(date_trunc('day', $1::timestamptz),
-                            date_trunc('day', now()),
-                            interval '1 day') AS d
+    `SELECT ${label} AS date, COALESCE(b.count, 0) AS count
+       FROM generate_series(date_trunc('${bucket}', $1::timestamptz),
+                            date_trunc('${bucket}', $2::timestamptz),
+                            interval '1 ${bucket}') AS d
        LEFT JOIN (
-         SELECT date_trunc('day', ${tsColumn}) AS day, count(*) AS count
+         SELECT date_trunc('${bucket}', ${tsColumn}) AS bkt, count(*) AS count
            FROM ${table}
-          WHERE ${tsColumn} >= $1${extraWhere ? ` AND ${extraWhere}` : ""}
+          WHERE ${tsColumn} >= $1 AND ${tsColumn} < $2${
+            extraWhere ? ` AND ${extraWhere}` : ""
+          }
           GROUP BY 1
-       ) AS b ON b.day = d
+       ) AS b ON b.bkt = d
       ORDER BY d`,
-    [since],
+    [windowStart, windowEnd],
   );
   return rows.map((r) => ({ date: r.date, count: Number(r.count) }));
+}
+
+/**
+ * A trend series and its aligned previous-period twin, declared ONCE so the
+ * current/previous pair can never drift apart in table/tsColumn/bucket/
+ * extraWhere — only the window bounds differ. Both queries are issued
+ * immediately (this returns a single promise wrapping both), so callers can
+ * gather several pairs and settle them in one bounded `Promise.all` wave, the
+ * same connection footprint as issuing the underlying queries directly.
+ */
+function trendPair(
+  db: Queryable,
+  table: string,
+  tsColumn: string,
+  bucket: AnalyticsBucketT,
+  windows: {
+    windowStart: Date;
+    windowEnd: Date;
+    previousStart: Date;
+    previousEnd: Date;
+  },
+  extraWhere = "",
+): Promise<TrendSeriesT> {
+  return Promise.all([
+    bucketedTrend(
+      db,
+      table,
+      tsColumn,
+      bucket,
+      windows.windowStart,
+      windows.windowEnd,
+      extraWhere,
+    ),
+    bucketedTrend(
+      db,
+      table,
+      tsColumn,
+      bucket,
+      windows.previousStart,
+      windows.previousEnd,
+      extraWhere,
+    ),
+  ]).then(([current, previous]) => ({ current, previous }));
+}
+
+/** Sum of a (zero-filled) trend series — equals the windowed row count. */
+function sumTrend(points: TrendPoint[]): number {
+  return points.reduce((s, p) => s + p.count, 0);
 }
 
 /** Scalar count helper — runs `sql` and coerces the single `count` column. */
@@ -2584,23 +2694,115 @@ async function scalarCount(db: Queryable, sql: string): Promise<number> {
 }
 
 /**
- * Compute the whole cross-tenant analytics rollup in one call. The independent
- * aggregate queries are fanned out in THREE sequential `Promise.all` batches
- * (totals, then engagement + leaderboard, then trends) so a single rollup never
+ * Windowed scalar count. `sql` is a HARDCODED constant using `$1` (windowStart)
+ * and `$2` (windowEnd) as its only parameters — never user input.
+ */
+async function windowedCount(
+  db: Queryable,
+  sql: string,
+  windowStart: Date,
+  windowEnd: Date,
+): Promise<number> {
+  const { rows } = await db.query<{ count: string }>(sql, [
+    windowStart,
+    windowEnd,
+  ]);
+  return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * Build a comparison-aware KPI from the two window counts. `changePct` is null
+ * when the previous window is 0 (a percentage would be undefined), otherwise the
+ * signed percentage change rounded to two decimals (same rounding style as the
+ * engagement averages above).
+ */
+function periodMetric(current: number, previous: number): PeriodMetricT {
+  const changePct =
+    previous === 0
+      ? null
+      : Math.round(((current - previous) / previous) * 100 * 100) / 100;
+  return { current, previous, changePct };
+}
+
+/**
+ * Observed duration percentiles (p50/p95, seconds) over `endCol - startCol` for
+ * the rows of `table` whose `filterCol` falls in `[windowStart, windowEnd)`.
+ * `table`/`startCol`/`endCol`/`filterCol`/`extraWhere` are HARDCODED constants
+ * (never user input); the window bounds are the only parameters. Returns null
+ * for a percentile when there are no source rows (percentile_cont over an empty
+ * set is NULL) rather than a misleading 0s.
+ */
+async function durationPercentiles(
+  db: Queryable,
+  table: string,
+  startCol: string,
+  endCol: string,
+  filterCol: string,
+  windowStart: Date,
+  windowEnd: Date,
+  extraWhere = "",
+): Promise<DurationPercentilesT> {
+  const dur = `EXTRACT(EPOCH FROM (${endCol} - ${startCol}))`;
+  const { rows } = await db.query<{ p50: string | null; p95: string | null }>(
+    `SELECT percentile_cont(0.5)  WITHIN GROUP (ORDER BY ${dur}) AS p50,
+            percentile_cont(0.95) WITHIN GROUP (ORDER BY ${dur}) AS p95
+       FROM ${table}
+      WHERE ${filterCol} >= $1 AND ${filterCol} < $2${
+        extraWhere ? ` AND ${extraWhere}` : ""
+      }`,
+    [windowStart, windowEnd],
+  );
+  const r = rows[0];
+  return {
+    p50: r?.p50 != null ? Number(r.p50) : null,
+    p95: r?.p95 != null ? Number(r.p95) : null,
+  };
+}
+
+/**
+ * Compute the whole cross-tenant, range-aware analytics rollup in one call.
+ *
+ * `range` is a VALIDATED preset (the caller parses it against the shared
+ * AnalyticsRange enum) and `now` is a single injected clock so the whole rollup
+ * — windows, buckets, and every window-scoped count — is deterministic in tests.
+ * From `range` + `now` we derive:
+ *   - bucket   = "hour" for 24h, "day" otherwise;
+ *   - the current half-open window [windowStart, windowEnd) where windowEnd = now
+ *     and windowStart = now - rangeLength;
+ *   - the aligned PREVIOUS window [previousStart, previousEnd) = the equal-length
+ *     window immediately before windowStart.
+ * `liveWindowSeconds` is the presence window that counts a session as "live"
+ * (the hub's STALE_AFTER_SECONDS) and drives the current-state liveSessions.
+ *
+ * The independent aggregate queries are fanned out in bounded sequential
+ * `Promise.all` batches (totals, engagement + leaderboard, period comparison,
+ * timing, then the current+previous trend series) so a single rollup never
  * demands more concurrent connections than the pool's max (10) — one flat
- * ~20-query `Promise.all` would queue behind itself and could starve concurrent
- * requests. `liveWindowSeconds` is the presence window that counts a session as
- * "live" (the hub's STALE_AFTER_SECONDS); `trendDays` is the daily trend horizon.
+ * ~30-query `Promise.all` would queue behind itself and could starve concurrent
+ * requests. Four of the five period KPIs are derived by summing their trend
+ * series (identical table/window/predicate) rather than re-queried. Only
+ * window bounds are bound as parameters (see the SQL-injection safety
+ * invariant above); the leaderboard computes its per-workspace, window-scoped
+ * metrics with correlated subqueries in ONE query — selecting the top 10 by
+ * the cheap members count FIRST, then computing the heavy metrics for only
+ * those rows — rather than fanning out a query per workspace row.
  */
 export async function getShepherdAnalytics(
   db: Queryable,
-  opts: { liveWindowSeconds: number; trendDays: number },
+  opts: { range: AnalyticsRangeT; now: Date; liveWindowSeconds: number },
 ): Promise<ShepherdAnalytics> {
-  const { liveWindowSeconds, trendDays } = opts;
-  const since = new Date(Date.now() - trendDays * 24 * 60 * 60 * 1000);
+  const { range, now, liveWindowSeconds } = opts;
+
+  const bucket: AnalyticsBucketT = range === "24h" ? "hour" : "day";
+  const windowSeconds = RANGE_WINDOW_SECONDS[range];
+  const windowEnd = now;
+  const windowStart = new Date(now.getTime() - windowSeconds * 1000);
+  const previousEnd = windowStart;
+  const previousStart = new Date(windowStart.getTime() - windowSeconds * 1000);
+
   const live = `now() - (${Math.trunc(liveWindowSeconds)} * interval '1 second')`;
 
-  // Batch 1: the flat totals.
+  // Batch 1: the flat, current-state totals (range-independent).
   const [
     accounts,
     workspaces,
@@ -2643,7 +2845,12 @@ export async function getShepherdAnalytics(
     ),
   ]);
 
-  // Batch 2: engagement rollups + the feedback and workspace leaderboards.
+  // Batch 2: current-state engagement rollups + the feedback and (now
+  // window-scoped) workspace leaderboards. The leaderboard's activity columns
+  // (active_agents, sessions, commits, claims_released, median_claim_seconds,
+  // last_activity_at) are all scoped to [windowStart, windowEnd) via the bound
+  // $1/$2; the identity/size columns (members, agents, live_sessions) stay
+  // current-state. All computed as correlated subqueries in ONE query.
   const [
     activeWorkspaces7d,
     activeWorkspaces30d,
@@ -2676,31 +2883,145 @@ export async function getShepherdAnalytics(
       members: string;
       agents: string;
       live_sessions: string;
+      active_agents: string;
+      sessions: string;
+      commits: string;
+      claims_released: string;
+      median_claim_seconds: string | null;
+      last_activity_at: Date | null;
     }>(
-      `SELECT w.name, w.slug,
-              (SELECT count(*) FROM memberships m WHERE m.workspace_id = w.id) AS members,
-              (SELECT count(*) FROM agents a WHERE a.workspace_id = w.id) AS agents,
+      `-- Two stages so the heavy window-scoped subqueries run for AT MOST the
+       -- 10 surviving rows, not every workspace: the CTE picks the top 10 by
+       -- the cheap members count alone (the sort key), then the outer query
+       -- computes the expensive metrics only for those. Ordering and output
+       -- shape are identical to the previous single-stage form.
+       WITH top AS (
+         SELECT w.id, w.name, w.slug,
+                (SELECT count(*) FROM memberships m WHERE m.workspace_id = w.id) AS members
+           FROM workspaces w
+          ORDER BY members DESC, w.name ASC
+          LIMIT 10
+       )
+       SELECT t.name, t.slug, t.members,
+              (SELECT count(*) FROM agents a WHERE a.workspace_id = t.id) AS agents,
               (SELECT count(*) FROM sessions s
-                 WHERE s.workspace_id = w.id AND s.last_heartbeat_at > ${live}) AS live_sessions
-         FROM workspaces w
-        ORDER BY members DESC, w.name ASC
-        LIMIT 10`,
+                 WHERE s.workspace_id = t.id AND s.last_heartbeat_at > ${live}) AS live_sessions,
+              -- Window-scoped activity ($1 = windowStart, $2 = windowEnd):
+              (SELECT count(DISTINCT s.agent_id) FROM sessions s
+                 WHERE s.workspace_id = t.id
+                   AND s.last_heartbeat_at >= $1 AND s.last_heartbeat_at < $2) AS active_agents,
+              (SELECT count(*) FROM sessions s
+                 WHERE s.workspace_id = t.id
+                   AND s.created_at >= $1 AND s.created_at < $2) AS sessions,
+              (SELECT count(*) FROM change_records cr
+                 WHERE cr.workspace_id = t.id AND cr.kind = 'committed'
+                   AND cr.updated_at >= $1 AND cr.updated_at < $2) AS commits,
+              (SELECT count(*) FROM work_items wi
+                 WHERE wi.workspace_id = t.id AND wi.released_at IS NOT NULL
+                   AND wi.released_at >= $1 AND wi.released_at < $2) AS claims_released,
+              (SELECT percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY EXTRACT(EPOCH FROM (wi.released_at - wi.created_at)))
+                 FROM work_items wi
+                 WHERE wi.workspace_id = t.id AND wi.released_at IS NOT NULL
+                   AND wi.released_at >= $1 AND wi.released_at < $2) AS median_claim_seconds,
+              -- GREATEST ignores NULLs, so this is the max observed activity in the
+              -- window across the three time-bound sources, or NULL when there is none.
+              GREATEST(
+                (SELECT max(s.last_heartbeat_at) FROM sessions s
+                   WHERE s.workspace_id = t.id
+                     AND s.last_heartbeat_at >= $1 AND s.last_heartbeat_at < $2),
+                (SELECT max(cr.updated_at) FROM change_records cr
+                   WHERE cr.workspace_id = t.id
+                     AND cr.updated_at >= $1 AND cr.updated_at < $2),
+                (SELECT max(wi.released_at) FROM work_items wi
+                   WHERE wi.workspace_id = t.id AND wi.released_at IS NOT NULL
+                     AND wi.released_at >= $1 AND wi.released_at < $2)
+              ) AS last_activity_at
+         FROM top t
+        ORDER BY t.members DESC, t.name ASC`,
+      [windowStart, windowEnd],
     ),
   ]);
 
-  // Batch 3: the daily trend series.
-  const [newAccounts, newWorkspaces, newSessions, commits] = await Promise.all([
-    dailyTrend(db, "account_profiles", "created_at", since),
-    dailyTrend(db, "workspaces", "created_at", since),
-    dailyTrend(db, "sessions", "created_at", since),
-    dailyTrend(db, "change_records", "updated_at", since, "kind = 'committed'"),
+  // Batch 3: the one period-comparison KPI that cannot be derived from a trend
+  // series — count(DISTINCT workspace_id) is not a plain row count, so it gets
+  // its own current + previous pair. The other four period KPIs (newAccounts,
+  // newSessions, commits, claimsReleased) are exact sums of their Batch-5
+  // trend series (same table, same half-open window, same predicate) and are
+  // derived below instead of re-queried.
+  const ACTIVE_WORKSPACES_SQL = `SELECT count(DISTINCT workspace_id) AS count FROM change_records
+     WHERE updated_at >= $1 AND updated_at < $2`;
+
+  const [activeWorkspacesCur, activeWorkspacesPrev] = await Promise.all([
+    windowedCount(db, ACTIVE_WORKSPACES_SQL, windowStart, windowEnd),
+    windowedCount(db, ACTIVE_WORKSPACES_SQL, previousStart, previousEnd),
+  ]);
+
+  // Batch 4: observed timing percentiles over the CURRENT window.
+  const [sessionSpanSeconds, claimDurationSeconds] = await Promise.all([
+    durationPercentiles(
+      db,
+      "sessions",
+      "created_at",
+      "last_heartbeat_at",
+      "created_at",
+      windowStart,
+      windowEnd,
+    ),
+    durationPercentiles(
+      db,
+      "work_items",
+      "created_at",
+      "released_at",
+      "released_at",
+      windowStart,
+      windowEnd,
+      "released_at IS NOT NULL",
+    ),
+  ]);
+
+  // Batch 5: the bucketed trend series, each declared ONCE as a current +
+  // previous pair (5 pairs = 10 queries, settled in a single wave — see
+  // trendPair). The sums of four of these pairs double as the corresponding
+  // period KPIs below, so those counts are never queried separately.
+  const windows = { windowStart, windowEnd, previousStart, previousEnd };
+  const [
+    newAccountsTrend,
+    newWorkspacesTrend,
+    newSessionsTrend,
+    commitsTrend,
+    claimsReleasedTrend,
+  ] = await Promise.all([
+    trendPair(db, "account_profiles", "created_at", bucket, windows),
+    trendPair(db, "workspaces", "created_at", bucket, windows),
+    trendPair(db, "sessions", "created_at", bucket, windows),
+    trendPair(
+      db,
+      "change_records",
+      "updated_at",
+      bucket,
+      windows,
+      "kind = 'committed'",
+    ),
+    trendPair(
+      db,
+      "work_items",
+      "released_at",
+      bucket,
+      windows,
+      "released_at IS NOT NULL",
+    ),
   ]);
 
   const avgMembersPerWorkspace =
     workspaces === 0 ? 0 : memberships / workspaces;
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: now.toISOString(),
+    range,
+    bucket,
+    windowStart: windowStart.toISOString(),
+    windowEnd: windowEnd.toISOString(),
     totals: {
       accounts,
       workspaces,
@@ -2720,17 +3041,58 @@ export async function getShepherdAnalytics(
       avgMembersPerWorkspace: Math.round(avgMembersPerWorkspace * 100) / 100,
       largestWorkspace,
     },
+    period: {
+      activeWorkspaces: periodMetric(activeWorkspacesCur, activeWorkspacesPrev),
+      // Derived from the trend pairs: each series is a zero-filled bucketing of
+      // exactly the windowed count (same table, same half-open window, same
+      // predicate), so its sum IS the period count — no separate query needed.
+      newAccounts: periodMetric(
+        sumTrend(newAccountsTrend.current),
+        sumTrend(newAccountsTrend.previous),
+      ),
+      newSessions: periodMetric(
+        sumTrend(newSessionsTrend.current),
+        sumTrend(newSessionsTrend.previous),
+      ),
+      commits: periodMetric(
+        sumTrend(commitsTrend.current),
+        sumTrend(commitsTrend.previous),
+      ),
+      claimsReleased: periodMetric(
+        sumTrend(claimsReleasedTrend.current),
+        sumTrend(claimsReleasedTrend.previous),
+      ),
+    },
+    timing: {
+      sessionSpanSeconds,
+      claimDurationSeconds,
+    },
     feedbackByType: feedbackByTypeRows.rows.map((r) => ({
       type: r.type,
       count: Number(r.count),
     })),
-    trends: { newAccounts, newWorkspaces, newSessions, commits },
+    trends: {
+      newAccounts: newAccountsTrend,
+      newWorkspaces: newWorkspacesTrend,
+      newSessions: newSessionsTrend,
+      commits: commitsTrend,
+      claimsReleased: claimsReleasedTrend,
+    },
     topWorkspaces: topWorkspaceRows.rows.map((r) => ({
       name: r.name,
       slug: r.slug,
       members: Number(r.members),
       agents: Number(r.agents),
       liveSessions: Number(r.live_sessions),
+      activeAgents: Number(r.active_agents),
+      sessions: Number(r.sessions),
+      commits: Number(r.commits),
+      claimsReleased: Number(r.claims_released),
+      medianClaimSeconds:
+        r.median_claim_seconds != null ? Number(r.median_claim_seconds) : null,
+      lastActivityAt: r.last_activity_at
+        ? r.last_activity_at.toISOString()
+        : null,
     })),
   };
 }

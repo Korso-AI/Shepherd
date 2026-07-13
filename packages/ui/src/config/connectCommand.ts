@@ -102,8 +102,8 @@ export function hookSetup(tool: Tool): HookSetup | null {
     };
   }
   if (tool === "codex") {
-    // Codex's PreToolUse only fires for Bash, so UserPromptSubmit is the
-    // frequent event there; hooks must be feature-flagged on.
+    // UserPromptSubmit and SessionStart cover turn/session boundaries;
+    // wildcard PreToolUse delivers announcements before supported tool calls.
     return {
       target: "~/.codex/config.toml",
       snippet: [
@@ -111,7 +111,23 @@ export function hookSetup(tool: Tool): HookSetup | null {
         "hooks = true",
         "",
         "[[hooks.UserPromptSubmit]]",
-        'command = ["npx", "-y", "--package=@korso/shepherd", "shepherd-inbox-hook"]',
+        "[[hooks.UserPromptSubmit.hooks]]",
+        'type = "command"',
+        `command = ${JSON.stringify(HOOK_COMMAND)}`,
+        "timeout = 20",
+        "",
+        "[[hooks.SessionStart]]",
+        "[[hooks.SessionStart.hooks]]",
+        'type = "command"',
+        `command = ${JSON.stringify(HOOK_COMMAND)}`,
+        "timeout = 20",
+        "",
+        "[[hooks.PreToolUse]]",
+        'matcher = "*"',
+        "[[hooks.PreToolUse.hooks]]",
+        'type = "command"',
+        `command = ${JSON.stringify(HOOK_COMMAND)}`,
+        "timeout = 20",
       ].join("\n"),
     };
   }

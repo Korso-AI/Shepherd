@@ -22,6 +22,8 @@ import {
   LeaveRequest,
   WorkspaceAnnounceRequest,
   FeedbackRequest,
+  AnalyticsRange,
+  DEFAULT_ANALYTICS_RANGE,
 } from "@shepherd/shared";
 
 import { getContext } from "./context.js";
@@ -729,7 +731,15 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   // -------------------------------------------------------------------------
 
   app.get("/admin/analytics", async (request, _reply) => {
-    return platformAnalytics(request.tenant);
+    // Parse the optional preset with the strict shared enum: a missing `range`
+    // defaults to DEFAULT_ANALYTICS_RANGE; anything present-but-unsupported
+    // throws a ZodError, which the error handler below turns into a 400.
+    const rawRange = (request.query as { range?: unknown } | undefined)?.range;
+    const range =
+      rawRange === undefined
+        ? DEFAULT_ANALYTICS_RANGE
+        : AnalyticsRange.parse(rawRange);
+    return platformAnalytics(request.tenant, range);
   });
 
   // -------------------------------------------------------------------------

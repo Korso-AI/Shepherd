@@ -238,6 +238,11 @@ export const JoinRequest = z.object({
 export const JoinResponse = z.object({
   agentName: z.string(),
   sessionId: z.string().uuid(),
+  // Advertised so clients can nudge their humans to update. Optional: older
+  // hubs omit them, and a hub that cannot determine its bundled client
+  // version fails open by leaving them out.
+  latestClientVersion: z.string().optional(),
+  minimumClientVersion: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -721,33 +726,116 @@ export const EntitlementsStatusResponse = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// platformAnalytics() -> ShepherdAnalyticsResponse (GET /admin/analytics)
+// platformAnalytics({ range? }) -> ShepherdAnalyticsResponse
+// (GET /admin/analytics?range=24h|7d|30d|90d)
 //
 // The cross-tenant, read-only product analytics rollup behind the Korso console
 // "Shepherd" tab. Operator-gated at the hub (see requireOperator in the hub's
 // tenant.ts for the trust model). This is the canonical wire contract; the
 // hub's repo/operation layers type against it so drift is caught at compile
 // time (and the operation parse-validates the payload at runtime).
+//
+// The rollup is range-aware: the caller picks one of four preset windows and
+// every period-scoped number (period KPIs, trend series, workspace rollup
+// activity) is computed over that window plus the equal-length window
+// immediately before it, so the UI can render "vs previous period" deltas
+// without a second request.
 // ---------------------------------------------------------------------------
 
-/** One day's bucket in a trend series (zero-filled across the window). */
+/**
+ * The supported analytics windows. A closed enum (not a free-form duration)
+ * so the hub can bind exact timestamps per preset, cache per range, and
+ * reject anything else with a 400 instead of running an unbounded query.
+ */
+export const AnalyticsRange = z.enum(["24h", "7d", "30d", "90d"]);
+
+/** The window used when the caller omits or sends an invalid `range`. */
+export const DEFAULT_ANALYTICS_RANGE: z.infer<typeof AnalyticsRange> = "30d";
+
+/**
+ * Trend-bucket granularity, echoed on the response so the client never has
+ * to re-derive it from the range: `hour` for the 24h window, `day` otherwise.
+ */
+export const AnalyticsBucket = z.enum(["hour", "day"]);
+
+/**
+ * A comparison-aware KPI: the count observed in the current window, the count
+ * in the aligned previous window, and the percentage change between them.
+ * `changePct` is null when the previous period is 0 (a percentage would be
+ * undefined/infinite) — the UI renders "new" instead of a false number.
+ * Counts are non-negative integers by construction (they are row counts).
+ */
+export const PeriodMetric = z.object({
+  current: z.number().int().nonnegative(),
+  previous: z.number().int().nonnegative(),
+  changePct: z.number().nullable(),
+});
+
+/**
+ * Observed duration percentiles in seconds. Both are null when there are no
+ * source rows in the window — the contract forces the "no data" case to be
+ * explicit rather than surfacing a misleading 0s percentile.
+ */
+export const DurationPercentiles = z.object({
+  p50: z.number().nonnegative().nullable(),
+  p95: z.number().nonnegative().nullable(),
+});
+
+/**
+ * One bucket in a trend series (zero-filled across the window). `date` is
+ * `YYYY-MM-DD` for daily buckets and an ISO timestamp for hourly buckets.
+ */
 export const TrendPoint = z.object({
-  // `YYYY-MM-DD` (UTC day).
   date: z.string(),
   count: z.number(),
 });
 
-/** One workspace in the "largest workspaces" leaderboard. */
+/**
+ * A trend series with its aligned prior-period twin: `previous` covers the
+ * equal-length window immediately before `current` (same bucket count, so the
+ * chart can overlay them point-for-point).
+ */
+export const TrendSeries = z.object({
+  current: z.array(TrendPoint),
+  previous: z.array(TrendPoint),
+});
+
+/**
+ * One workspace in the analytics rollup table. Identity/size fields (name,
+ * slug, members, agents, liveSessions) describe current state; the activity
+ * fields (activeAgents, sessions, commits, claimsReleased, medianClaimSeconds,
+ * lastActivityAt) are scoped to the requested range. `medianClaimSeconds` and
+ * `lastActivityAt` are null when the workspace has no observed data in the
+ * window.
+ */
 export const TopWorkspace = z.object({
   name: z.string(),
   slug: z.string(),
-  members: z.number(),
-  agents: z.number(),
-  liveSessions: z.number(),
+  members: z.number().int().nonnegative(),
+  agents: z.number().int().nonnegative(),
+  liveSessions: z.number().int().nonnegative(),
+  // Distinct agents with any session activity inside the window.
+  activeAgents: z.number().int().nonnegative(),
+  sessions: z.number().int().nonnegative(),
+  commits: z.number().int().nonnegative(),
+  claimsReleased: z.number().int().nonnegative(),
+  // Median released-claim duration (created_at -> released_at), seconds.
+  medianClaimSeconds: z.number().nonnegative().nullable(),
+  // ISO timestamp of the most recent observed activity, or null if none.
+  lastActivityAt: IsoTimestamp.nullable(),
 });
 
 export const ShepherdAnalyticsResponse = z.object({
   generatedAt: IsoTimestamp,
+  // Echo of the (validated) requested window plus the bucket granularity and
+  // the exact half-open window [windowStart, windowEnd) the hub computed
+  // against — clients label charts from these instead of re-deriving time math.
+  range: AnalyticsRange,
+  bucket: AnalyticsBucket,
+  windowStart: IsoTimestamp,
+  windowEnd: IsoTimestamp,
+  // Current-state totals: whole-platform counts as of `generatedAt`,
+  // independent of the requested range.
   totals: z.object({
     accounts: z.number(),
     workspaces: z.number(),
@@ -767,12 +855,30 @@ export const ShepherdAnalyticsResponse = z.object({
     avgMembersPerWorkspace: z.number(),
     largestWorkspace: z.number(),
   }),
+  // Range-scoped KPIs, each with its aligned previous-period comparison.
+  period: z.object({
+    activeWorkspaces: PeriodMetric,
+    newAccounts: PeriodMetric,
+    newSessions: PeriodMetric,
+    commits: PeriodMetric,
+    claimsReleased: PeriodMetric,
+  }),
+  // Observed timing diagnostics over the current window: session span is
+  // created_at -> last_heartbeat_at; claim duration is created_at ->
+  // released_at (released claims only).
+  timing: z.object({
+    sessionSpanSeconds: DurationPercentiles,
+    claimDurationSeconds: DurationPercentiles,
+  }),
   feedbackByType: z.array(z.object({ type: z.string(), count: z.number() })),
+  // Bucketed activity series (hourly for 24h, daily otherwise), each carrying
+  // its aligned previous-period twin for chart overlays.
   trends: z.object({
-    newAccounts: z.array(TrendPoint),
-    newWorkspaces: z.array(TrendPoint),
-    newSessions: z.array(TrendPoint),
-    commits: z.array(TrendPoint),
+    newAccounts: TrendSeries,
+    newWorkspaces: TrendSeries,
+    newSessions: TrendSeries,
+    commits: TrendSeries,
+    claimsReleased: TrendSeries,
   }),
   topWorkspaces: z.array(TopWorkspace),
 });

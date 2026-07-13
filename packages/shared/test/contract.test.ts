@@ -40,6 +40,14 @@ import {
   InviteResponse,
   FeedbackRequest,
   FeedbackResponse,
+  AnalyticsRange,
+  DEFAULT_ANALYTICS_RANGE,
+  AnalyticsBucket,
+  PeriodMetric,
+  DurationPercentiles,
+  TrendSeries,
+  TopWorkspace,
+  ShepherdAnalyticsResponse,
 } from "../src/contract.js";
 
 const VALID_UUID = "550e8400-e29b-41d4-a716-446655440000";
@@ -1281,5 +1289,385 @@ describe("FeedbackResponse", () => {
     expect(() =>
       FeedbackResponse.parse({ ok: false, id: VALID_UUID }),
     ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shepherd analytics: range model, comparison KPIs, timing percentiles,
+// aligned trend series, and workspace rollup rows.
+// ---------------------------------------------------------------------------
+
+describe("AnalyticsRange", () => {
+  it("accepts every supported preset", () => {
+    for (const range of ["24h", "7d", "30d", "90d"]) {
+      expect(AnalyticsRange.parse(range)).toBe(range);
+    }
+  });
+
+  it("rejects unsupported range values", () => {
+    for (const bad of ["60d", "1h", "7D", "week", "", "365d", null, 30]) {
+      expect(AnalyticsRange.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it("defaults to 30d", () => {
+    expect(DEFAULT_ANALYTICS_RANGE).toBe("30d");
+    // The default must itself be a valid preset.
+    expect(AnalyticsRange.parse(DEFAULT_ANALYTICS_RANGE)).toBe("30d");
+  });
+});
+
+describe("AnalyticsBucket", () => {
+  it("accepts hour and day", () => {
+    expect(AnalyticsBucket.parse("hour")).toBe("hour");
+    expect(AnalyticsBucket.parse("day")).toBe("day");
+  });
+
+  it("rejects other granularities", () => {
+    for (const bad of ["week", "month", "minute", ""]) {
+      expect(AnalyticsBucket.safeParse(bad).success).toBe(false);
+    }
+  });
+});
+
+describe("PeriodMetric", () => {
+  it("parses a metric with a numeric changePct", () => {
+    const m = PeriodMetric.parse({ current: 12, previous: 10, changePct: 20 });
+    expect(m.current).toBe(12);
+    expect(m.previous).toBe(10);
+    expect(m.changePct).toBe(20);
+  });
+
+  it("parses a metric with a null changePct (previous period was 0)", () => {
+    const m = PeriodMetric.parse({ current: 5, previous: 0, changePct: null });
+    expect(m.changePct).toBeNull();
+  });
+
+  it("accepts a negative changePct (a decline is valid)", () => {
+    const m = PeriodMetric.parse({
+      current: 5,
+      previous: 10,
+      changePct: -50,
+    });
+    expect(m.changePct).toBe(-50);
+  });
+
+  it("rejects negative counts", () => {
+    expect(
+      PeriodMetric.safeParse({ current: -1, previous: 0, changePct: null })
+        .success,
+    ).toBe(false);
+    expect(
+      PeriodMetric.safeParse({ current: 0, previous: -1, changePct: null })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects non-integer counts", () => {
+    expect(
+      PeriodMetric.safeParse({ current: 1.5, previous: 0, changePct: null })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects missing fields", () => {
+    expect(PeriodMetric.safeParse({ current: 1, previous: 1 }).success).toBe(
+      false,
+    );
+    expect(PeriodMetric.safeParse({ current: 1, changePct: 0 }).success).toBe(
+      false,
+    );
+    expect(PeriodMetric.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("DurationPercentiles", () => {
+  it("parses observed percentiles in seconds", () => {
+    const p = DurationPercentiles.parse({ p50: 120.5, p95: 3600 });
+    expect(p.p50).toBe(120.5);
+    expect(p.p95).toBe(3600);
+  });
+
+  it("parses null percentiles (no source rows)", () => {
+    const p = DurationPercentiles.parse({ p50: null, p95: null });
+    expect(p.p50).toBeNull();
+    expect(p.p95).toBeNull();
+  });
+
+  it("rejects negative durations", () => {
+    expect(DurationPercentiles.safeParse({ p50: -1, p95: 10 }).success).toBe(
+      false,
+    );
+    expect(DurationPercentiles.safeParse({ p50: 1, p95: -0.5 }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects non-numeric values and missing fields", () => {
+    expect(
+      DurationPercentiles.safeParse({ p50: "120", p95: null }).success,
+    ).toBe(false);
+    expect(DurationPercentiles.safeParse({ p50: 1 }).success).toBe(false);
+  });
+});
+
+describe("TrendSeries", () => {
+  const points = [
+    { date: "2026-07-01", count: 3 },
+    { date: "2026-07-02", count: 0 },
+  ];
+
+  it("parses aligned current + previous point arrays", () => {
+    const s = TrendSeries.parse({ current: points, previous: points });
+    expect(s.current).toHaveLength(2);
+    expect(s.previous).toHaveLength(2);
+  });
+
+  it("parses empty arrays (no-data windows)", () => {
+    const s = TrendSeries.parse({ current: [], previous: [] });
+    expect(s.current).toHaveLength(0);
+  });
+
+  it("rejects a series missing the previous array", () => {
+    expect(TrendSeries.safeParse({ current: points }).success).toBe(false);
+  });
+
+  it("rejects malformed points", () => {
+    expect(
+      TrendSeries.safeParse({
+        current: [{ date: "2026-07-01" }],
+        previous: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      TrendSeries.safeParse({
+        current: [{ date: "2026-07-01", count: "3" }],
+        previous: [],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("TopWorkspace (analytics rollup row)", () => {
+  const validRow = {
+    name: "Acme",
+    slug: "acme",
+    members: 8,
+    agents: 4,
+    liveSessions: 2,
+    activeAgents: 3,
+    sessions: 41,
+    commits: 120,
+    claimsReleased: 37,
+    medianClaimSeconds: 812.4,
+    lastActivityAt: VALID_ISO,
+  };
+
+  it("parses a fully-populated rollup row", () => {
+    const r = TopWorkspace.parse(validRow);
+    expect(r.slug).toBe("acme");
+    expect(r.activeAgents).toBe(3);
+    expect(r.medianClaimSeconds).toBe(812.4);
+    expect(r.lastActivityAt).toBe(VALID_ISO);
+  });
+
+  it("parses null medianClaimSeconds and lastActivityAt (no observed data)", () => {
+    const r = TopWorkspace.parse({
+      ...validRow,
+      medianClaimSeconds: null,
+      lastActivityAt: null,
+    });
+    expect(r.medianClaimSeconds).toBeNull();
+    expect(r.lastActivityAt).toBeNull();
+  });
+
+  it("rejects rows missing the new rollup fields", () => {
+    for (const missing of [
+      "activeAgents",
+      "sessions",
+      "commits",
+      "claimsReleased",
+      "medianClaimSeconds",
+      "lastActivityAt",
+    ]) {
+      const row: Record<string, unknown> = { ...validRow };
+      delete row[missing];
+      expect(TopWorkspace.safeParse(row).success).toBe(false);
+    }
+  });
+
+  it("rejects negative counts and negative median duration", () => {
+    expect(TopWorkspace.safeParse({ ...validRow, sessions: -1 }).success).toBe(
+      false,
+    );
+    expect(
+      TopWorkspace.safeParse({ ...validRow, activeAgents: -2 }).success,
+    ).toBe(false);
+    expect(
+      TopWorkspace.safeParse({ ...validRow, medianClaimSeconds: -5 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("ShepherdAnalyticsResponse", () => {
+  const metric = { current: 10, previous: 8, changePct: 25 };
+  const series = {
+    current: [{ date: "2026-07-01", count: 2 }],
+    previous: [{ date: "2026-06-01", count: 1 }],
+  };
+  const validResponse = {
+    generatedAt: VALID_ISO,
+    range: "30d",
+    bucket: "day",
+    windowStart: "2026-06-10T00:00:00.000Z",
+    windowEnd: "2026-07-10T00:00:00.000Z",
+    totals: {
+      accounts: 100,
+      workspaces: 20,
+      memberships: 150,
+      agents: 60,
+      liveSessions: 5,
+      activeTokens: 40,
+      revokedTokens: 3,
+      activeInvites: 7,
+      feedback: 12,
+      changeRecords: 900,
+      activeWorkItems: 4,
+    },
+    engagement: {
+      activeWorkspaces7d: 9,
+      activeWorkspaces30d: 15,
+      avgMembersPerWorkspace: 7.5,
+      largestWorkspace: 30,
+    },
+    period: {
+      activeWorkspaces: metric,
+      newAccounts: metric,
+      newSessions: metric,
+      commits: metric,
+      claimsReleased: { current: 4, previous: 0, changePct: null },
+    },
+    timing: {
+      sessionSpanSeconds: { p50: 640, p95: 7200 },
+      claimDurationSeconds: { p50: null, p95: null },
+    },
+    feedbackByType: [{ type: "bug", count: 8 }],
+    trends: {
+      newAccounts: series,
+      newWorkspaces: series,
+      newSessions: series,
+      commits: series,
+      claimsReleased: series,
+    },
+    topWorkspaces: [
+      {
+        name: "Acme",
+        slug: "acme",
+        members: 8,
+        agents: 4,
+        liveSessions: 2,
+        activeAgents: 3,
+        sessions: 41,
+        commits: 120,
+        claimsReleased: 37,
+        medianClaimSeconds: null,
+        lastActivityAt: null,
+      },
+    ],
+  };
+
+  it("parses a full valid payload", () => {
+    const r = ShepherdAnalyticsResponse.parse(validResponse);
+    expect(r.range).toBe("30d");
+    expect(r.bucket).toBe("day");
+    expect(r.period.claimsReleased.changePct).toBeNull();
+    expect(r.timing.claimDurationSeconds.p50).toBeNull();
+    expect(r.trends.claimsReleased.previous).toHaveLength(1);
+    expect(r.topWorkspaces[0]!.medianClaimSeconds).toBeNull();
+  });
+
+  it("parses an hourly 24h payload", () => {
+    const r = ShepherdAnalyticsResponse.parse({
+      ...validResponse,
+      range: "24h",
+      bucket: "hour",
+    });
+    expect(r.range).toBe("24h");
+    expect(r.bucket).toBe("hour");
+  });
+
+  it("rejects an unsupported range", () => {
+    expect(
+      ShepherdAnalyticsResponse.safeParse({ ...validResponse, range: "60d" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects an unsupported bucket", () => {
+    expect(
+      ShepherdAnalyticsResponse.safeParse({ ...validResponse, bucket: "week" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects missing window metadata", () => {
+    const { windowStart: _ws, ...noWindowStart } = validResponse;
+    expect(ShepherdAnalyticsResponse.safeParse(noWindowStart).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects a malformed period metric", () => {
+    expect(
+      ShepherdAnalyticsResponse.safeParse({
+        ...validResponse,
+        period: {
+          ...validResponse.period,
+          commits: { current: -3, previous: 1, changePct: null },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      ShepherdAnalyticsResponse.safeParse({
+        ...validResponse,
+        period: {
+          ...validResponse.period,
+          newSessions: { current: 3, previous: 1 },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects invalid timing values", () => {
+    expect(
+      ShepherdAnalyticsResponse.safeParse({
+        ...validResponse,
+        timing: {
+          ...validResponse.timing,
+          sessionSpanSeconds: { p50: -1, p95: 10 },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a trends object missing a series", () => {
+    const { claimsReleased: _cr, ...partialTrends } = validResponse.trends;
+    expect(
+      ShepherdAnalyticsResponse.safeParse({
+        ...validResponse,
+        trends: partialTrends,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an invalid workspace row", () => {
+    expect(
+      ShepherdAnalyticsResponse.safeParse({
+        ...validResponse,
+        topWorkspaces: [
+          { ...validResponse.topWorkspaces[0], claimsReleased: -1 },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });

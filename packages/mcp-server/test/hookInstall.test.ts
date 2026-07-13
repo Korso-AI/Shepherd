@@ -8,7 +8,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { detectClient, autoInstallHooks } from "../src/hookInstall.js";
+import {
+  detectClient,
+  autoInstallHooks,
+  hookCommandFor,
+  HOOK_COMMAND,
+} from "../src/hookInstall.js";
 
 // Layer 4: on first run per machine+client, install the announcement-push hook
 // into the client's own config — the way superpowers-style tools do — so
@@ -513,6 +518,18 @@ describe("autoInstallHooks — gates", () => {
   });
 });
 
+describe("hookCommandFor", () => {
+  it("quotes the script path with forward slashes so bash-executed hooks survive Windows paths", () => {
+    expect(
+      hookCommandFor("C:\\Users\\x\\.shepherd\\hooks\\shepherd-inbox-hook.mjs"),
+    ).toBe('node "C:/Users/x/.shepherd/hooks/shepherd-inbox-hook.mjs"');
+  });
+
+  it("falls back to the pinned npx command for a null script path", () => {
+    expect(hookCommandFor(null)).toBe(HOOK_COMMAND);
+  });
+});
+
 describe("autoInstallHooks — locally cached hook script", () => {
   it("caches the bundled script and points the hook command at it (node, not npx)", async () => {
     const home = freshHome();
@@ -533,8 +550,12 @@ describe("autoInstallHooks — locally cached hook script", () => {
       readFileSync(join(home, ".claude", "settings.json"), "utf8"),
     );
     const command = settings.hooks.PreToolUse[0].hooks[0].command as string;
-    expect(command).toBe(`node "${cached}"`);
+    expect(command).toBe(`node "${cached.replace(/\\/g, "/")}"`);
     expect(command).not.toContain("npx");
+    // Clients (Claude Code among them) execute hook commands through a POSIX
+    // shell even on Windows, where an unquoted backslash path is destroyed
+    // ("C:\Users\..." → "C:Users..."). The command must never contain one.
+    expect(command).not.toContain("\\");
   });
 
   it("refreshes a stale cached script on later boots, even after the one-shot install record", async () => {
@@ -576,7 +597,7 @@ describe("autoInstallHooks — locally cached hook script", () => {
     expect(command).toMatch(/^npx -y --package=@korso\/shepherd@\d/);
   });
 
-  it("codex TOML uses the cached script as a valid two-element command array", async () => {
+  it("codex TOML uses the cached script as a normalized command string", async () => {
     const home = freshHome();
     const source = join(home, "bundled-inboxHook.js");
     writeFileSync(source, "// bundled\n");
@@ -589,6 +610,8 @@ describe("autoInstallHooks — locally cached hook script", () => {
 
     const toml = readFileSync(join(home, ".codex", "config.toml"), "utf8");
     const cached = join(home, ".shepherd", "hooks", "shepherd-inbox-hook.mjs");
-    expect(toml).toContain(`command = ["node", ${JSON.stringify(cached)}]`);
+    expect(toml).toContain(
+      `command = ${JSON.stringify(`node "${cached.replace(/\\/g, "/")}"`)}`,
+    );
   });
 });
