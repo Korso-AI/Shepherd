@@ -4,4 +4,4 @@
  * import path under the project's tsc setup); version.test.ts pins it to
  * package.json so a release bump that forgets this file fails CI.
  */
-export const SHEPHERD_UI_VERSION = "0.18.0";
+export const SHEPHERD_UI_VERSION = "0.20.1";

@@ -1111,14 +1111,17 @@ header {
 .shepherd-general .delete-account {
   padding-top: 4px;
 }
-/* Sign out is a session action, not a primary CTA: quiet bordered pill. */
-.shepherd-config .signout button {
+/* Sign out and Leave workspace are secondary session/workspace actions, not
+   primary CTAs: both render as the same quiet bordered pill (Delete stays red). */
+.shepherd-config .signout button,
+.shepherd-config .leave button {
   background: transparent;
   color: var(--ink2);
   border-color: var(--line);
   align-self: flex-start;
 }
-.shepherd-config .signout button:hover:not(:disabled) {
+.shepherd-config .signout button:hover:not(:disabled),
+.shepherd-config .leave button:hover:not(:disabled) {
   color: var(--ink);
   border-color: var(--ink3);
   background: rgba(50, 44, 32, 0.06);

@@ -208,6 +208,70 @@ describe("ConfigPanel", () => {
     expect(screen.queryByText("shadowed")).not.toBeInTheDocument();
   });
 
+  it("keeps the first injected section when ids collide", async () => {
+    renderPanel(ADMIN_WS, {
+      extraSections: [
+        {
+          id: "host-tools",
+          label: "First tools",
+          render: () => <p>first content</p>,
+        },
+        {
+          id: "host-tools",
+          label: "Second tools",
+          render: () => <p>second content</p>,
+        },
+      ],
+    });
+
+    expect(screen.getAllByRole("button", { name: /tools/i })).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "First tools" }));
+    expect(screen.getByText("first content")).toBeInTheDocument();
+    expect(screen.queryByText("second content")).not.toBeInTheDocument();
+  });
+
+  it("opens a requested injected section and handles a repeated request", async () => {
+    const extraSections = [
+      {
+        id: "host-tools",
+        label: "Host tools",
+        render: ({ workspaceId }: { workspaceId: string }) => (
+          <p>Host tools for {workspaceId}</p>
+        ),
+      },
+    ];
+    const view = renderPanel(ADMIN_WS, {
+      extraSections,
+      sectionRequest: { id: "host-tools", nonce: 1 },
+    });
+
+    expect(await screen.findByText("Host tools for ws_1")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Workspace" }));
+    expect(screen.queryByText("Host tools for ws_1")).not.toBeInTheDocument();
+
+    view.rerender(
+      <ShepherdClientProvider client={client}>
+        <ConfigPanel
+          workspace={ADMIN_WS}
+          extraSections={extraSections}
+          sectionRequest={{ id: "host-tools", nonce: 2 }}
+        />
+      </ShepherdClientProvider>,
+    );
+    expect(await screen.findByText("Host tools for ws_1")).toBeInTheDocument();
+  });
+
+  it("ignores an unknown requested section", async () => {
+    renderPanel(ADMIN_WS, {
+      sectionRequest: { id: "missing", nonce: 1 },
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "Workspace" }),
+    ).toBeInTheDocument();
+  });
+
   it("marks the active nav item with aria-current", async () => {
     renderPanel();
     const workspace = screen.getByRole("button", { name: "Workspace" });

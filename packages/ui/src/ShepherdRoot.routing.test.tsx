@@ -37,6 +37,38 @@ describe("ShepherdRoot routing / landing", () => {
     );
   }
 
+  it("notifies the host when the workspace selection changes", async () => {
+    const onWorkspaceChange = vi.fn();
+    client.listWorkspaces = vi
+      .fn()
+      .mockResolvedValue({ workspaces: [WS, WS2] });
+    render(
+      <ShepherdClientProvider client={client}>
+        <ShepherdRoot onWorkspaceChange={onWorkspaceChange} />
+      </ShepherdClientProvider>,
+    );
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(WS));
+    await userEvent.click(screen.getByRole("button", { name: /acme/i }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /beta/i }));
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(WS2));
+    expect(onWorkspaceChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("notifies the host with null when no workspace is selected", async () => {
+    const onWorkspaceChange = vi.fn();
+    client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [] });
+    render(
+      <ShepherdClientProvider client={client}>
+        <ShepherdRoot onWorkspaceChange={onWorkspaceChange} />
+      </ShepherdClientProvider>,
+    );
+
+    await waitFor(() => expect(onWorkspaceChange).toHaveBeenCalledWith(null));
+    expect(onWorkspaceChange).toHaveBeenCalledTimes(1);
+  });
+
   it("lands on Tasks when the account has at least one workspace", async () => {
     client.listWorkspaces = vi.fn().mockResolvedValue({ workspaces: [WS] });
     renderRoot();

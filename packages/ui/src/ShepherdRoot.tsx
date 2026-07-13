@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { WorkspaceSummaryT } from "@shepherd/shared";
 import { Dashboard } from "./components/Dashboard.js";
 import { WorkspaceSwitcher } from "./config/WorkspaceSwitcher.js";
 import {
   ConfigPanel,
+  resolveConfigSections,
+  type ConfigSectionRequest,
   type ExtraConfigSection,
 } from "./config/ConfigPanel.js";
 import { AccountSettings } from "./config/AccountSettings.js";
@@ -52,6 +60,10 @@ export interface ShepherdRootProps {
    * ConfigPanel sections and scoped to the selected workspace.
    */
   extraSections?: ReadonlyArray<ExtraConfigSection>;
+  /** Called when the selected workspace changes or clears. */
+  onWorkspaceChange?: (workspace: WorkspaceSummaryT | null) => void;
+  /** Requests navigation to a built-in or injected Settings section. */
+  configSectionRequest?: ConfigSectionRequest;
 }
 
 type LoadState =
@@ -64,6 +76,8 @@ export function ShepherdRoot({
   hubUrl,
   onLogout,
   extraSections,
+  onWorkspaceChange,
+  configSectionRequest,
 }: ShepherdRootProps) {
   const client = useShepherdClient();
 
@@ -96,6 +110,27 @@ export function ShepherdRoot({
 
   const workspaces = load.status === "ready" ? load.workspaces : [];
   const selected = workspaces.find((w) => w.id === selectedId) ?? null;
+  const emittedWorkspaceKey = useRef<string | null>(null);
+  const hasEmittedWorkspace = useRef(false);
+
+  useEffect(() => {
+    if (load.status !== "ready") return;
+    const key = selected
+      ? [
+          selected.id,
+          selected.slug,
+          selected.name,
+          selected.role,
+          String(selected.isOwner),
+        ].join("\u0000")
+      : "";
+    if (hasEmittedWorkspace.current && emittedWorkspaceKey.current === key) {
+      return;
+    }
+    hasEmittedWorkspace.current = true;
+    emittedWorkspaceKey.current = key;
+    onWorkspaceChange?.(selected);
+  }, [load.status, onWorkspaceChange, selected]);
 
   if (load.status === "loading") {
     return (
@@ -114,6 +149,11 @@ export function ShepherdRoot({
   }
 
   const hasWorkspace = workspaces.length > 0;
+  const acceptedConfigIds = resolveConfigSections(extraSections).ids;
+  const acceptedConfigSectionRequest =
+    configSectionRequest && acceptedConfigIds.has(configSectionRequest.id)
+      ? configSectionRequest
+      : undefined;
 
   // The app-bar switcher: the active-workspace indicator + the one home for
   // switch/create/join, shown on every tab. The membersRefreshKey is bumped
@@ -147,6 +187,7 @@ export function ShepherdRoot({
           onDeleted={() => void fetchWorkspaces()}
           onLogout={onLogout}
           extraSections={extraSections}
+          sectionRequest={acceptedConfigSectionRequest}
         />
       ) : (
         <>
@@ -175,6 +216,7 @@ export function ShepherdRoot({
         onWorkspacesChanged={() => {
           void fetchWorkspaces();
         }}
+        configSectionRequest={acceptedConfigSectionRequest}
       />
     </div>
   );

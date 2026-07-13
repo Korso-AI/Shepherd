@@ -170,6 +170,166 @@ describe("createShepherdClient", () => {
       await expect(c.listWorkspaces()).rejects.toMatchObject({ status: 401 });
       expect(onUnauthorized).toHaveBeenCalledOnce();
     });
+
+    it("preserves a structured response body and notifies the host once", async () => {
+      const onResponseError = vi.fn();
+      const c = createShepherdClient({ baseUrl: BASE, onResponseError });
+      const details = {
+        error: "Action required",
+        code: "host_action_required",
+        limit: "workspace_count",
+        current: 2,
+        max: 2,
+      };
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(details, { status: 402, statusText: "Response Error" }),
+      );
+
+      const caught = await c.listWorkspaces().catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({
+        message: "HTTP 402: Action required",
+        status: 402,
+      });
+      expect((caught as ShepherdClientError).details).toEqual({
+        error: "Action required",
+        code: "host_action_required",
+        limit: "workspace_count",
+        current: 2,
+        max: 2,
+      });
+      expect(onResponseError).toHaveBeenCalledOnce();
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+    });
+
+    it("rejects an otherwise valid response body with an extra field", async () => {
+      const onResponseError = vi.fn();
+      const c = createShepherdClient({ baseUrl: BASE, onResponseError });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: "Repository limit reached",
+            code: "limit_exceeded",
+            limit: "repos",
+            current: 3,
+            max: 3,
+            unexpected: true,
+          },
+          { status: 402, statusText: "Response Error" },
+        ),
+      );
+
+      const caught = await c.listWorkspaces().catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({ message: "HTTP 402", status: 402 });
+      expect((caught as ShepherdClientError).details).toBeUndefined();
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+    });
+
+    it("carries the encoded relative request path on the response error hook", async () => {
+      const onResponseError = vi.fn();
+      const c = createShepherdClient({ baseUrl: BASE, onResponseError });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          { error: "Repository limit reached", code: "limit_exceeded" },
+          { status: 402, statusText: "Response Error" },
+        ),
+      );
+
+      const caught = await c
+        .redeemInvite("invite code")
+        .catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({
+        status: 402,
+        requestPath: "/invites/invite%20code/redeem",
+      });
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+    });
+
+    it("notifies after onUnauthorized for a 401 response", async () => {
+      const calls: string[] = [];
+      const c = createShepherdClient({
+        baseUrl: BASE,
+        onUnauthorized: () => calls.push("unauthorized"),
+        onResponseError: () => calls.push("response"),
+      });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          { error: "nope", code: "session_invalid" },
+          { status: 401, statusText: "Unauthorized" },
+        ),
+      );
+
+      const caught = await c.listWorkspaces().catch((error: unknown) => error);
+
+      expect(calls).toEqual(["unauthorized", "response"]);
+      expect(caught).toMatchObject({
+        message: "Unauthorized",
+        status: 401,
+        details: { error: "nope", code: "session_invalid" },
+      });
+    });
+
+    it("keeps the original response error when the host callback throws", async () => {
+      const c = createShepherdClient({
+        baseUrl: BASE,
+        onResponseError: () => {
+          throw new Error("host callback failed");
+        },
+      });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          { error: "upstream failed" },
+          { status: 500, statusText: "Server Error" },
+        ),
+      );
+
+      await expect(c.listWorkspaces()).rejects.toMatchObject({
+        message: "HTTP 500: upstream failed",
+        status: 500,
+        details: { error: "upstream failed" },
+      });
+    });
+
+    it.each([
+      [{ error: "x".repeat(513) }, "oversized error"],
+      [{ error: "failed", code: 42 }, "malformed field"],
+      [{ internal: "hidden" }, "unexpected fields only"],
+    ])("rejects %s response details", async (body) => {
+      const c = createShepherdClient({ baseUrl: BASE });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(body, { status: 402, statusText: "Response Error" }),
+      );
+
+      const caught = await c.listWorkspaces().catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({ message: "HTTP 402", status: 402 });
+      expect((caught as ShepherdClientError).details).toBeUndefined();
+    });
+
+    it("keeps a 401 response error when onUnauthorized throws", async () => {
+      const onResponseError = vi.fn();
+      const c = createShepherdClient({
+        baseUrl: BASE,
+        onUnauthorized: () => {
+          throw new Error("host callback failed");
+        },
+        onResponseError,
+      });
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse(
+          { error: "nope", code: "session_invalid" },
+          { status: 401, statusText: "Unauthorized" },
+        ),
+      );
+
+      const caught = await c.listWorkspaces().catch((error: unknown) => error);
+
+      expect(caught).toMatchObject({ message: "Unauthorized", status: 401 });
+      expect(onResponseError).toHaveBeenCalledOnce();
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+    });
   });
 
   describe("createWorkspace", () => {
@@ -592,6 +752,130 @@ describe("transport edge cases", () => {
     }
     expect(caught).toBeInstanceOf(ShepherdClientError);
     expect((caught as ShepherdClientError).status).toBeUndefined();
+  });
+
+  it("does not notify the response error hook for a transport failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    const onResponseError = vi.fn();
+    const client = createShepherdClient({ baseUrl: BASE, onResponseError });
+
+    await expect(client.getLandscape()).rejects.toMatchObject({
+      status: undefined,
+    });
+    expect(onResponseError).not.toHaveBeenCalled();
+  });
+
+  it("leaves details absent when a response body is not JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        new Response("service unavailable", {
+          status: 503,
+          statusText: "Service Unavailable",
+        }),
+      ),
+    );
+    const onResponseError = vi.fn();
+    const client = createShepherdClient({ baseUrl: BASE, onResponseError });
+
+    const caught = await client.getLandscape().catch((error: unknown) => error);
+
+    expect(caught).toMatchObject({ message: "HTTP 503", status: 503 });
+    expect((caught as ShepherdClientError).details).toBeUndefined();
+    expect(onResponseError).toHaveBeenCalledWith(caught);
+  });
+
+  it("notifies immediately for 401 headers and times out a stalled body", async () => {
+    vi.useFakeTimers();
+    try {
+      const onUnauthorized = vi.fn();
+      const onResponseError = vi.fn();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          json: () => new Promise<unknown>(() => undefined),
+        }),
+      );
+      const client = createShepherdClient({
+        baseUrl: BASE,
+        timeoutMs: 1000,
+        onUnauthorized,
+        onResponseError,
+      });
+
+      const settled = client.getLandscape().catch((error: unknown) => error);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onUnauthorized).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(1000);
+      const caught = await settled;
+      expect(caught).toMatchObject({ message: "Unauthorized", status: 401 });
+      expect(onResponseError).toHaveBeenCalledOnce();
+      expect(onResponseError).toHaveBeenCalledWith(caught);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out while parsing a successful response body", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: () => new Promise<unknown>(() => undefined),
+        }),
+      );
+      const client = createShepherdClient({ baseUrl: BASE, timeoutMs: 1000 });
+
+      const settled = client.getLandscape().catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const caught = await settled;
+      expect(caught).toBeInstanceOf(ShepherdClientError);
+      expect((caught as ShepherdClientError).status).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out while draining a successful bodyless operation", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValueOnce({
+          ok: true,
+          status: 204,
+          json: () => new Promise<unknown>(() => undefined),
+        }),
+      );
+      const client = createShepherdClient({ baseUrl: BASE, timeoutMs: 1000 });
+
+      const settled = client
+        .revokeToken("ws_1", "tok_1")
+        .catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const caught = await settled;
+      expect(caught).toBeInstanceOf(ShepherdClientError);
+      expect((caught as ShepherdClientError).status).toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("throws status 500 (with upstream detail) and does NOT call onUnauthorized", async () => {
