@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## [@korso/shepherd 0.11.2](https://www.npmjs.com/package/@korso/shepherd/v/0.11.2) — 2026-07-12
+
 ### Fixed
 
 - Codex hook setup now installs `UserPromptSubmit`, `SessionStart`, and wildcard
