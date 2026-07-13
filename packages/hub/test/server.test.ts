@@ -912,28 +912,110 @@ describe.skipIf(!dbAvailable)(
       expect(res.statusCode).toBe(403);
     });
 
-    it("a verified operator browser call (valid signed proof) → 200 with the analytics shape", async () => {
-      const res = await app.inject({
+    /**
+     * A fully-signed operator GET, optionally with a `?range=` query. The
+     * operator proof binds the PATH only (the hub strips the query before the
+     * path-binding check), so the signature always covers `/admin/analytics`.
+     */
+    async function operatorGet(query = "") {
+      return app.inject({
         method: "GET",
-        url: "/admin/analytics",
+        url: `/admin/analytics${query}`,
         headers: {
           "x-internal-token": BFF_TOKEN,
           "x-account-id": "gh:operator",
           ...signedOperatorHeaders({ accountId: "gh:operator" }),
         },
       });
+    }
+
+    it("a verified operator browser call (valid signed proof) → 200 with the range-aware shape", async () => {
+      const res = await operatorGet();
       expect(res.statusCode).toBe(200);
       const body = res.json();
-      // Shape smoke-check: totals + trends + leaderboard present.
+      // Shape smoke-check: range-aware envelope + totals + comparison + timing
+      // + aligned trend series + leaderboard present.
       expect(body.totals).toMatchObject({
         accounts: expect.any(Number),
         workspaces: expect.any(Number),
       });
       // The seeded self-host workspace counts.
       expect(body.totals.workspaces).toBeGreaterThanOrEqual(1);
-      expect(Array.isArray(body.trends.newAccounts)).toBe(true);
-      expect(Array.isArray(body.topWorkspaces)).toBe(true);
       expect(typeof body.generatedAt).toBe("string");
+      expect(typeof body.windowStart).toBe("string");
+      expect(typeof body.windowEnd).toBe("string");
+      expect(body.period.newAccounts).toMatchObject({
+        current: expect.any(Number),
+        previous: expect.any(Number),
+      });
+      expect(body.timing.sessionSpanSeconds).toHaveProperty("p50");
+      // trends are now aligned {current,previous} series, not bare arrays.
+      expect(Array.isArray(body.trends.newAccounts.current)).toBe(true);
+      expect(Array.isArray(body.trends.newAccounts.previous)).toBe(true);
+      expect(Array.isArray(body.topWorkspaces)).toBe(true);
+    });
+
+    it("defaults to the 30d preset (daily buckets) when `range` is omitted", async () => {
+      const res = await operatorGet();
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.range).toBe("30d");
+      expect(body.bucket).toBe("day");
+    });
+
+    it("accepts every supported preset and echoes the right bucket", async () => {
+      const expected: Record<string, string> = {
+        "24h": "hour",
+        "7d": "day",
+        "30d": "day",
+        "90d": "day",
+      };
+      for (const range of Object.keys(expected)) {
+        const res = await operatorGet(`?range=${range}`);
+        expect(res.statusCode).toBe(200);
+        const body = res.json();
+        expect(body.range).toBe(range);
+        expect(body.bucket).toBe(expected[range]);
+      }
+    });
+
+    it("rejects an unsupported range with 400", async () => {
+      const res = await operatorGet("?range=1y");
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("caches per range: a 24h load never serves a 30d caller its shape", async () => {
+      // Populate the 24h cache entry, then request 30d: a single (un-keyed)
+      // cache would echo the first-cached range here.
+      const first = await operatorGet("?range=24h");
+      expect(first.statusCode).toBe(200);
+      expect(first.json().range).toBe("24h");
+
+      const second = await operatorGet("?range=30d");
+      expect(second.statusCode).toBe(200);
+      expect(second.json().range).toBe("30d");
+      expect(second.json().bucket).toBe("day");
+
+      // The 24h entry is still its own range on a warm re-read.
+      const third = await operatorGet("?range=24h");
+      expect(third.statusCode).toBe(200);
+      expect(third.json().range).toBe("24h");
+      expect(third.json().bucket).toBe("hour");
+    });
+
+    it("the operator gate runs BEFORE the cache: a non-operator never reads a warm entry", async () => {
+      // Warm the 7d cache entry with a legitimate operator call.
+      const warm = await operatorGet("?range=7d");
+      expect(warm.statusCode).toBe(200);
+
+      // A non-operator asking for the SAME (now-cached) range is still 403 — the
+      // gate precedes any cache access, so the warm entry can't be bypassed.
+      const res = await app.inject({
+        method: "GET",
+        url: "/admin/analytics?range=7d",
+        headers: { "x-internal-token": BFF_TOKEN, "x-account-id": "gh:user" },
+      });
+      expect(res.statusCode).toBe(403);
     });
   },
 );
