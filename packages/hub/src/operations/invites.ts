@@ -53,6 +53,7 @@ import type {
 
 import { getContext } from "../context.js";
 import { withTransaction } from "../db.js";
+import { assertSeatAvailable } from "../entitlements.js";
 import { AuthError, InviteError, NotConfiguredError } from "../errors.js";
 import { sendInviteEmail } from "../email.js";
 import {
@@ -356,7 +357,7 @@ export async function redeemInvite(
   code: string,
   tenant: TenantContext,
 ): Promise<RedeemInviteResponseT> {
-  const { pool } = getContext();
+  const { pool, config } = getContext();
 
   // 1. The caller must be an authenticated ACCOUNT (rejects self-host TEAM_TOKEN,
   //    which carries no accountId). A forged x-account-id never reaches here — it
@@ -402,6 +403,14 @@ export async function redeemInvite(
   //    incl. a race to exhaustion between step 4 and here) we roll back by throwing
   //    so no membership is added.
   await withTransaction(pool, async (tx) => {
+    // Seat cap FIRST, before the use-claim, so a blocked redeem burns no
+    // invite use. Takes the workspace-level advisory lock that serializes
+    // concurrent redeems (even on different codes); no-ops entirely unless
+    // this deployment configured ENTITLEMENTS_DEFAULT_LIMITS. Its
+    // LimitExceededError (402) is not an InviteError, so the catch below
+    // rethrows it untouched and no redeem failure is recorded.
+    await assertSeatAvailable(tx, config, tenant, workspaceId);
+
     const claimed = await incrementInviteUse(tx, code);
     if (claimed === null) {
       throw new InviteError("invite invalid or no longer redeemable");

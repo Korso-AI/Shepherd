@@ -121,12 +121,18 @@ const DEFAULT_JOIN = {
  * `ready` resolves once the auto-join settles.
  */
 function setup(opts?: {
-  join?: { agentName: string; sessionId: string };
+  join?: {
+    agentName: string;
+    sessionId: string;
+    latestClientVersion?: string;
+    minimumClientVersion?: string;
+  };
   joinError?: Error;
   joinNeverResolves?: boolean;
   overrideMock?: Partial<HubClient>;
   context?: JoinContext;
   inboxFile?: string;
+  updateNudge?: (versions: { latest?: string; minimum?: string }) => string;
 }) {
   const mockPost = vi.fn();
   // `get` is part of the HubClient interface (link tool, Task 5.4) but these
@@ -159,6 +165,7 @@ function setup(opts?: {
     context: opts?.context ?? fakeContext,
     heartbeat,
     inboxFile: opts?.inboxFile,
+    updateNudge: opts?.updateNudge,
   });
 
   return { mockPost, tools, hubClient, ready, heartbeat };
@@ -266,22 +273,36 @@ describe("registerTools", () => {
     });
 
     it("degrades gracefully (NOT isError) when the hub is unreachable at startup", async () => {
-      const { mockPost, tools, ready } = setup({
-        joinError: new HubUnreachable("Connection refused at /join"),
-      });
-      await ready;
+      // Restored in finally: the 401 test below counts console.error calls on a
+      // fresh spy, so this suppression must not leak forward.
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const { mockPost, tools, ready } = setup({
+          joinError: new HubUnreachable("Connection refused at /join"),
+        });
+        await ready;
 
-      const result = await tools["work"].handler({
-        intent: "do something",
-        pathGlobs: ["src/auth/**"],
-      });
+        // The gate lazily retries the join on this tool call — keep the hub
+        // down so the call still degrades.
+        mockPost.mockRejectedValueOnce(
+          new HubUnreachable("Connection refused at /join"),
+        );
 
-      expect(result.isError).toBeUndefined();
-      expect(result.content[0].text).toContain("proceeding uncoordinated");
-      // The cached failure reason surfaces (not a generic message).
-      expect(result.content[0].text).toContain("hub unreachable at startup");
-      // No /work call is attempted without a session.
-      expect(mockPost).toHaveBeenCalledOnce(); // only the failed /join
+        const result = await tools["work"].handler({
+          intent: "do something",
+          pathGlobs: ["src/auth/**"],
+        });
+
+        expect(result.isError).toBeUndefined();
+        expect(result.content[0].text).toContain("proceeding uncoordinated");
+        // The cached failure reason surfaces (not a generic message).
+        expect(result.content[0].text).toContain("hub unreachable at startup");
+        // Only /join attempts were made — never a /work without a session.
+        const paths = mockPost.mock.calls.map((c) => c[0]);
+        expect(paths).toEqual(["/join", "/join"]);
+      } finally {
+        errSpy.mockRestore();
+      }
     });
 
     it("emits ONE stderr line and keeps degrading when the token is revoked/invalid (401)", async () => {
@@ -347,6 +368,147 @@ describe("registerTools", () => {
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain("invalid response");
       expect(result.content[0].text).toContain("proceeding uncoordinated");
+    });
+  });
+
+  // ---- gate retry: transient join failures self-heal on the next tool call --
+
+  describe("gate retry after a transient join failure", () => {
+    it("re-joins on the next tool call after the hub was unreachable at boot, and recovers", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready, heartbeat } = setup({
+        joinError: new HubUnreachable("Connection refused at /join"),
+      });
+      await ready;
+
+      // The retried /join succeeds, then the /work proceeds on the new session.
+      mockPost.mockResolvedValueOnce({
+        agentName: "agent-retry",
+        sessionId: "00000000-0000-0000-0000-0000000000bb",
+      });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "bbbbbbbb-0000-0000-0000-000000000002",
+        landscape: fakeLandscape,
+      });
+
+      const result = await tools["work"].handler({
+        intent: "do something",
+        pathGlobs: ["src/auth/**"],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("You are agent-retry.");
+      // Boot /join (failed) + retried /join + the /work itself.
+      const paths = mockPost.mock.calls.map((c) => c[0]);
+      expect(paths).toEqual(["/join", "/join", "/work"]);
+      // The retry re-joins the marker workspace with the resolved context.
+      const retryBody = mockPost.mock.calls[1][1] as Record<string, unknown>;
+      expect(retryBody.workspace).toBe("acme");
+      // The /work call carries the fresh session, and the heartbeat started.
+      const workBody = mockPost.mock.calls[2][1] as Record<string, unknown>;
+      expect(workBody.sessionId).toBe("00000000-0000-0000-0000-0000000000bb");
+      expect(heartbeat.start).toHaveBeenCalledWith(
+        "00000000-0000-0000-0000-0000000000bb",
+      );
+    });
+
+    it("re-joins on the next tool call after an unexpected hub error (5xx) at boot, and recovers", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubRequestError(
+          500,
+          "Hub returned HTTP 500 for /join: Internal Server Error",
+        ),
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        agentName: "agent-healed",
+        sessionId: "00000000-0000-0000-0000-0000000000cc",
+      });
+      mockPost.mockResolvedValueOnce({ landscape: fakeLandscape });
+
+      const result = await tools["sync"].handler({});
+
+      expect(result.isError).toBeUndefined();
+      const paths = mockPost.mock.calls.map((c) => c[0]);
+      expect(paths).toEqual(["/join", "/join", "/sync"]);
+    });
+
+    it("does NOT re-join when the boot failure was auth (401)", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubRequestError(
+          401,
+          "Hub returned HTTP 401 for /join: Unauthorized",
+        ),
+      });
+      await ready;
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("rejected the team token");
+      // A permanent misconfig is never retried — only the boot /join happened.
+      expect(mockPost).toHaveBeenCalledOnce();
+    });
+
+    it("does NOT re-join when the boot failure was validation (400)", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubRequestError(
+          400,
+          "Hub returned HTTP 400 for /join: Bad Request",
+        ),
+      });
+      await ready;
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("rejected the join");
+      expect(mockPost).toHaveBeenCalledOnce();
+    });
+
+    it("concurrent tool calls after a transient failure share ONE retry join", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const { mockPost, tools, ready } = setup({
+        joinError: new HubUnreachable("Connection refused at /join"),
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        agentName: "agent-shared",
+        sessionId: "00000000-0000-0000-0000-0000000000dd",
+      });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "bbbbbbbb-0000-0000-0000-000000000003",
+        landscape: fakeLandscape,
+      });
+      mockPost.mockResolvedValueOnce({
+        workItemId: "bbbbbbbb-0000-0000-0000-000000000004",
+        landscape: fakeLandscape,
+      });
+
+      const [r1, r2] = await Promise.all([
+        tools["work"].handler({ intent: "a", pathGlobs: ["src/a/**"] }),
+        tools["work"].handler({ intent: "b", pathGlobs: ["src/b/**"] }),
+      ]);
+
+      expect(r1.content[0].text).toContain("You are agent-shared.");
+      expect(r2.content[0].text).toContain("You are agent-shared.");
+      // Exactly TWO /join posts ever: the failed boot join + ONE shared retry.
+      // A second concurrent retry would mint a duplicate agent identity.
+      const joinPaths = mockPost.mock.calls
+        .map((c) => c[0])
+        .filter((p) => p === "/join");
+      expect(joinPaths).toHaveLength(2);
     });
   });
 
@@ -507,6 +669,118 @@ describe("registerTools", () => {
       expect(result.isError).toBeUndefined();
       expect(result.content[0].text).toContain("released");
       expect(result.content[0].text).toContain("work");
+    });
+  });
+
+  // ---- update nudge -----------------------------------------------------------
+
+  describe("update nudge", () => {
+    const JOIN_WITH_VERSIONS = {
+      agentName: "agent-9",
+      sessionId: "00000000-0000-0000-0000-000000000009",
+      latestClientVersion: "9.9.9",
+      minimumClientVersion: "9.0.0",
+    };
+
+    it("appends the nudge to the first successful result, with the advertised versions", async () => {
+      const updateNudge = vi.fn(() => "NUDGE-LINE");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+
+      expect(result.content[0].text).toContain("NUDGE-LINE");
+      expect(updateNudge).toHaveBeenCalledWith({
+        latest: "9.9.9",
+        minimum: "9.0.0",
+      });
+    });
+
+    it("nudges at most once per session", async () => {
+      const updateNudge = vi.fn(() => "NUDGE-LINE");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+
+      mockPost.mockResolvedValueOnce({ landscape: fakeLandscape });
+      const second = await tools["sync"].handler({});
+      expect(second.content[0].text).not.toContain("NUDGE-LINE");
+      expect(updateNudge).toHaveBeenCalledTimes(1);
+    });
+
+    it("appends the nudge when the session's first tool call is done", async () => {
+      const updateNudge = vi.fn(() => "NUDGE-LINE");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({ ok: true });
+      const result = await tools["done"].handler({
+        workItemId: "ffff0000-0000-0000-0000-000000000002",
+      });
+      expect(result.content[0].text).toContain("NUDGE-LINE");
+    });
+
+    it("never invokes the nudge when the hub advertises no versions", async () => {
+      const updateNudge = vi.fn(() => "SHOULD-NOT-APPEAR");
+      // DEFAULT_JOIN carries no version fields (an older hub).
+      const { mockPost, tools, ready } = setup({ updateNudge });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+      expect(result.content[0].text).not.toContain("SHOULD-NOT-APPEAR");
+      expect(updateNudge).not.toHaveBeenCalled();
+    });
+
+    it("appends nothing when the nudge function returns empty (cooldown)", async () => {
+      const updateNudge = vi.fn(() => "");
+      const { mockPost, tools, ready } = setup({
+        join: JOIN_WITH_VERSIONS,
+        updateNudge,
+      });
+      await ready;
+
+      mockPost.mockResolvedValueOnce({
+        workItemId: "eeee0000-0000-0000-0000-000000000001",
+        landscape: fakeLandscape,
+      });
+      const result = await tools["work"].handler({
+        intent: "refactor login",
+        pathGlobs: ["src/auth/**"],
+      });
+      const text: string = result.content[0].text;
+      expect(text.trimEnd()).toBe(text);
+      expect(text.endsWith("renews it.")).toBe(true);
     });
   });
 
@@ -898,6 +1172,56 @@ describe("registerTools", () => {
 
       const result = await tools["sync"].handler({});
       expect(result.content[0].text).toContain("sync inbox msg");
+    });
+
+    it("stamps work-landscape announcements with their age", async () => {
+      const threeDaysAgo = new Date(
+        Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+      ).toISOString();
+      const inboxFile = seedInbox([
+        { ...ann(104, "old landscape msg"), createdAt: threeDaysAgo },
+      ]);
+      const { mockPost, tools, ready } = setup({
+        join: {
+          agentName: "agent-iv",
+          sessionId: "00000000-0000-0000-0000-000000000055",
+        },
+        inboxFile,
+      });
+      await ready;
+      mockPost.mockResolvedValueOnce({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        landscape: fakeLandscape,
+      });
+
+      const result = await tools["work"].handler({
+        intent: "do",
+        pathGlobs: ["src/**"],
+      });
+      expect(result.content[0].text).toContain("(broadcast), 3d ago]");
+    });
+
+    it("stamps done-output announcements with their age", async () => {
+      const threeDaysAgo = new Date(
+        Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000,
+      ).toISOString();
+      const inboxFile = seedInbox([
+        { ...ann(105, "old done msg"), createdAt: threeDaysAgo },
+      ]);
+      const { mockPost, tools, ready } = setup({
+        join: {
+          agentName: "agent-iu",
+          sessionId: "00000000-0000-0000-0000-000000000056",
+        },
+        inboxFile,
+      });
+      await ready;
+      mockPost.mockResolvedValueOnce({ ok: true, announcements: [] });
+
+      const result = await tools["done"].handler({
+        workItemId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      });
+      expect(result.content[0].text).toContain("(broadcast), 3d ago]");
     });
 
     it("appends inbox announcements to done output", async () => {
@@ -1718,6 +2042,38 @@ describe("registerTools", () => {
       } finally {
         errSpy.mockRestore();
       }
+    });
+
+    it("hot link of the SAME workspace reuses the live session — no second /join", async () => {
+      // Re-joining mints a brand-new agent identity (the hub hands out the
+      // lowest free ordinal, possibly a RECYCLED teammate name) and abandons
+      // the current session — so a same-workspace re-link (e.g. linking a
+      // second worktree of one repo) must keep the session it already has.
+      const cwd = mkdtempSync(join(tmpdir(), "shepherd-relink-"));
+      writeFileSync(join(cwd, ".git"), "gitdir: x\n", "utf8");
+      const mockPost = vi.fn().mockResolvedValueOnce(DEFAULT_JOIN);
+      const hubClient: HubClient = { post: mockPost, get: vi.fn() };
+      const heartbeat: Heartbeat = { start: vi.fn(), stop: vi.fn() };
+      const { server, tools } = makeFakeServer();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { ready } = registerTools(server as any, {
+        hubClient,
+        config: fakeConfig,
+        context: fakeContext,
+        heartbeat,
+        cwd,
+      });
+      await ready;
+      const joins = () =>
+        mockPost.mock.calls.filter(([path]) => path === "/join");
+      expect(joins()).toHaveLength(1);
+      expect(heartbeat.start).toHaveBeenCalledTimes(1);
+
+      const result = await tools["link"].handler({ workspace: "acme" });
+
+      expect(joins()).toHaveLength(1); // still only the startup join
+      expect(heartbeat.start).toHaveBeenCalledTimes(1); // no session churn
+      expect(result.content[0].text).toContain("coordinating in `acme`");
     });
 
     it("never surfaces the cached sessionId in any tool result text", async () => {

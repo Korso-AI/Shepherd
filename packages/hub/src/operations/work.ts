@@ -28,6 +28,7 @@ import {
   listSessionClaims,
 } from "../repo.js";
 import { withTransaction } from "../db.js";
+import { maybePruneRetention } from "../retention.js";
 import { resolveTtlSeconds, computeExpiry } from "../presence.js";
 import { buildLandscape } from "./landscape.js";
 
@@ -107,6 +108,10 @@ export async function work(
       now,
       config.CHANGE_RECORD_TTL_SECONDS,
     );
+    // Lazy announcement retention (entitlements window). Hourly-throttled
+    // per workspace and inert without ENTITLEMENTS_DEFAULT_LIMITS — see
+    // retention.ts.
+    await maybePruneRetention(tx, config, session.workspaceId, now);
 
     // 2. Idempotency: a repeated `work` for the SAME (intent + normalized
     //    pathGlobs) on this session must not pile up duplicate active claims —

@@ -238,6 +238,11 @@ export const JoinRequest = z.object({
 export const JoinResponse = z.object({
   agentName: z.string(),
   sessionId: z.string().uuid(),
+  // Advertised so clients can nudge their humans to update. Optional: older
+  // hubs omit them, and a hub that cannot determine its bundled client
+  // version fails open by leaving them out.
+  latestClientVersion: z.string().optional(),
+  minimumClientVersion: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -656,6 +661,68 @@ export const FeedbackResponse = z.object({
   ok: z.literal(true),
   // uuid PK (the feedback table, like workspaces, uses gen_random_uuid()).
   id: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// Workspace entitlements — per-workspace numeric caps
+//
+// A neutral limits primitive: each cap bounds one dimension of a workspace
+// (members, distinct repos, announcement history age). `null` means unlimited
+// for that dimension. A deployment that wants enforcement configures default
+// caps via ENTITLEMENTS_DEFAULT_LIMITS (hub config); a per-workspace record
+// (migration 020) can override them. With no defaults configured the hub
+// enforces nothing.
+// ---------------------------------------------------------------------------
+
+/** A positive integer cap, or null = unlimited for that dimension. */
+const NullableCap = z.number().int().positive().nullable();
+
+export const EntitlementLimits = z.object({
+  seatsLimit: NullableCap,
+  reposLimit: NullableCap,
+  retentionDays: NullableCap,
+});
+
+/**
+ * The 402 body the hub sends when an action would exceed a workspace cap
+ * (LimitExceededError in the hub's errors.ts). `code` is the machine
+ * discriminator clients switch on; `error` is the user-facing message.
+ */
+export const LimitExceededErrorBody = z.object({
+  error: z.string(),
+  code: z.literal("limit_exceeded"),
+  limit: z.enum(["seats", "repos"]),
+  current: z.number().int(),
+  max: z.number().int(),
+});
+
+/**
+ * A workspace's stored entitlements record on the wire (GET body / PUT
+ * response). `expiresAt` in the past means the record is inert and the
+ * deployment defaults apply — see the hub's effectiveLimits.
+ */
+export const WorkspaceEntitlements = EntitlementLimits.extend({
+  expiresAt: IsoTimestamp.nullable(),
+  updatedAt: IsoTimestamp,
+});
+
+/** PUT /internal/workspaces/:id/entitlements request body. */
+export const PutEntitlementsRequest = EntitlementLimits.extend({
+  expiresAt: IsoTimestamp.nullable(),
+});
+
+/**
+ * GET /internal/workspaces/:id/entitlements response: the stored record (or
+ * null), the caps that actually apply right now, and current usage so the
+ * caller can render headroom without extra round-trips.
+ */
+export const EntitlementsStatusResponse = z.object({
+  record: WorkspaceEntitlements.nullable(),
+  effective: EntitlementLimits,
+  usage: z.object({
+    seatsUsed: z.number().int(),
+    reposUsed: z.number().int(),
+  }),
 });
 
 // ---------------------------------------------------------------------------

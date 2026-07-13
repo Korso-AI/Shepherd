@@ -21,11 +21,26 @@ export interface Heartbeat {
   stop(): void;
 }
 
+/**
+ * This server's mailbox advertisement (see inbox.ts's session mailboxes
+ * section): refresh() re-writes the meta file so the hook keeps treating the
+ * mailbox as live; remove() withdraws it on stop. Both must be cheap (refresh
+ * runs once per beat) and both are called fail-open — a broken advertisement
+ * only costs hook delivery, never tool-call delivery.
+ */
+export interface MailboxLiveness {
+  /** Create or refresh this server's mailbox meta. */
+  refresh(): void;
+  /** Withdraw the mailbox meta (called from stop()). */
+  remove(): void;
+}
+
 export function createHeartbeat({
   hubClient,
   intervalSeconds,
   buildReport,
   announcementSink,
+  liveness,
 }: {
   hubClient: HubClient;
   intervalSeconds: number;
@@ -49,6 +64,12 @@ export function createHeartbeat({
    * therefore throw to signal a failed write; that is caught here.
    */
   announcementSink?: (announcements: AnnouncementT[]) => void;
+  /**
+   * The session mailbox's advertisement, kept fresh once per beat so the
+   * client hook keeps trusting (and draining) this server's mailbox. Optional
+   * for callers without a mailbox at all.
+   */
+  liveness?: MailboxLiveness;
 }): Heartbeat {
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -56,6 +77,13 @@ export function createHeartbeat({
     if (timer !== null) {
       clearInterval(timer);
       timer = null;
+      if (liveness) {
+        try {
+          liveness.remove();
+        } catch {
+          /* fail-open */
+        }
+      }
     }
   }
 
@@ -72,8 +100,18 @@ export function createHeartbeat({
     }
     const body: Record<string, unknown> = { sessionId };
     if (changeReport) body.changeReport = changeReport;
-    // Delivery is gated on having a sink: presence implies request. No sink ⇒
-    // never ask the hub to hand over announcements.
+    // Keep the mailbox advertised so the hook trusts it (fail-open).
+    if (liveness) {
+      try {
+        liveness.refresh();
+      } catch {
+        /* fail-open */
+      }
+    }
+    // Delivery is gated only on having a sink (a sink implies request — no
+    // sink ⇒ never ask the hub to hand over announcements). Mailboxes are
+    // per-session (see inbox.ts), so delivery needs no contention gating:
+    // another agent in the same directory has its own mailbox.
     if (announcementSink) body.deliverAnnouncements = true;
 
     // Validate the response against the shared contract before trusting it — a
@@ -120,6 +158,16 @@ export function createHeartbeat({
   function start(sessionId: string): void {
     // Restart cleanly if a previous timer is still running.
     stop();
+
+    // Advertise the mailbox immediately — the session's first hook fire can
+    // precede the first beat.
+    if (liveness) {
+      try {
+        liveness.refresh();
+      } catch {
+        /* fail-open */
+      }
+    }
 
     timer = setInterval(() => {
       // The callback must never throw and never return a rejected promise that

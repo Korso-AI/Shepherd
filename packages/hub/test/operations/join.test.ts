@@ -142,6 +142,47 @@ describe.skipIf(!dbAvailable)(
       );
     });
 
+    it("advertises the bundled client version, and no minimum by default", async () => {
+      const result = await join(
+        {
+          workspace: WS_SLUG,
+          repo: "org/repo",
+          branch: "main",
+          human: "Alex Rivera",
+          program: "claude",
+        },
+        tenant,
+      );
+
+      // Baked from the monorepo's mcp-server package.json at build time.
+      expect(result.latestClientVersion).toMatch(/^\d+\.\d+\.\d+/);
+      expect(result.minimumClientVersion).toBeUndefined();
+    });
+
+    it("advertises MIN_CLIENT_VERSION as the minimum when configured", async () => {
+      resetContext();
+      initContext({
+        pool,
+        config: makeTestConfig({ MIN_CLIENT_VERSION: "0.10.0" }),
+      });
+      try {
+        const result = await join(
+          {
+            workspace: WS_SLUG,
+            repo: "org/repo",
+            branch: "main",
+            human: "Alex Rivera",
+            program: "claude",
+          },
+          tenant,
+        );
+        expect(result.minimumClientVersion).toBe("0.10.0");
+      } finally {
+        resetContext();
+        initContext({ pool, config: makeTestConfig() });
+      }
+    });
+
     it("inserts exactly one agent row and one session row on first join", async () => {
       await join(
         {

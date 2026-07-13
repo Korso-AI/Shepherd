@@ -23,6 +23,7 @@ import {
   pruneChangeRecords,
 } from "../repo.js";
 import { withTransaction } from "../db.js";
+import { maybePruneRetention } from "../retention.js";
 import { buildLandscape } from "./landscape.js";
 
 export async function sync(
@@ -71,6 +72,10 @@ export async function sync(
       now,
       config.CHANGE_RECORD_TTL_SECONDS,
     );
+    // Lazy announcement retention (entitlements window). Hourly-throttled
+    // per workspace and inert without ENTITLEMENTS_DEFAULT_LIMITS — see
+    // retention.ts.
+    await maybePruneRetention(tx, config, session.workspaceId, now);
 
     // 2. Read this session's own active path globs to detect collisions that
     //    appeared against its existing claims after it made them.

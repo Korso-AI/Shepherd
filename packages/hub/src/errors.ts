@@ -98,3 +98,33 @@ export class ConflictError extends HubError {
 export class NotConfiguredError extends HubError {
   readonly status = 501 as const;
 }
+
+/**
+ * Thrown by an entitlements guard when an action would push a workspace past
+ * one of its caps (seats on invite redemption, repos at join). Maps to HTTP
+ * 402 with a `code: "limit_exceeded"` body (LimitExceededErrorBody in
+ * @shepherd/shared) so clients can switch on the dimension.
+ *
+ * `message` is user-facing actionable guidance, echoed verbatim like
+ * ConflictError — no existence-leak concern: the caller already holds a valid
+ * credential for (or invite into) this workspace. NEVER thrown on a
+ * deployment without ENTITLEMENTS_DEFAULT_LIMITS or on the self-host
+ * TEAM_TOKEN path — the guards no-op there (see entitlements.ts).
+ */
+export class LimitExceededError extends HubError {
+  readonly status = 402 as const;
+  readonly limit: "seats" | "repos";
+  readonly current: number;
+  readonly max: number;
+
+  constructor(limit: "seats" | "repos", current: number, max: number) {
+    const noun = limit === "seats" ? "seat" : "repo";
+    super(
+      `This workspace has reached its ${noun} limit (${current}/${max}). ` +
+        `Ask a workspace admin about increasing it.`,
+    );
+    this.limit = limit;
+    this.current = current;
+    this.max = max;
+  }
+}

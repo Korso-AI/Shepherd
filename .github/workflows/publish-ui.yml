@@ -68,8 +68,10 @@ jobs:
         with:
           node-version: "20"
 
+      # Pinned to npm 11: npm@latest is now v12, which requires Node >= 22 and
+      # fails EBADENGINE on this runner's Node 20.
       - name: Upgrade npm (OIDC trusted publishing needs >= 11.5.1)
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci

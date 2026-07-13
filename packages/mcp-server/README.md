@@ -105,34 +105,45 @@ default `~/.shepherd/inbox`). That file is then drained by two paths:
 > given client on this machine it **writes to that client's own configuration
 > file in your home directory**, without a separate prompt:
 >
-> | Client      | File it edits/creates                      | What it adds                                                     |
-> | ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-> | Claude Code | `~/.claude/settings.json`                  | `SessionStart` + `PreToolUse` hook entries                       |
-> | Codex       | `~/.codex/config.toml`                     | a `[[hooks.UserPromptSubmit]]` block (+ `features.hooks = true`) |
-> | Cursor      | `~/.cursor/hooks.json`                     | a `beforeSubmitPrompt` entry                                     |
-> | Pi          | `~/.pi/agent/extensions/shepherd-inbox.js` | copies the bundled extension                                     |
+> | Client      | File it edits/creates                      | What it adds                                              |
+> | ----------- | ------------------------------------------ | --------------------------------------------------------- |
+> | Claude Code | `~/.claude/settings.json`                  | `SessionStart` + `PreToolUse` hook entries                |
+> | Codex       | `~/.codex/config.toml`                     | the hooks feature plus all three canonical event handlers |
+> | Cursor      | `~/.cursor/hooks.json`                     | a `beforeSubmitPrompt` entry                              |
+> | Pi          | `~/.pi/agent/extensions/shepherd-inbox.js` | copies the bundled extension                              |
 >
-> This edit is **additive only** (existing keys/entries are never modified,
-> removed, or reordered), **marker-guarded** (attempted **at most once per
-> machine+client**, recorded under `~/.shepherd/hooks/`; if you later remove the
-> hook it is **never re-added**), **version-pinned** (the installed command runs
-> the exact shipped build, not a floating `npx latest`), and **fail-open** (any
-> file it can't confidently parse is left untouched with a stderr notice).
+> Fresh installs are **additive only** (existing keys/entries are never removed
+> or reordered), **record-guarded** under `~/.shepherd/hooks/`,
+> **version-pinned** (the installed command runs the exact shipped build, not a
+> floating `npx latest`). Unsupported client config shapes are left untouched;
+> installer and migration failures never block or break the agent session, and
+> failure logs may be emitted to stderr. Codex also has a one-time, versioned
+> migration, but only when it finds both a legacy auto-install record at
+> `~/.shepherd/hooks/codex.json` and the exact Shepherd-owned legacy block. It
+> preserves that block and appends only the missing handlers after saving a
+> persistent backup at
+> `~/.shepherd/hooks/backups/codex-config-before-v2.toml`. Ambiguous or manually
+> removed hooks are left alone. Existing users receive the migration after they
+> update `@korso/shepherd` and restart Codex so the updated MCP server starts.
 >
 > **To opt out entirely, set `SHEPHERD_NO_AUTO_HOOKS=1`** — the server then never
 > touches any client config, and you can wire the hook manually using the
 > per-client snippets below.
 
 On its first `initialize` handshake the server detects the connecting client
-and, for Claude Code / Codex / Pi, installs the delivery hook **once per
-machine**:
+and installs the delivery hook **once per machine**:
 
 - **Claude Code** — merges the `SessionStart` + `PreToolUse` hook entries into
   `~/.claude/settings.json` (additive JSON merge; an unparseable file is left
   untouched).
-- **Codex** — appends the `[[hooks.UserPromptSubmit]]` block (and
-  `features.hooks = true`) to `~/.codex/config.toml` (text-level append; it
-  respects an explicit `hooks = false` and never rewrites existing content).
+- **Codex** — enables `features.hooks` and appends canonical
+  `UserPromptSubmit`, `SessionStart`, and wildcard `PreToolUse` handlers to
+  `~/.codex/config.toml`. An explicit `hooks = false` is respected. Existing
+  installs are migrated only when a legacy `~/.shepherd/hooks/codex.json`
+  auto-install record and Shepherd's exact legacy `UserPromptSubmit` block are
+  both present. The migration retains that block, appends the two missing
+  handlers, and first writes a persistent backup. Update `@korso/shepherd` and
+  restart Codex to run it.
 - **Pi** — copies the bundled extension to
   `~/.pi/agent/extensions/shepherd-inbox.js`.
 - **Cursor** — merges a `beforeSubmitPrompt` entry into `~/.cursor/hooks.json`
@@ -140,10 +151,11 @@ machine**:
   verified to inject hook output into the agent's context, and wiring an
   unverified event would consume announcements without delivering them.
 
-A record under `~/.shepherd/hooks/` guarantees at-most-once: if you remove the
-hook, Shepherd won't re-add it. Everything is fail-open (an error just means no
-hook, never a broken session), and `SHEPHERD_NO_AUTO_HOOKS=1` disables the whole
-mechanism.
+A record under `~/.shepherd/hooks/` guarantees at-most-once installation (and
+tracks the current Codex migration version): if you remove the hook, Shepherd
+won't re-add it. Installation and migration are fail-open: a failure never
+blocks or breaks the agent session. `SHEPHERD_NO_AUTO_HOOKS=1` disables the
+whole mechanism.
 
 Both paths read the **same** inbox file and de-duplicate by announcement id, so
 running both is safe (the hub hands each announcement to exactly one drain; the
@@ -225,24 +237,41 @@ uses (override both with `SHEPHERD_INBOX_DIR` if you relocated it):
 }
 ```
 
-### Codex — `UserPromptSubmit` hook
+### Codex — `UserPromptSubmit` + `SessionStart` + `PreToolUse` hooks
 
-_(Installed automatically on first run — shown for reference/manual setup.)_
+_(Installed automatically, with legacy Shepherd configs migrated once — shown
+for reference/manual setup.)_
 
 Codex uses the **same** hook contract as Claude Code (JSON on stdin, a
-`hookSpecificOutput.additionalContext` reply), so the **same bin** serves it. Use
-`UserPromptSubmit` — Codex's `PreToolUse` only fires for Bash, not `apply_patch`
-or MCP calls. Hooks must be enabled with `features.hooks = true`. In
-`~/.codex/config.toml`:
+`hookSpecificOutput.additionalContext` reply), so the **same bin** serves it.
+`UserPromptSubmit` and `SessionStart` cover turn and session boundaries. In
+local Codex testing, wildcard `PreToolUse` delivered before Bash,
+`apply_patch`, and MCP calls. Other richer tool paths, including WebSearch, are
+not guaranteed by the current Codex hook coverage. Hooks must be enabled with
+`features.hooks = true`. In `~/.codex/config.toml`:
 
 ```toml
 [features]
 hooks = true
 
 [[hooks.UserPromptSubmit]]
-command = ["npx", "-y", "--package=@korso/shepherd", "shepherd-inbox-hook"]
-# On Windows use command_windows instead:
-# command_windows = ["cmd", "/c", "npx -y --package=@korso/shepherd shepherd-inbox-hook"]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "npx -y --package=@korso/shepherd shepherd-inbox-hook"
+timeout = 20
+
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "npx -y --package=@korso/shepherd shepherd-inbox-hook"
+timeout = 20
+
+[[hooks.PreToolUse]]
+matcher = "*"
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "npx -y --package=@korso/shepherd shepherd-inbox-hook"
+timeout = 20
 ```
 
 ### Pi — extension

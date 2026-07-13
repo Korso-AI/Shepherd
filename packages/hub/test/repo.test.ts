@@ -753,6 +753,55 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       expect(announcements[0]!.targetAgentName).toBeNull();
     });
 
+    it("does not deliver announcements older than the freshness window", async () => {
+      const sender = await seedAgentAndSession(pool, {
+        agentNameSuffix: "stalesend",
+      });
+      const recipient = await seedAgentAndSession(pool, {
+        agentNameSuffix: "stalerecip",
+      });
+
+      await withTransaction(pool, async (tx) => {
+        await insertAnnouncement(tx, {
+          workspaceId: wsId("acme"),
+          repo: "my-repo",
+          fromSessionId: sender.sessionId,
+          targetAgentName: null,
+          body: "stale broadcast",
+        });
+        await insertAnnouncement(tx, {
+          workspaceId: wsId("acme"),
+          repo: "my-repo",
+          fromSessionId: sender.sessionId,
+          targetAgentName: null,
+          body: "still-fresh broadcast",
+        });
+      });
+      // Backdate: a brand-new session must NOT replay history older than the
+      // 48h window as if it were current coordination state.
+      await pool.query(
+        `UPDATE announcements SET created_at = now() - interval '3 days'
+         WHERE body = 'stale broadcast'`,
+      );
+      await pool.query(
+        `UPDATE announcements SET created_at = now() - interval '47 hours'
+         WHERE body = 'still-fresh broadcast'`,
+      );
+
+      const recipientSession = await getSession(
+        pool,
+        wsId("acme"),
+        recipient.sessionId,
+      );
+      const announcements = await withTransaction(pool, (tx) =>
+        fetchPendingAnnouncements(tx, recipientSession),
+      );
+
+      expect(announcements.map((a) => a.body)).toEqual([
+        "still-fresh broadcast",
+      ]);
+    });
+
     it("does NOT return a broadcast to the sender themselves", async () => {
       const now = new Date();
       const sender = await seedAgentAndSession(pool, {
@@ -1474,6 +1523,108 @@ describe.skipIf(!dbAvailable)(
               },
             ],
           }),
+        );
+
+        const names = await reservedAgentNamesForHandle(
+          pool,
+          wsId("acme"),
+          "alex",
+          now,
+          STALE_AFTER_SECONDS,
+          CHANGE_RECORD_TTL_SECONDS,
+          UNCOMMITTED_GRACE_SECONDS,
+        );
+        expect(names).toEqual([]);
+      });
+
+      // A name must not change hands while words attributed to it can still be
+      // DELIVERED (the 48h announcement freshness window): a new joiner
+      // adopting the ordinal would inherit the dead agent's still-pending
+      // announcements' attribution ("[alex-1] said…" now appears to be from
+      // someone else entirely).
+      it("reserves a stale agent's name while an announcement it SENT is still deliverable", async () => {
+        const now = new Date();
+        const stale = await seedNamedAgentWithSession(pool, {
+          name: "alex-1",
+          heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
+        });
+        await withTransaction(pool, (tx) =>
+          insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: stale.sessionId!,
+            targetAgentName: null,
+            body: "heads up from the past",
+          }),
+        );
+        // Near the END of the delivery window — still deliverable.
+        await pool.query(
+          `UPDATE announcements SET created_at = now() - interval '47 hours'
+           WHERE body = 'heads up from the past'`,
+        );
+
+        const names = await reservedAgentNamesForHandle(
+          pool,
+          wsId("acme"),
+          "alex",
+          now,
+          STALE_AFTER_SECONDS,
+          CHANGE_RECORD_TTL_SECONDS,
+          UNCOMMITTED_GRACE_SECONDS,
+        );
+        expect(names).toEqual(["alex-1"]);
+      });
+
+      it("reserves a stale name still TARGETED by a deliverable announcement", async () => {
+        const now = new Date();
+        await seedNamedAgentWithSession(pool, {
+          name: "alex-1",
+          heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
+        });
+        const sender = await seedNamedAgentWithSession(pool, {
+          name: "jordan-1",
+          heartbeatAt: secsAgo(now, 10),
+        });
+        await withTransaction(pool, (tx) =>
+          insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId!,
+            targetAgentName: "alex-1",
+            body: "for alex-1 specifically",
+          }),
+        );
+
+        const names = await reservedAgentNamesForHandle(
+          pool,
+          wsId("acme"),
+          "alex",
+          now,
+          STALE_AFTER_SECONDS,
+          CHANGE_RECORD_TTL_SECONDS,
+          UNCOMMITTED_GRACE_SECONDS,
+        );
+        expect(names).toEqual(["alex-1"]);
+      });
+
+      it("does NOT reserve a name whose announcements have all aged past the delivery window", async () => {
+        const now = new Date();
+        const stale = await seedNamedAgentWithSession(pool, {
+          name: "alex-1",
+          heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
+        });
+        await withTransaction(pool, (tx) =>
+          insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: stale.sessionId!,
+            targetAgentName: null,
+            body: "ancient history",
+          }),
+        );
+        await pool.query(
+          `UPDATE announcements SET created_at = now() - interval '3 days'
+           WHERE body = 'ancient history'`,
         );
 
         const names = await reservedAgentNamesForHandle(

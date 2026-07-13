@@ -27,7 +27,11 @@ import {
 } from "@shepherd/shared";
 
 import { getContext } from "./context.js";
-import { resolveTenant, type TenantContext } from "./tenant.js";
+import {
+  resolveTenant,
+  requireInternal,
+  type TenantContext,
+} from "./tenant.js";
 import { join } from "./operations/join.js";
 import { work } from "./operations/work.js";
 import { done } from "./operations/done.js";
@@ -54,6 +58,11 @@ import {
 } from "./operations/invites.js";
 import { deleteAccount } from "./operations/account.js";
 import {
+  putEntitlements,
+  getEntitlementsStatus,
+  deleteEntitlements,
+} from "./operations/entitlements.js";
+import {
   listWorkspaceMembers,
   removeMember,
   leaveWorkspace,
@@ -67,6 +76,7 @@ import {
   InviteByEmailRequest,
   SetMemberRoleRequest,
   TransferOwnershipRequest,
+  PutEntitlementsRequest,
 } from "@shepherd/shared";
 import {
   UnknownSessionError,
@@ -75,6 +85,7 @@ import {
   InviteError,
   ConflictError,
   NotConfiguredError,
+  LimitExceededError,
 } from "./errors.js";
 
 // ---------------------------------------------------------------------------
@@ -732,6 +743,42 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   });
 
   // -------------------------------------------------------------------------
+  // Internal entitlements management — `/internal/workspaces/:id/entitlements`.
+  //
+  // A trusted embedding service (the BFF calling on its own behalf) pushes
+  // per-workspace caps into the hub here. NOT under the top-level
+  // `/workspaces/:id` prefix, so routeWorkspaceId never fires and resolveTenant
+  // takes its internal service-call branch instead (matched x-internal-token +
+  // /internal/ pathname + no x-account-id — see tenant.ts). requireInternal in
+  // each handler pins every other credential shape out (403).
+  // -------------------------------------------------------------------------
+
+  app.put("/internal/workspaces/:id/entitlements", async (request, _reply) => {
+    requireInternal(request.tenant);
+    const { id } = request.params as { id: string };
+    const parsed = PutEntitlementsRequest.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      throw parsed.error;
+    }
+    return putEntitlements(id, parsed.data, request.tenant);
+  });
+
+  app.get("/internal/workspaces/:id/entitlements", async (request, _reply) => {
+    requireInternal(request.tenant);
+    const { id } = request.params as { id: string };
+    return getEntitlementsStatus(id, request.tenant);
+  });
+
+  app.delete(
+    "/internal/workspaces/:id/entitlements",
+    async (request, _reply) => {
+      requireInternal(request.tenant);
+      const { id } = request.params as { id: string };
+      return deleteEntitlements(id, request.tenant);
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // Error handler — translates domain errors to HTTP status codes
   // -------------------------------------------------------------------------
 
@@ -769,6 +816,20 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
     // existence-leak concern here (the caller is an admin of this workspace).
     if (err instanceof ConflictError) {
       return reply.status(err.status).send({ error: err.message });
+    }
+
+    // Domain: the action would exceed a workspace cap → 402 with the
+    // machine-readable body (LimitExceededErrorBody in @shepherd/shared).
+    // Message echoed verbatim like ConflictError — user-facing guidance, no
+    // existence-leak concern (the caller already reached this workspace).
+    if (err instanceof LimitExceededError) {
+      return reply.status(err.status).send({
+        error: err.message,
+        code: "limit_exceeded",
+        limit: err.limit,
+        current: err.current,
+        max: err.max,
+      });
     }
 
     // Domain: the request is fine but this deployment lacks the config a

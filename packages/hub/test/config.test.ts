@@ -102,6 +102,54 @@ describe("loadConfig — pure (no Postgres needed)", () => {
   });
 });
 
+describe("loadConfig — ENTITLEMENTS_DEFAULT_LIMITS", () => {
+  it("is undefined when unset (enforcement disabled)", () => {
+    expect(loadConfig(BASE_ENV).ENTITLEMENTS_DEFAULT_LIMITS).toBeUndefined();
+  });
+
+  it("parses valid JSON into camelCase limits", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      ENTITLEMENTS_DEFAULT_LIMITS:
+        '{"seatsLimit":4,"reposLimit":5,"retentionDays":30}',
+    });
+    expect(cfg.ENTITLEMENTS_DEFAULT_LIMITS).toEqual({
+      seatsLimit: 4,
+      reposLimit: 5,
+      retentionDays: 30,
+    });
+  });
+
+  it("accepts null caps (unlimited dimensions)", () => {
+    const cfg = loadConfig({
+      ...BASE_ENV,
+      ENTITLEMENTS_DEFAULT_LIMITS:
+        '{"seatsLimit":null,"reposLimit":null,"retentionDays":null}',
+    });
+    expect(cfg.ENTITLEMENTS_DEFAULT_LIMITS).toEqual({
+      seatsLimit: null,
+      reposLimit: null,
+      retentionDays: null,
+    });
+  });
+
+  it("throws loudly at loadConfig on malformed JSON", () => {
+    expect(() =>
+      loadConfig({ ...BASE_ENV, ENTITLEMENTS_DEFAULT_LIMITS: "{not json" }),
+    ).toThrow("ENTITLEMENTS_DEFAULT_LIMITS");
+  });
+
+  it("throws on valid JSON with an invalid shape (zero cap)", () => {
+    expect(() =>
+      loadConfig({
+        ...BASE_ENV,
+        ENTITLEMENTS_DEFAULT_LIMITS:
+          '{"seatsLimit":0,"reposLimit":5,"retentionDays":30}',
+      }),
+    ).toThrow("ENTITLEMENTS_DEFAULT_LIMITS");
+  });
+});
+
 describe("loadConfig — dual-mode env schema", () => {
   it("parses a self-host config (TEAM_TOKEN + ALLOWED_WORKSPACE, no BFF token)", () => {
     const cfg = loadConfig(BASE_ENV);
