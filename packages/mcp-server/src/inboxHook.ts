@@ -9,10 +9,11 @@
  * `hook_event_name` and take a `{"hookSpecificOutput":{"hookEventName",
  * "additionalContext"}}` reply; Cursor sends `workspace_roots` (no cwd, BOM
  * prefix) and takes a top-level `{"continue":true,"additionalContext"}` reply.
- * So one bin serves all — wire it to a frequent event (Claude Code: PreToolUse,
- * plus SessionStart to front-load the link ask; Codex: UserPromptSubmit, since
- * its PreToolUse only fires for Bash; Cursor: beforeSubmitPrompt, the one event
- * verified to inject context).
+ * So one bin serves all — wire it to frequent events (Claude Code: PreToolUse,
+ * plus SessionStart to front-load the link ask; Codex: UserPromptSubmit,
+ * SessionStart, and wildcard PreToolUse, verified for Bash, apply_patch, and
+ * MCP calls but not guaranteed for richer paths such as WebSearch; Cursor:
+ * beforeSubmitPrompt, the one event verified to inject context).
  * On each invocation it drains this working directory's inbox file and prints
  * the announcements as additionalContext, prefixed by the link nudge when the
  * cwd's repo is neither linked nor declined (see linkNudge.ts). Cheap: local
