@@ -3,10 +3,12 @@
  *
  * Boot sequence:
  *   1. Parse and validate config from process.env.
- *   2. Create the Postgres pool.
- *   3. Initialise the shared context (makes getContext() work in operations).
- *   4. Run pending migrations.
- *   5. Seed the self-host workspace (no-op in hosted-only mode).
+ *   2. Run pending migrations on the owner connection (MIGRATIONS_DATABASE_URL
+ *      when set, else DATABASE_URL), then close that pool.
+ *   3. Create the request-serving Postgres pool (DATABASE_URL).
+ *   4. Initialise the shared context (makes getContext() work in operations).
+ *   5. Seed the self-host workspace through a maintenance-context ScopedDb
+ *      (no-op in hosted-only mode).
  *   6. Build the Fastify app and start listening.
  */
 
@@ -15,17 +17,28 @@ import { createPool } from "./db.js";
 import { initContext } from "./context.js";
 import { runMigrations } from "./migrate.js";
 import { seedSelfHostWorkspace } from "./boot.js";
+import { withContext } from "./scopedDb.js";
 import { buildServer } from "./server.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const pool = createPool(config.DATABASE_URL);
+
+  // Migrations run on the owner connection when configured (two-role
+  // deployments); otherwise on the same DATABASE_URL as today. Closed
+  // immediately so the elevated connection is not held during request serving.
+  const migrationPool = createPool(
+    config.MIGRATIONS_DATABASE_URL ?? config.DATABASE_URL,
+  );
+  await runMigrations(migrationPool);
+  await migrationPool.end();
+
+  const pool = createPool(config.DATABASE_URL); // request-serving pool, as today
 
   initContext({ pool, config });
 
-  await runMigrations(pool);
-
-  await seedSelfHostWorkspace(pool, config.ALLOWED_WORKSPACE);
+  await withContext(pool, { kind: "maintenance" }, (db) =>
+    seedSelfHostWorkspace(db, config.ALLOWED_WORKSPACE),
+  );
 
   // Thread the trust-proxy decision from config (default false — fail-safe).
   // Enable TRUST_PROXY only when a trusted reverse proxy fronts the hub; see the

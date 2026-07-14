@@ -142,9 +142,10 @@ const isMain =
     path.resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
-  const connString = process.env["DATABASE_URL"];
+  const connString =
+    process.env["MIGRATIONS_DATABASE_URL"] ?? process.env["DATABASE_URL"];
   if (!connString) {
-    console.error("DATABASE_URL is not set");
+    console.error("MIGRATIONS_DATABASE_URL or DATABASE_URL must be set");
     process.exit(1);
   }
   const pool = createPool(connString);

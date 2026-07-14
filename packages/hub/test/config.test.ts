@@ -77,6 +77,17 @@ describe("loadConfig — pure (no Postgres needed)", () => {
     expect(cfg.UNCOMMITTED_GRACE_SECONDS).toBe(1200);
   });
 
+  it("parses MIGRATIONS_DATABASE_URL when set and leaves it undefined when absent", () => {
+    const withVar = loadConfig({
+      ...BASE_ENV,
+      MIGRATIONS_DATABASE_URL: "postgres://owner@db:5432/shepherd",
+    });
+    expect(withVar.MIGRATIONS_DATABASE_URL).toBe(
+      "postgres://owner@db:5432/shepherd",
+    );
+    expect(loadConfig(BASE_ENV).MIGRATIONS_DATABASE_URL).toBeUndefined();
+  });
+
   it("throws a ZodError when CHANGE_RECORD_TTL_SECONDS is non-numeric", () => {
     expect(() =>
       loadConfig({ ...BASE_ENV, CHANGE_RECORD_TTL_SECONDS: "not-a-number" }),

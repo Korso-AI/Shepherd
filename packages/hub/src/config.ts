@@ -8,6 +8,13 @@ import { EntitlementLimits } from "@shepherd/shared";
 const ConfigSchema = z
   .object({
     DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
+    /**
+     * Optional owner connection used ONLY by the migration step. Unset ⇒
+     * migrations run on DATABASE_URL (single-user deployments). Set it when the
+     * request-serving DATABASE_URL user is a restricted member of the app role
+     * (`<database>_app`; see migration 021).
+     */
+    MIGRATIONS_DATABASE_URL: z.string().min(1).optional(),
     // Self-host mode credentials. Optional at the field level: a hosted deployment
     // authenticates via BFF_INTERNAL_TOKEN instead. loadConfig's superRefine asserts
     // at least one full mode is configured, so neither is truly optional in practice.
