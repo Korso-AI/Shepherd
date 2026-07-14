@@ -12,8 +12,8 @@
  * snapshot and never check out a second pooled connection.
  */
 
-import type pg from "pg";
 import type { LandscapeT } from "@shepherd/shared";
+import type { ScopedDb } from "../scopedDb.js";
 import { type Config, DEFAULT_UNCOMMITTED_GRACE_SECONDS } from "../config.js";
 import type { SessionWithAgent } from "../repo.js";
 import {
@@ -34,7 +34,7 @@ import { globsOverlap } from "../globs.js";
 const CHANGE_RECORDS_LIMIT = 100;
 
 export async function buildLandscape(
-  tx: pg.PoolClient,
+  tx: ScopedDb,
   session: SessionWithAgent,
   now: Date,
   ownGlobs: string[],

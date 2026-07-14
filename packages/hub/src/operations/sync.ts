@@ -13,7 +13,7 @@
 
 import type { SyncRequestT, SyncResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
-import { type TenantContext } from "../tenant.js";
+import { contextForTenant, type TenantContext } from "../tenant.js";
 import { resolveSession } from "../sessionScope.js";
 import { touchHeartbeat } from "../repo.js";
 import { listSessionActiveGlobs } from "../repo.js";
@@ -22,7 +22,7 @@ import {
   replaceChangeRecords,
   pruneChangeRecords,
 } from "../repo.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { maybePruneRetention } from "../retention.js";
 import { buildLandscape } from "./landscape.js";
 
@@ -32,7 +32,7 @@ export async function sync(
 ): Promise<SyncResponseT> {
   const { pool, config } = getContext();
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
     // Resolve + authorize the session as the FIRST statement (no second
     // connection). resolveSession handles both credential kinds; a session the
     // caller may not reach throws UnknownSessionError (-> 404), the cross-tenant

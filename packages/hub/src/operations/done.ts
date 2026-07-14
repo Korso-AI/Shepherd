@@ -17,7 +17,7 @@
 
 import type { DoneRequestT, DoneResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
-import { type TenantContext } from "../tenant.js";
+import { contextForTenant, type TenantContext } from "../tenant.js";
 import { resolveSession } from "../sessionScope.js";
 import {
   releaseWorkItem,
@@ -25,7 +25,7 @@ import {
   fetchPendingAnnouncements,
   recordAnnouncementDeliveries,
 } from "../repo.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 
 export async function done(
   input: DoneRequestT,
@@ -38,7 +38,7 @@ export async function done(
   // single `tx` (no second pooled connection). rowCount from releaseWorkItem is
   // deliberately ignored — the owner-scoped WHERE clause is the entire
   // protection, and 0 rows (unknown/already-released/not-owned) is success.
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
     // Resolve + authorize the session as the FIRST statement. resolveSession
     // handles both credential kinds: a session the caller may not reach (another
     // workspace, or an account with no membership) throws UnknownSessionError

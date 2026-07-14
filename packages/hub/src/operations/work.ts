@@ -17,7 +17,7 @@
 
 import type { WorkRequestT, WorkResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
-import { type TenantContext } from "../tenant.js";
+import { contextForTenant, type TenantContext } from "../tenant.js";
 import { resolveSession } from "../sessionScope.js";
 import { touchHeartbeat } from "../repo.js";
 import { insertWorkItem } from "../repo.js";
@@ -27,7 +27,7 @@ import {
   pruneChangeRecords,
   listSessionClaims,
 } from "../repo.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { maybePruneRetention } from "../retention.js";
 import { resolveTtlSeconds, computeExpiry } from "../presence.js";
 import { buildLandscape } from "./landscape.js";
@@ -55,7 +55,7 @@ export async function work(
 ): Promise<WorkResponseT> {
   const { pool, config } = getContext();
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
     // Resolve + authorize the session ON THE TRANSACTION CLIENT as the FIRST
     // statement, so the membership check and the write below stay atomic.
     // resolveSession handles BOTH credential kinds: a workspace-scoped/self-host
