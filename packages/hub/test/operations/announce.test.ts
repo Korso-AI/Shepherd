@@ -31,7 +31,7 @@ import {
   createAgent,
   createSession as createSessionRow,
 } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { UnknownSessionError } from "../../src/errors.js";
 import type { Config } from "../../src/config.js";
 import { NO_ROUTE_WORKSPACE, type TenantContext } from "../../src/tenant.js";
@@ -176,13 +176,15 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Fetch pending for receiver1
-      const r1Session = await getSession(
+      const r1Session = await withContext(
         pool,
-        workspaceId,
-        receiver1.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, receiver1.sessionId),
       );
-      const pending1 = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, r1Session),
+      const pending1 = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, r1Session),
       );
       expect(pending1).toHaveLength(1);
       expect(pending1[0]!.id).toBe(result.announcementId);
@@ -190,13 +192,15 @@ describe.skipIf(!dbAvailable)(
       expect(pending1[0]!.targetAgentName).toBeNull();
 
       // Fetch pending for receiver2
-      const r2Session = await getSession(
+      const r2Session = await withContext(
         pool,
-        workspaceId,
-        receiver2.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, receiver2.sessionId),
       );
-      const pending2 = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, r2Session),
+      const pending2 = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, r2Session),
       );
       expect(pending2).toHaveLength(1);
       expect(pending2[0]!.id).toBe(result.announcementId);
@@ -242,26 +246,30 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Target sees the announcement
-      const targetSession = await getSession(
+      const targetSession = await withContext(
         pool,
-        workspaceId,
-        target.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, target.sessionId),
       );
-      const targetPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, targetSession),
+      const targetPending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, targetSession),
       );
       expect(targetPending).toHaveLength(1);
       expect(targetPending[0]!.id).toBe(result.announcementId);
       expect(targetPending[0]!.targetAgentName).toBe(target.agentName);
 
       // Bystander does NOT see the announcement
-      const bystanderSession = await getSession(
+      const bystanderSession = await withContext(
         pool,
-        workspaceId,
-        bystander.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, bystander.sessionId),
       );
-      const bystanderPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession),
+      const bystanderPending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, bystanderSession),
       );
       expect(bystanderPending).toHaveLength(0);
     });
@@ -357,13 +365,15 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Sender's pending should be empty (from_session_id filter)
-      const senderSession = await getSession(
+      const senderSession = await withContext(
         pool,
-        workspaceId,
-        sender.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, sender.sessionId),
       );
-      const senderPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, senderSession),
+      const senderPending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, senderSession),
       );
       expect(senderPending).toHaveLength(0);
     });
@@ -386,13 +396,15 @@ describe.skipIf(!dbAvailable)(
 
       const now = new Date();
 
-      const senderSession = await getSession(
+      const senderSession = await withContext(
         pool,
-        workspaceId,
-        sender.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, sender.sessionId),
       );
-      const senderPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, senderSession),
+      const senderPending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, senderSession),
       );
       // from_session_id filter removes it
       expect(senderPending).toHaveLength(0);
@@ -498,13 +510,15 @@ describe.skipIf(!dbAvailable)(
         tenant,
       );
 
-      const bystanderSession = await getSession(
+      const bystanderSession = await withContext(
         pool,
-        workspaceId,
-        bystander.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, bystander.sessionId),
       );
-      const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession),
+      const pending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, bystanderSession),
       );
       expect(pending).toHaveLength(0);
     });
@@ -522,8 +536,10 @@ describe.skipIf(!dbAvailable)(
       );
 
       const now = new Date();
-      const rows = await withTransaction(pool, (tx) =>
-        getWorkspaceLandscape(tx, workspaceId, now, 120),
+      const rows = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => getWorkspaceLandscape(db, workspaceId, now, 120),
       );
       const msg = rows.announcements.find((a) => a.body === "deploy is green");
       expect(msg).toBeDefined();
@@ -557,8 +573,8 @@ describe.skipIf(!dbAvailable)(
     // -----------------------------------------------------------------------
 
     it("account-scoped member: broadcast succeeds and is scoped to session.workspaceId", async () => {
-      await withTransaction(pool, (tx) =>
-        addMembership(tx, {
+      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+        addMembership(db, {
           workspaceId,
           accountId: "acct-member",
           role: "member",
@@ -594,22 +610,26 @@ describe.skipIf(!dbAvailable)(
         ["announce-other-ws", "announce-other-ws"],
       );
       const otherWs = wsRows[0]!.id;
-      const otherSessionId = await withTransaction(pool, async (tx) => {
-        const agent = await createAgent(tx, {
-          workspaceId: otherWs,
-          name: "outsider-agent",
-          human: "outsider",
-          program: "claude",
-          model: null,
-        });
-        const session = await createSessionRow(tx, {
-          workspaceId: otherWs,
-          agentId: agent.id,
-          repo: "org/repo",
-          branch: "main",
-        });
-        return session.id;
-      });
+      const otherSessionId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: otherWs },
+        async (db) => {
+          const agent = await createAgent(db, {
+            workspaceId: otherWs,
+            name: "outsider-agent",
+            human: "outsider",
+            program: "claude",
+            model: null,
+          });
+          const session = await createSessionRow(db, {
+            workspaceId: otherWs,
+            agentId: agent.id,
+            repo: "org/repo",
+            branch: "main",
+          });
+          return session.id;
+        },
+      );
       const accountTenant: TenantContext = {
         workspaceId: NO_ROUTE_WORKSPACE,
         accountId: "acct-outsider",
@@ -643,8 +663,8 @@ describe.skipIf(!dbAvailable)(
         email?: string;
       },
     ): Promise<void> {
-      await withTransaction(pool, (tx) =>
-        addMembership(tx, { workspaceId, accountId, role: "member" }),
+      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+        addMembership(db, { workspaceId, accountId, role: "member" }),
       );
       await pool.query(
         `INSERT INTO account_profiles (account_id, display_name, github_login, email)
@@ -694,13 +714,15 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.to_admin).toBe(false);
       expect(rows[0]!.target_account_id).toBeNull();
 
-      const receiverSession = await getSession(
+      const receiverSession = await withContext(
         pool,
-        workspaceId,
-        receiver.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, receiver.sessionId),
       );
-      const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, receiverSession),
+      const pending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, receiverSession),
       );
       expect(pending).toHaveLength(1);
       expect(pending[0]!.body).toBe("via unified target");
@@ -777,19 +799,23 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.target_label).toBe("Alice Chen");
 
       // Leak guard: a member-directed message reaches NO agent.
-      const bystanderSession = await getSession(
+      const bystanderSession = await withContext(
         pool,
-        workspaceId,
-        bystander.sessionId,
+        { kind: "workspace", workspaceId },
+        (db) => getSession(db, workspaceId, bystander.sessionId),
       );
-      const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession),
+      const pending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => fetchPendingAnnouncements(db, bystanderSession),
       );
       expect(pending).toHaveLength(0);
 
       // The dashboard feed shows WHO it's for.
-      const landscape = await withTransaction(pool, (tx) =>
-        getWorkspaceLandscape(tx, workspaceId, new Date(), 120),
+      const landscape = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (db) => getWorkspaceLandscape(db, workspaceId, new Date(), 120),
       );
       const msg = landscape.announcements.find(
         (a) => a.body === "review is ready for you",

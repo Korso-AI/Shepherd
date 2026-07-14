@@ -24,6 +24,7 @@ import {
 } from "./setup.js";
 import { ShepherdAnalyticsResponse } from "@shepherd/shared";
 import { getShepherdAnalytics } from "../src/repo.js";
+import { withContext } from "../src/scopedDb.js";
 
 // A fixed reference clock. All seeded rows are placed relative to this, and it
 // is the injected `now`, so every window boundary is deterministic.
@@ -182,11 +183,13 @@ describe.skipIf(!dbAvailable)(
         { range: "90d" as const, bucket: "day", seconds: (90 * DAY) / SECOND },
       ];
       for (const c of cases) {
-        const res = await getShepherdAnalytics(pool, {
-          range: c.range,
-          now: NOW,
-          liveWindowSeconds: LIVE_WINDOW_SECONDS,
-        });
+        const res = await withContext(pool, { kind: "operator" }, (db) =>
+          getShepherdAnalytics(db, {
+            range: c.range,
+            now: NOW,
+            liveWindowSeconds: LIVE_WINDOW_SECONDS,
+          }),
+        );
         expect(res.range).toBe(c.range);
         expect(res.bucket).toBe(c.bucket);
         expect(res.windowEnd).toBe(NOW.toISOString());
@@ -198,11 +201,13 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("uses hourly buckets for 24h and daily buckets otherwise, both windows equal-length", async () => {
-      const h = await getShepherdAnalytics(pool, {
-        range: "24h",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const h = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "24h",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
       expect(h.bucket).toBe("hour");
       // 24h inclusive of both truncated hour boundaries → 25 hourly buckets.
       expect(h.trends.newAccounts.current).toHaveLength(25);
@@ -210,11 +215,13 @@ describe.skipIf(!dbAvailable)(
       // Hourly labels are ISO-ish timestamps.
       expect(h.trends.newAccounts.current[0]!.date).toContain("T");
 
-      const d = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const d = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
       expect(d.bucket).toBe("day");
       // 30d inclusive of both truncated day boundaries → 31 daily buckets.
       expect(d.trends.newAccounts.current).toHaveLength(31);
@@ -237,11 +244,13 @@ describe.skipIf(!dbAvailable)(
         createdAt: daysBefore(NOW, 3),
       });
 
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
 
       const totalAccounts = res.trends.newAccounts.current.reduce(
         (s, p) => s + p.count,
@@ -274,11 +283,13 @@ describe.skipIf(!dbAvailable)(
         secondsAfter(daysBefore(windowStart, 30), DAY / SECOND),
       );
 
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
 
       expect(res.period.newAccounts.current).toBe(3);
       expect(res.period.newAccounts.previous).toBe(1);
@@ -319,11 +330,13 @@ describe.skipIf(!dbAvailable)(
         ),
       });
 
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
 
       expect(res.period.newAccounts.current).toBe(2);
       expect(res.period.newAccounts.previous).toBe(0);
@@ -343,11 +356,13 @@ describe.skipIf(!dbAvailable)(
           secondsAfter(daysBefore(windowStart, 30), (i + 1) * (DAY / SECOND)),
         );
       }
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
       expect(res.period.newAccounts.current).toBe(1);
       expect(res.period.newAccounts.previous).toBe(3);
       expect(res.period.newAccounts.changePct).toBe(-66.67);
@@ -358,11 +373,13 @@ describe.skipIf(!dbAvailable)(
     // -----------------------------------------------------------------------
 
     it("returns null percentiles when there are no source rows in the window", async () => {
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
       expect(res.timing.sessionSpanSeconds).toEqual({ p50: null, p95: null });
       expect(res.timing.claimDurationSeconds).toEqual({ p50: null, p95: null });
     });
@@ -386,11 +403,13 @@ describe.skipIf(!dbAvailable)(
         releasedAt: secondsAfter(created, 200),
       });
 
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
       expect(res.timing.sessionSpanSeconds.p50).toBe(100);
       expect(res.timing.sessionSpanSeconds.p95).toBe(100);
       expect(res.timing.claimDurationSeconds.p50).toBe(200);
@@ -452,11 +471,13 @@ describe.skipIf(!dbAvailable)(
         releasedAt: secondsAfter(before, 500),
       });
 
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
 
       expect(res.topWorkspaces).toHaveLength(2);
       const [a, b] = res.topWorkspaces;
@@ -500,11 +521,13 @@ describe.skipIf(!dbAvailable)(
       const agent = await seedAgent(top);
       await seedCommit({ workspaceId: top, agentId: agent, updatedAt: inWin });
 
-      const res = await getShepherdAnalytics(pool, {
-        range: "30d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "30d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
 
       expect(res.topWorkspaces).toHaveLength(10);
       // members DESC → 12, 11, …, 3; ws-1 and ws-2 are cut.
@@ -541,11 +564,13 @@ describe.skipIf(!dbAvailable)(
     // -----------------------------------------------------------------------
 
     it("produces a valid, zeroed rollup on an empty database", async () => {
-      const res = await getShepherdAnalytics(pool, {
-        range: "7d",
-        now: NOW,
-        liveWindowSeconds: LIVE_WINDOW_SECONDS,
-      });
+      const res = await withContext(pool, { kind: "operator" }, (db) =>
+        getShepherdAnalytics(db, {
+          range: "7d",
+          now: NOW,
+          liveWindowSeconds: LIVE_WINDOW_SECONDS,
+        }),
+      );
 
       expect(res.totals.accounts).toBe(0);
       expect(res.totals.workspaces).toBe(0);

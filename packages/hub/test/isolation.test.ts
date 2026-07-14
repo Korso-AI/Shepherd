@@ -45,7 +45,7 @@ import { initContext, resetContext } from "../src/context.js";
 import { buildServer } from "../src/server.js";
 import { __resetRateLimiter, hashToken } from "../src/tenant.js";
 import { createAgent, createSession, insertWorkItem } from "../src/repo.js";
-import { withTransaction } from "../src/db.js";
+import { withContext } from "../src/scopedDb.js";
 import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
 
@@ -202,7 +202,7 @@ async function mintSession(
   workspaceId: string,
   human: string,
 ): Promise<string> {
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
     const agent = await createAgent(tx, {
       workspaceId,
       name: `victim-${human}`,
@@ -226,7 +226,7 @@ async function mintSessionWithClaim(
   workspaceId: string,
   human: string,
 ): Promise<{ sessionId: string; workItemId: string }> {
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
     const agent = await createAgent(tx, {
       workspaceId,
       name: `victim-claim-${human}`,

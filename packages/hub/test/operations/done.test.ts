@@ -20,7 +20,7 @@ import {
   insertAnnouncement,
   listActiveClaims,
 } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { initContext, resetContext } from "../../src/context.js";
 import { done } from "../../src/operations/done.js";
 import type { Config } from "../../src/config.js";
@@ -76,22 +76,30 @@ async function seedAgentAndSession(
   const model = opts.model ?? "claude-3";
   const name = `agent-${suffix}`;
 
-  return withTransaction(pool, async (tx) => {
-    const agent = await createAgent(tx, {
-      workspaceId: ws,
-      name,
-      human,
-      program,
-      model,
-    });
-    const session = await createSession(tx, {
-      workspaceId: ws,
-      agentId: agent.id,
-      repo,
-      branch,
-    });
-    return { agentId: agent.id, agentName: agent.name, sessionId: session.id };
-  });
+  return withContext(
+    pool,
+    { kind: "workspace", workspaceId: ws },
+    async (tx) => {
+      const agent = await createAgent(tx, {
+        workspaceId: ws,
+        name,
+        human,
+        program,
+        model,
+      });
+      const session = await createSession(tx, {
+        workspaceId: ws,
+        agentId: agent.id,
+        repo,
+        branch,
+      });
+      return {
+        agentId: agent.id,
+        agentName: agent.name,
+        sessionId: session.id,
+      };
+    },
+  );
 }
 
 /** Seed a work item owned by a session. Returns the workItemId. */
@@ -108,16 +116,19 @@ async function seedWorkItem(
 ): Promise<string> {
   const now = new Date();
   const ttlSeconds = opts.ttlSeconds ?? 300;
-  return withTransaction(pool, (tx) =>
-    insertWorkItem(tx, {
-      workspaceId: opts.workspaceId ?? workspaceId,
-      sessionId,
-      repo: opts.repo ?? "my-repo",
-      intentText: opts.intent ?? "do some work",
-      pathGlobs: opts.pathGlobs ?? ["src/**/*.ts"],
-      ttlSeconds,
-      expiresAt: secsFromNow(now, ttlSeconds),
-    }),
+  return withContext(
+    pool,
+    { kind: "workspace", workspaceId: opts.workspaceId ?? workspaceId },
+    (tx) =>
+      insertWorkItem(tx, {
+        workspaceId: opts.workspaceId ?? workspaceId,
+        sessionId,
+        repo: opts.repo ?? "my-repo",
+        intentText: opts.intent ?? "do some work",
+        pathGlobs: opts.pathGlobs ?? ["src/**/*.ts"],
+        ttlSeconds,
+        expiresAt: secsFromNow(now, ttlSeconds),
+      }),
   );
 }
 
@@ -161,15 +172,20 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
 
       // Confirm the claim is visible to the peer before done().
       const now = new Date();
-      const before = await listActiveClaims(
+      const before = await withContext(
         pool,
-        workspaceId,
-        "my-repo",
-        now,
-        TEST_CONFIG.STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: peer.sessionId,
-        },
+        { kind: "workspace", workspaceId },
+        (db) =>
+          listActiveClaims(
+            db,
+            workspaceId,
+            "my-repo",
+            now,
+            TEST_CONFIG.STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: peer.sessionId,
+            },
+          ),
       );
       expect(before).toHaveLength(1);
       expect(before[0]!.workItemId).toBe(workItemId);
@@ -182,15 +198,20 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
       expect(result).toEqual({ ok: true, announcements: [] });
 
       // Confirm the claim is no longer visible to the peer.
-      const after = await listActiveClaims(
+      const after = await withContext(
         pool,
-        workspaceId,
-        "my-repo",
-        now,
-        TEST_CONFIG.STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: peer.sessionId,
-        },
+        { kind: "workspace", workspaceId },
+        (db) =>
+          listActiveClaims(
+            db,
+            workspaceId,
+            "my-repo",
+            now,
+            TEST_CONFIG.STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: peer.sessionId,
+            },
+          ),
       );
       expect(after).toHaveLength(0);
     });
@@ -238,15 +259,20 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
 
       // Y's claim must still be visible to the peer (WHERE clause protected it).
       const now = new Date();
-      const claims = await listActiveClaims(
+      const claims = await withContext(
         pool,
-        workspaceId,
-        "my-repo",
-        now,
-        TEST_CONFIG.STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: peer.sessionId,
-        },
+        { kind: "workspace", workspaceId },
+        (db) =>
+          listActiveClaims(
+            db,
+            workspaceId,
+            "my-repo",
+            now,
+            TEST_CONFIG.STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: peer.sessionId,
+            },
+          ),
       );
       expect(claims).toHaveLength(1);
       expect(claims[0]!.workItemId).toBe(workItemId);
@@ -263,14 +289,17 @@ describe.skipIf(!dbAvailable)("done operation — DB-dependent", () => {
       const workItemId = await seedWorkItem(pool, owner.sessionId);
 
       // Sender broadcasts a message the owner should receive.
-      const announcementId = await withTransaction(pool, (tx) =>
-        insertAnnouncement(tx, {
-          workspaceId,
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "heads up",
-        }),
+      const announcementId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        (tx) =>
+          insertAnnouncement(tx, {
+            workspaceId,
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "heads up",
+          }),
       );
 
       // done() delivers it in its response.

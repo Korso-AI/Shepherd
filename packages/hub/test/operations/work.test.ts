@@ -35,7 +35,7 @@ import {
   addMembership,
 } from "../../src/repo.js";
 import { sync } from "../../src/operations/sync.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { UnknownSessionError } from "../../src/errors.js";
 import { NO_ROUTE_WORKSPACE, type TenantContext } from "../../src/tenant.js";
 
@@ -85,7 +85,7 @@ async function seedSession(
   const agentName =
     opts.agentName ?? `agent-${Math.random().toString(36).slice(2, 8)}`;
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
     const agent = await createAgent(tx, {
       workspaceId,
       name: agentName,
@@ -491,7 +491,7 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     });
 
     // A creates a broadcast announcement
-    await withTransaction(pool, async (tx) => {
+    await withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
       await insertAnnouncement(tx, {
         workspaceId,
         repo: "test-repo",
@@ -899,7 +899,7 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
     // acct-member is a live member of the suite workspace; its token carries no
     // route workspace (NO_ROUTE_WORKSPACE) — resolveSession reads the session and
     // authorizes membership against ITS workspace.
-    await withTransaction(pool, (tx) =>
+    await withContext(pool, { kind: "workspace", workspaceId }, (tx) =>
       addMembership(tx, {
         workspaceId,
         accountId: "acct-member",

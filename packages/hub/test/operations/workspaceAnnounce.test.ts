@@ -26,7 +26,7 @@ import { workspaceAnnounce } from "../../src/operations/workspaceAnnounce.js";
 import { workspaceLandscape } from "../../src/operations/workspaceLandscape.js";
 import { join } from "../../src/operations/join.js";
 import { fetchPendingAnnouncements, getSession } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { ValidationError } from "../../src/errors.js";
 import type { Config } from "../../src/config.js";
 import type { TenantContext } from "../../src/tenant.js";
@@ -73,8 +73,14 @@ async function createSession(params: {
 }
 
 async function pendingFor(pool: pg.Pool, sessionId: string) {
-  const session = await getSession(pool, workspaceId, sessionId);
-  return withTransaction(pool, (tx) => fetchPendingAnnouncements(tx, session));
+  const session = await withContext(
+    pool,
+    { kind: "workspace", workspaceId },
+    (db) => getSession(db, workspaceId, sessionId),
+  );
+  return withContext(pool, { kind: "workspace", workspaceId }, (tx) =>
+    fetchPendingAnnouncements(tx, session),
+  );
 }
 
 describe.skipIf(!dbAvailable)(

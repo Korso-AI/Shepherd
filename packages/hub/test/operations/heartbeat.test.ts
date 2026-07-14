@@ -23,7 +23,7 @@ import {
   getSession,
   insertAnnouncement,
 } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { initContext, resetContext } from "../../src/context.js";
 import { heartbeat } from "../../src/operations/heartbeat.js";
 import type { Config } from "../../src/config.js";
@@ -66,7 +66,7 @@ async function seedAgentAndSession(
   const model = "claude-3";
   const name = `agent-${suffix}`;
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
     const agent = await createAgent(tx, {
       workspaceId,
       name,
@@ -91,7 +91,7 @@ async function seedWorkItem(
   expiresAt: Date,
   ttlSeconds = 300,
 ): Promise<string> {
-  return withTransaction(pool, (tx) =>
+  return withContext(pool, { kind: "workspace", workspaceId }, (tx) =>
     insertWorkItem(tx, {
       workspaceId,
       sessionId,
@@ -339,7 +339,7 @@ describe.skipIf(!dbAvailable)("heartbeat operation — DB-dependent", () => {
       body: string,
     ): Promise<void> {
       const sender = await seedAgentAndSession(pool, { suffix: "sender" });
-      await withTransaction(pool, (tx) =>
+      await withContext(pool, { kind: "workspace", workspaceId }, (tx) =>
         insertAnnouncement(tx, {
           workspaceId,
           repo: "my-repo",
