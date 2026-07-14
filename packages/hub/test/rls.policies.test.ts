@@ -18,8 +18,10 @@
  *     invitee emails — enumeration is the attack this closes);
  *   - account_profiles in workspace context are own-row OR current-member
  *     rows only;
- *   - feedback reads are pinned to the submitter's workspace/account (the
- *     arms exist for INSERT...RETURNING, not a browse surface);
+ *   - feedback reads are pinned to the exact INSERT...RETURNING back-read
+ *     shapes (never the same account's rows from ANOTHER workspace);
+ *   - announcement deliveries require both the session AND the announcement
+ *     in-workspace (heartbeat's ack ids are client-supplied);
  *   - internal context reaches only the GUC-named workspace's entitlements;
  *   - operator context reads across tenants but its writes fail: DELETE is
  *     silently filtered to 0 rows (grant present, no policy), INSERT throws
@@ -42,7 +44,11 @@ import {
   truncateTenancy,
 } from "./setup.js";
 import { withContext } from "../src/scopedDb.js";
-import { createAgent, createSession } from "../src/repo.js";
+import {
+  createAgent,
+  createSession,
+  recordAnnouncementDeliveries,
+} from "../src/repo.js";
 
 const ACCT_1 = "rls-acct-1"; // admin of wsA only
 const ACCT_2 = "rls-acct-2"; // member of BOTH workspaces
@@ -55,6 +61,10 @@ describe.skipIf(!dbAvailable)("RLS contexts (policy pins, Task 9)", () => {
   let appPool: pg.Pool;
   let wsA: string;
   let wsB: string;
+  let sessA: string;
+  let sessB: string;
+  let annA: number;
+  let annB: number;
 
   async function seedWorkspace(slug: string): Promise<string> {
     const { rows } = await pool.query<{ id: string }>(
@@ -65,9 +75,15 @@ describe.skipIf(!dbAvailable)("RLS contexts (policy pins, Task 9)", () => {
     return rows[0]!.id;
   }
 
-  /** Mint one agent + session in `workspaceId` (owner pool — fixture only). */
-  async function mintSession(workspaceId: string, human: string) {
-    await withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
+  /**
+   * Mint one agent + session in `workspaceId` (owner pool — fixture only).
+   * Returns the session id (the deliveries pin needs a concrete session).
+   */
+  async function mintSession(
+    workspaceId: string,
+    human: string,
+  ): Promise<string> {
+    return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
       const agent = await createAgent(tx, {
         workspaceId,
         name: `rls-agent-${human}`,
@@ -75,13 +91,27 @@ describe.skipIf(!dbAvailable)("RLS contexts (policy pins, Task 9)", () => {
         program: "claude",
         model: null,
       });
-      await createSession(tx, {
+      const session = await createSession(tx, {
         workspaceId,
         agentId: agent.id,
         repo: "org/repo",
         branch: "main",
       });
+      return session.id;
     });
+  }
+
+  /** One announcement in `workspaceId` from `sessionId` (owner pool fixture). */
+  async function mintAnnouncement(
+    workspaceId: string,
+    sessionId: string,
+  ): Promise<number> {
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO announcements (workspace_id, repo, from_session_id, body)
+       VALUES ($1, 'org/repo', $2, 'rls-pin') RETURNING id`,
+      [workspaceId, sessionId],
+    );
+    return Number(rows[0]!.id);
   }
 
   beforeAll(async () => {
@@ -114,11 +144,18 @@ describe.skipIf(!dbAvailable)("RLS contexts (policy pins, Task 9)", () => {
       `INSERT INTO workspace_entitlements (workspace_id, seats_limit) VALUES ($1, 5), ($2, 5)`,
       [wsA, wsB],
     );
-    await mintSession(wsA, "alice");
-    await mintSession(wsB, "bob");
+    sessA = await mintSession(wsA, "alice");
+    sessB = await mintSession(wsB, "bob");
+    annA = await mintAnnouncement(wsA, sessA);
+    annB = await mintAnnouncement(wsB, sessB);
+    // Feedback world: ACCT_1 has a row in EACH workspace (the same-account/
+    // two-workspace pin) plus a workspace-less account submission.
     await pool.query(
       `INSERT INTO feedback (workspace_id, account_id, type, body) VALUES
-         ($1, $3, 'bug', 'feedback-in-a'), ($2, $4, 'bug', 'feedback-in-b')`,
+         ($1, $3, 'bug', 'feedback-in-a'),
+         ($2, $4, 'bug', 'feedback-in-b'),
+         ($2, $3, 'bug', 'feedback-in-b-same-account'),
+         (NULL, $3, 'bug', 'feedback-account-only')`,
       [wsA, wsB, ACCT_1, ACCT_3],
     );
   });
@@ -277,20 +314,26 @@ describe.skipIf(!dbAvailable)("RLS contexts (policy pins, Task 9)", () => {
     );
   });
 
-  it("feedback reads are pinned to the submitter's workspace/account", async () => {
-    // Workspace context A (the INSERT...RETURNING back-read shape): A's rows
-    // only — B's feedback from another account never crosses.
+  it("feedback reads are pinned to the exact back-read shapes", async () => {
+    // Workspace context A with ACCT_1: A's rows plus the caller's own
+    // workspace-LESS row — and crucially NOT the SAME account's row that lives
+    // in workspace B (a bare account disjunct would leak it across workspaces).
     await withContext(
       appPool,
       { kind: "workspace", workspaceId: wsA, accountId: ACCT_1 },
       async (db) => {
         const { rows } = await db.query<{ body: string }>(
-          `SELECT body FROM feedback`,
+          `SELECT body FROM feedback ORDER BY body`,
         );
-        expect(rows).toEqual([{ body: "feedback-in-a" }]);
+        expect(rows.map((r) => r.body)).toEqual([
+          "feedback-account-only",
+          "feedback-in-a",
+        ]);
       },
     );
-    // Account context: own-account rows only.
+    // Account context: workspace-less own rows ONLY — the account insert arm
+    // can only produce workspace_id IS NULL rows, so the back-read reads no
+    // wider (workspace-attached rows need the workspace context).
     await withContext(
       appPool,
       { kind: "account", accountId: ACCT_1 },
@@ -298,9 +341,48 @@ describe.skipIf(!dbAvailable)("RLS contexts (policy pins, Task 9)", () => {
         const { rows } = await db.query<{ body: string }>(
           `SELECT body FROM feedback`,
         );
-        expect(rows).toEqual([{ body: "feedback-in-a" }]);
+        expect(rows.map((r) => r.body)).toEqual(["feedback-account-only"]);
       },
     );
+  });
+
+  it("announcement deliveries require BOTH ends in-workspace (forged-ack pin)", async () => {
+    // Direct SQL as the app role: linking wsA's session to wsB's announcement
+    // violates the policy WITH CHECK. The FK alone could never be this wall —
+    // referential checks run as the table owner and bypass RLS.
+    await expect(
+      withContext(appPool, { kind: "workspace", workspaceId: wsA }, (db) =>
+        db.query(
+          `INSERT INTO announcement_deliveries (session_id, announcement_id)
+           VALUES ($1, $2)`,
+          [sessA, annB],
+        ),
+      ),
+    ).rejects.toThrow(/row-level security/);
+
+    // The serving path (recordAnnouncementDeliveries — heartbeat's client-
+    // supplied ackAnnouncementIds) drops the forged id BEFORE the policy:
+    // nothing recorded, no error for the honest-but-stale case either.
+    await withContext(appPool, { kind: "workspace", workspaceId: wsA }, (db) =>
+      recordAnnouncementDeliveries(db, sessA, [annB]),
+    );
+    const { rows: cross } = await pool.query(
+      `SELECT 1 FROM announcement_deliveries
+       WHERE session_id = $1 AND announcement_id = $2`,
+      [sessA, annB],
+    );
+    expect(cross).toEqual([]);
+
+    // An honest in-workspace ack still lands.
+    await withContext(appPool, { kind: "workspace", workspaceId: wsA }, (db) =>
+      recordAnnouncementDeliveries(db, sessA, [annA]),
+    );
+    const { rows: ok } = await pool.query(
+      `SELECT 1 FROM announcement_deliveries
+       WHERE session_id = $1 AND announcement_id = $2`,
+      [sessA, annA],
+    );
+    expect(ok).toHaveLength(1);
   });
 
   it("internal context reaches only the GUC-named workspace's entitlements", async () => {

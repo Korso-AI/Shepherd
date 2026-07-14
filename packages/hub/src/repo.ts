@@ -1853,6 +1853,14 @@ export async function fetchPendingAnnouncements(
  * Record that a set of announcements have been delivered to sessionId.
  * Uses ON CONFLICT DO NOTHING so it is safe to call multiple times.
  * No-op when announcementIds is empty.
+ *
+ * Inserts via SELECT FROM announcements rather than a VALUES list: heartbeat's
+ * ackAnnouncementIds is CLIENT-SUPPLIED, so each id must be proven to be an
+ * announcement the caller's context can actually see. An id from another
+ * workspace (announcement ids are sequential and guessable) or one already
+ * pruned is silently dropped here instead of hitting the FK or the
+ * announcement_deliveries RLS policy (021), which double-checks both ends
+ * in-workspace as the backstop wall.
  */
 export async function recordAnnouncementDeliveries(
   tx: Queryable,
@@ -1861,17 +1869,11 @@ export async function recordAnnouncementDeliveries(
 ): Promise<void> {
   if (announcementIds.length === 0) return;
 
-  // Build a VALUES list: ($1, $2), ($1, $3), …
-  // sessionId is always $1; each announcementId gets its own param index.
-  const valuePlaceholders = announcementIds
-    .map((_, i) => `($1, $${i + 2})`)
-    .join(", ");
-
   await tx.query(
     `INSERT INTO announcement_deliveries (session_id, announcement_id)
-     VALUES ${valuePlaceholders}
+     SELECT $1, a.id FROM announcements a WHERE a.id = ANY($2::bigint[])
      ON CONFLICT DO NOTHING`,
-    [sessionId, ...announcementIds],
+    [sessionId, announcementIds],
   );
 }
 
@@ -2416,9 +2418,11 @@ export const ANNOUNCEMENT_PRUNE_BATCH_LIMIT = 500;
  * Delete announcements in `workspaceId` older than `retentionDays`, plus
  * their announcement_deliveries rows — deliveries FIRST, same transaction:
  * the deliveries FK (001_init.sql) has NO ON DELETE CASCADE. Bounded to
- * ANNOUNCEMENT_PRUNE_BATCH_LIMIT rows per call (oldest-id first, so repeated
- * passes drain a backlog deterministically). Returns the number of
- * announcements deleted.
+ * ANNOUNCEMENT_PRUNE_BATCH_LIMIT rows per call, oldest-first by
+ * (created_at, id) — the exact order of the (workspace_id, created_at, id)
+ * index from 021, so the scan STOPS at the limit instead of top-N-sorting the
+ * whole expired backlog, and repeated passes drain it deterministically.
+ * Returns the number of announcements deleted.
  */
 export async function pruneAnnouncements(
   tx: Queryable,
@@ -2430,7 +2434,7 @@ export async function pruneAnnouncements(
     `SELECT id FROM announcements
      WHERE workspace_id = $1
        AND created_at < $2::timestamptz - ($3 * interval '1 day')
-     ORDER BY id
+     ORDER BY created_at, id
      LIMIT ${ANNOUNCEMENT_PRUNE_BATCH_LIMIT}`,
     [workspaceId, now, retentionDays],
   );

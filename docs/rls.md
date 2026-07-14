@@ -80,6 +80,34 @@ deployment — the default self-host posture, where `DATABASE_URL` is the owner 
 keeps working unchanged: the same connection runs migrations and serves
 requests, and `withContext` sets the context on every request either way.
 
+Two upgrade caveats:
+
+- **Forward-only.** Once `021` is applied, the policies expect the application
+  to set all four context GUCs. Rolling the app **binary** back to a build
+  older than the one that ships this migration leaves `app.invite_code` unset,
+  so invite redemption fails closed (everything else keeps working — the other
+  three GUCs predate the policies). Roll forward instead; never
+  `DISABLE ROW LEVEL SECURITY` ad hoc.
+- **Large tables.** The migration is one transaction that takes
+  `ACCESS EXCLUSIVE` locks on every table (the `ENABLE`/`FORCE` statements) and
+  ends by building two indexes. On a deployment with a large `announcements` or
+  `announcement_deliveries` table, pre-build **both** exact index names with
+  `CREATE INDEX CONCURRENTLY` before upgrading, so the in-transaction builds
+  no-op:
+
+  ```sql
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS announcement_deliveries_announcement_id_idx
+    ON announcement_deliveries (announcement_id);
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS announcements_workspace_id_created_at_id_idx
+    ON announcements (workspace_id, created_at, id);
+  ```
+
+The migration also revokes `PUBLIC`'s `CREATE` on the `public` schema — a
+leftover default on databases upgraded or restored from clusters older than
+PostgreSQL 15, under which any role could create persistent objects. If your
+migration user is not the schema owner, the migration logs a warning instead;
+run `REVOKE CREATE ON SCHEMA public FROM PUBLIC;` as the owner yourself.
+
 ### Optional hardening: the two-role model
 
 For a deployment that wants the app connection to be structurally unable to
@@ -93,6 +121,30 @@ touch the policies, split the owner from the request path:
 3. Point `DATABASE_URL` at that login user.
 4. Set `MIGRATIONS_DATABASE_URL` to the **owner** URL, so migrations still run
    as the owner while requests run as the restricted user.
+
+**If migration `021` ran without `CREATEROLE`** (it logged
+`role not created (insufficient privilege)`), the group role and its grants do
+not exist yet — step 2 has nothing to grant. Provision them first, as an admin,
+on the database in question (substitute your `<database>_app` name):
+
+```sql
+CREATE ROLE shepherd_app NOLOGIN;
+GRANT USAGE ON SCHEMA public TO shepherd_app;
+GRANT EXECUTE ON FUNCTION app_context(), app_workspace_id(),
+  app_account_id(), app_invite_code() TO shepherd_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  sessions, work_items, change_records, workspaces, memberships,
+  api_tokens, account_profiles, workspace_entitlements TO shepherd_app;
+GRANT SELECT, INSERT, UPDATE ON invites TO shepherd_app;
+GRANT SELECT, INSERT, DELETE ON
+  agents, announcements, announcement_deliveries TO shepherd_app;
+GRANT SELECT, INSERT ON feedback TO shepherd_app;
+GRANT SELECT ON schema_migrations TO shepherd_app;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO shepherd_app;
+```
+
+(This is exactly the grant block from `packages/hub/migrations/021_rls.sql` —
+if the two ever drift, that file wins.)
 
 > **Never run the request path as a Postgres superuser.** Superusers (and roles
 > with `BYPASSRLS`) bypass RLS entirely, which silently defeats every policy in
@@ -115,12 +167,19 @@ can write that table.
 A new migration that introduces a workspace- or account-keyed table must wire it
 into the model, or tenants will not be isolated on it. The steps:
 
-1. `GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO <database>_app;` — the app
-   role has no privileges on a table until you grant them.
-2. `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;`
-3. `ALTER TABLE <table> FORCE ROW LEVEL SECURITY;` — without `FORCE`, the owner
+1. `GRANT <verbs> ON <table> TO <database>_app;` — the app role has no
+   privileges on a table until you grant them, and it should get **exactly**
+   the verbs the serving code issues (least privilege), not a reflexive
+   `SELECT, INSERT, UPDATE, DELETE`. The coverage test pins the expected verbs
+   per table; add your table's entry there in the same change.
+2. If the table has a `serial`/identity column,
+   `GRANT USAGE ON SEQUENCE <table>_<column>_seq TO <database>_app;` — `021`'s
+   `ON ALL SEQUENCES` grant covered only the sequences that existed when it
+   ran; without this, inserts fail with `permission denied for sequence`.
+3. `ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;`
+4. `ALTER TABLE <table> FORCE ROW LEVEL SECURITY;` — without `FORCE`, the owner
    (the single-connection self-host default) bypasses the policies.
-4. `CREATE POLICY` per context arm the table needs. A workspace-keyed table
+5. `CREATE POLICY` per context arm the table needs. A workspace-keyed table
    usually needs the workspace `FOR ALL` arm (`app_context() = 'workspace' AND
 workspace_id = app_workspace_id()`, in both `USING` and `WITH CHECK`) plus an
    operator read arm so `/admin/*` analytics can see across tenants.

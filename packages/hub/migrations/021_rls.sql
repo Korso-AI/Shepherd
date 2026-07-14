@@ -18,10 +18,13 @@
 -- owner), so a two-role deployment serves requests as a NOLOGIN role named
 -- `<database>_app` (derived from current_database() so a shared cluster gets one
 -- role per database, no cross-database grant bleed). The role is created here
--- and granted exactly the DML the hub needs — never BYPASSRLS, never LOGIN. In a
--- single-role deployment (the connecting user lacks CREATEROLE) role creation is
--- skipped with a WARNING and the app connects as an RLS-exempt superuser: the
--- policies are inert but present, ready the day the deployment splits the role.
+-- and granted exactly the DML the hub needs — never BYPASSRLS, never LOGIN. When
+-- the connecting user lacks CREATEROLE, role creation is skipped with a WARNING
+-- and the hub keeps serving on its single connection: FORCE RLS still binds a
+-- non-superuser owner (the policies are LIVE for it); only a superuser or
+-- BYPASSRLS connection leaves them inert. If the skip fired, the role and its
+-- grants must be provisioned manually before the two-role upgrade — docs/rls.md
+-- carries the exact SQL.
 --
 -- SUPERUSER BYPASS: a SUPERUSER (and any BYPASSRLS role) ignores RLS entirely,
 -- even with FORCE. The disposable test pool connects as `postgres` (superuser),
@@ -52,18 +55,52 @@
 DO $do$
 DECLARE
   app_role text := current_database() || '_app';
+  unsafe   text;
+  members  text;
 BEGIN
-  IF length(app_role) > 63 THEN
-    RAISE EXCEPTION 'database name "%" is too long to derive the app role name (max 59 chars)',
-      current_database();
+  -- Postgres truncates identifiers at 63 BYTES (not characters). A multibyte
+  -- database name can pass a character-count check, then CREATE ROLE silently
+  -- truncates the name and the exact pg_roles lookup in the grant block below
+  -- misses it — the migration would commit with NO grants. Measure in bytes.
+  IF octet_length(app_role) > 63 THEN
+    RAISE EXCEPTION 'database name "%" is too long to derive the app role name ("%" exceeds 63 bytes)',
+      current_database(), app_role;
   END IF;
   BEGIN
     EXECUTE format('CREATE ROLE %I NOLOGIN', app_role);
   EXCEPTION
     WHEN duplicate_object THEN
-      NULL;
+      -- Roles are CLUSTER-level, so a role by this name can pre-exist this
+      -- database: a recreated same-name database, a dump restored next to its
+      -- old role — or a squatter on a shared cluster. The grant block below
+      -- hands this role all app DML, so refuse any pre-existing role whose
+      -- attributes exceed what this migration would have created.
+      SELECT concat_ws(', ',
+               CASE WHEN rolcanlogin   THEN 'LOGIN'      END,
+               CASE WHEN rolsuper      THEN 'SUPERUSER'  END,
+               CASE WHEN rolbypassrls  THEN 'BYPASSRLS'  END,
+               CASE WHEN rolcreaterole THEN 'CREATEROLE' END,
+               CASE WHEN rolcreatedb   THEN 'CREATEDB'   END)
+        INTO unsafe
+      FROM pg_roles WHERE rolname = app_role;
+      IF unsafe <> '' THEN
+        RAISE EXCEPTION 'pre-existing role "%" has unsafe attributes (%) — drop or strip it before applying this migration',
+          app_role, unsafe;
+      END IF;
+      -- Existing memberships can be legitimate (a two-role deployment's login
+      -- user, the test harness login) but deserve an audit line: everyone in
+      -- this group is about to inherit the app grants.
+      SELECT string_agg(m.rolname, ', ') INTO members
+      FROM pg_auth_members am
+      JOIN pg_roles g ON g.oid = am.roleid
+      JOIN pg_roles m ON m.oid = am.member
+      WHERE g.rolname = app_role;
+      IF members IS NOT NULL THEN
+        RAISE WARNING 'role "%" already existed with members: % — they inherit the app grants',
+          app_role, members;
+      END IF;
     WHEN insufficient_privilege THEN
-      RAISE WARNING '% role not created (insufficient privilege) — single-role mode', app_role;
+      RAISE WARNING '% role not created (insufficient privilege) — single-role mode; docs/rls.md has the SQL to provision it later', app_role;
   END;
 END
 $do$;
@@ -115,12 +152,28 @@ BEGIN
     EXECUTE format(
       'GRANT EXECUTE ON FUNCTION app_context(), app_workspace_id(), app_account_id(), app_invite_code() TO %I',
       app_role);
+    -- Least-privilege DML: each table gets ONLY the verbs the serving code
+    -- issues (repo.ts is the ground truth; rls.coverage.test.ts pins this map
+    -- both ways — a missing verb breaks the app-role suite, an extra verb
+    -- fails the catalog audit). RLS is the row-level wall; these grants are an
+    -- independent verb-level wall, so a future over-broad policy has the
+    -- smallest possible blast radius. Deliberately NOT granted:
+    --   invites DELETE       — workspace deletion rides the FK cascade, which
+    --                          runs as the table owner;
+    --   feedback UPDATE/DELETE — the workspace detach is the FK's ON DELETE
+    --                          SET NULL; src never updates/deletes feedback;
+    --   agents / announcements / announcement_deliveries UPDATE — insert-and-
+    --                          delete lifecycles, never updated in place.
     EXECUTE format(
       'GRANT SELECT, INSERT, UPDATE, DELETE ON
-         agents, sessions, work_items, announcements, announcement_deliveries,
-         change_records, workspaces, memberships, api_tokens, invites,
-         account_profiles, feedback, workspace_entitlements
+         sessions, work_items, change_records, workspaces, memberships,
+         api_tokens, account_profiles, workspace_entitlements
        TO %I', app_role);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE ON invites TO %I', app_role);
+    EXECUTE format(
+      'GRANT SELECT, INSERT, DELETE ON agents, announcements, announcement_deliveries TO %I',
+      app_role);
+    EXECUTE format('GRANT SELECT, INSERT ON feedback TO %I', app_role);
     -- schema_migrations: SELECT ONLY (amendment 1). Boot's assertMigrationsCurrent
     -- (migrate.ts) reads `SELECT version FROM schema_migrations` on the SERVING
     -- pool, so the app role needs to read it in two-role deployments — but the
@@ -129,6 +182,21 @@ BEGIN
     EXECUTE format('GRANT SELECT ON schema_migrations TO %I', app_role);
     EXECUTE format('GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO %I', app_role);
   END IF;
+END
+$do$;
+
+-- PostgreSQL 15 removed PUBLIC's default CREATE on the public schema, but a
+-- database upgraded or restored from an older cluster KEEPS the old ACL — under
+-- which any role (the app role included) could create persistent objects in
+-- public, undoing the two-role guarantee that the request path cannot install
+-- a schema backdoor. No-op on fresh PG15+ databases. The owner keeps CREATE
+-- through schema ownership; only the blanket PUBLIC grant goes.
+DO $do$
+BEGIN
+  REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+EXCEPTION
+  WHEN insufficient_privilege THEN
+    RAISE WARNING 'could not REVOKE CREATE ON SCHEMA public FROM PUBLIC (not the schema owner) — run it manually as the owner';
 END
 $do$;
 
@@ -185,11 +253,27 @@ CREATE POLICY change_records_operator_read ON change_records FOR SELECT
 
 ALTER TABLE announcement_deliveries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcement_deliveries FORCE ROW LEVEL SECURITY;
+-- BOTH ends of a delivery must be in-context: the session arm alone would let a
+-- caller link its own session to ANOTHER workspace's announcement — heartbeat's
+-- ackAnnouncementIds is client-supplied and announcement ids are sequential, so
+-- a forged ack could corrupt a neighbour's delivery ledger (and, via the FK,
+-- block its retention prune). The FK cannot be the wall here: referential
+-- checks run as the table owner and bypass RLS.
 CREATE POLICY announcement_deliveries_workspace ON announcement_deliveries FOR ALL
-  USING (app_context() = 'workspace' AND EXISTS (
-    SELECT 1 FROM sessions s WHERE s.id = session_id AND s.workspace_id = app_workspace_id()))
-  WITH CHECK (app_context() = 'workspace' AND EXISTS (
-    SELECT 1 FROM sessions s WHERE s.id = session_id AND s.workspace_id = app_workspace_id()));
+  USING (app_context() = 'workspace'
+    AND EXISTS (
+      SELECT 1 FROM sessions s
+      WHERE s.id = session_id AND s.workspace_id = app_workspace_id())
+    AND EXISTS (
+      SELECT 1 FROM announcements a
+      WHERE a.id = announcement_id AND a.workspace_id = app_workspace_id()))
+  WITH CHECK (app_context() = 'workspace'
+    AND EXISTS (
+      SELECT 1 FROM sessions s
+      WHERE s.id = session_id AND s.workspace_id = app_workspace_id())
+    AND EXISTS (
+      SELECT 1 FROM announcements a
+      WHERE a.id = announcement_id AND a.workspace_id = app_workspace_id()));
 CREATE POLICY announcement_deliveries_operator_read ON announcement_deliveries FOR SELECT
   USING (app_context() = 'operator');
 
@@ -344,35 +428,41 @@ CREATE POLICY feedback_account_insert ON feedback FOR INSERT
 -- policies against an INSERT's RETURNING output — so the SUBMITTING context must
 -- be able to read the row it just wrote, or the insert fails with an RLS
 -- violation. These arms exist for that INSERT...RETURNING back-read, NOT for any
--- user-facing feedback browse (there is none). Scope the read to the submitter
--- (own workspace rows, or own account rows) so this back-read can never widen
--- into a cross-tenant or cross-account feedback SELECT. The workspace arm keeps
--- the `OR account_id = app_account_id()` disjunct because a workspace-context
--- submit stamps the caller's account_id on the row, and the back-read must pass
--- whether the row carries the workspace_id or (for a workspace-less account
--- submit that still resolved through a workspace credential) only the account.
+-- user-facing feedback browse (there is none), so each is EXACTLY the shape its
+-- insert arm can produce and nothing wider. In particular the workspace arm's
+-- account disjunct is pinned to workspace-less rows: a bare
+-- `OR account_id = app_account_id()` would let workspace A read the same
+-- account's feedback submitted in workspace B.
 CREATE POLICY feedback_workspace_read ON feedback FOR SELECT
   USING (app_context() = 'workspace'
-    AND (workspace_id = app_workspace_id() OR account_id = app_account_id()));
+    AND (workspace_id = app_workspace_id()
+      OR (workspace_id IS NULL AND account_id = app_account_id())));
 CREATE POLICY feedback_account_read ON feedback FOR SELECT
-  USING (app_context() = 'account' AND account_id = app_account_id());
+  USING (app_context() = 'account'
+    AND workspace_id IS NULL AND account_id = app_account_id());
 CREATE POLICY feedback_operator_read ON feedback FOR SELECT
   USING (app_context() = 'operator');
 
 -- ===== Prune-path indexes (amendment 4) =====
 -- The announcement prune runs inside `work`'s advisory-lock window, so these
 -- back its delete scans: deliveries by announcement, announcements by workspace
--- + age. Plain (non-CONCURRENT) CREATE INDEX — this file is one transaction.
--- NOTE: a plain CREATE INDEX takes an ACCESS EXCLUSIVE lock and scans the whole
--- table; at boot-migration time the build cost is proportional to the existing
--- announcement_deliveries row count. On a fresh/small deployment this is
--- negligible, but a deployment with a large pre-existing deliveries table can
--- pre-build this EXACT index name with CREATE INDEX CONCURRENTLY (outside this
--- transaction) before applying 021, and IF NOT EXISTS makes this a no-op. The
--- explicit name + IF NOT EXISTS deliberately deviate from this file's bare-DDL
--- convention: an UNNAMED create can never no-op (Postgres would auto-suffix a
--- duplicate and build it under the lock anyway).
+-- + age. The announcements index carries `id` as its last column because the
+-- prune reads `ORDER BY created_at, id LIMIT n` (repo.ts pruneAnnouncements):
+-- the index provides that order within the workspace, so the scan STOPS after
+-- n rows instead of top-N-sorting the whole expired backlog on every pass.
+--
+-- Plain (non-CONCURRENT) CREATE INDEX — this file is one transaction. NOTE: the
+-- ENABLE/FORCE statements above hold ACCESS EXCLUSIVE locks on EVERY app table
+-- until this transaction commits, and these two builds run at its end, each
+-- scanning its whole table — so a large pre-existing announcements OR
+-- announcement_deliveries table stretches the all-table lock window. A
+-- deployment with big tables should pre-build BOTH exact index names with
+-- CREATE INDEX CONCURRENTLY (outside this transaction) before applying 021;
+-- IF NOT EXISTS then makes these no-ops. The explicit names + IF NOT EXISTS
+-- deliberately deviate from this file's bare-DDL convention: an UNNAMED create
+-- can never no-op (Postgres would auto-suffix a duplicate and build it under
+-- the lock anyway).
 CREATE INDEX IF NOT EXISTS announcement_deliveries_announcement_id_idx
   ON announcement_deliveries (announcement_id);
-CREATE INDEX IF NOT EXISTS announcements_workspace_id_created_at_idx
-  ON announcements (workspace_id, created_at);
+CREATE INDEX IF NOT EXISTS announcements_workspace_id_created_at_id_idx
+  ON announcements (workspace_id, created_at, id);
