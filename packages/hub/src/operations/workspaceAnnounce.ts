@@ -43,9 +43,10 @@ import {
   listWorkspaceRepos,
   accountLabel,
 } from "../repo.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { ValidationError } from "../errors.js";
 import {
+  contextForTenant,
   requireWorkspaceId,
   requireAdmin,
   type TenantContext,
@@ -66,7 +67,7 @@ export async function workspaceAnnounce(
   }
   const targetAgentName = input.targetAgentName ?? null;
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
     // Label the row with the SENDING member's name where one is known, so the
     // message reads "alice → ..." (and agents can reply with `target: alice`)
     // rather than the anonymous collective label. Self-host TEAM_TOKEN callers

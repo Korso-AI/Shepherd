@@ -28,8 +28,8 @@ import {
   getWorkspaceEntitlements,
   pruneAnnouncements,
   ANNOUNCEMENT_PRUNE_BATCH_LIMIT,
+  type Queryable,
 } from "./repo.js";
-import type pg from "pg";
 
 /** Minimum gap between prune attempts for the same workspace. */
 const RETENTION_PRUNE_INTERVAL_MS = 3_600_000; // 1 hour
@@ -51,7 +51,7 @@ export function __resetRetentionThrottle(): void {
  * hourly tick retries.)
  */
 export async function maybePruneRetention(
-  tx: pg.PoolClient,
+  tx: Queryable,
   config: Config,
   workspaceId: string,
   now: Date,

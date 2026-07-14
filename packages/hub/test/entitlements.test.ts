@@ -17,6 +17,7 @@ import {
   deleteWorkspaceEntitlements,
   type WorkspaceEntitlementsRow,
 } from "../src/repo.js";
+import { withContext } from "../src/scopedDb.js";
 
 /**
  * Seed a workspace with a suite-unique slug and return its uuid. The
@@ -324,34 +325,52 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
 
   it("getWorkspaceEntitlements returns null when no row exists", async () => {
     const workspaceId = await seedWorkspace(pool, "ent-helper-none");
-    expect(await getWorkspaceEntitlements(pool, workspaceId)).toBeNull();
+    expect(
+      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+        getWorkspaceEntitlements(db, workspaceId),
+      ),
+    ).toBeNull();
   });
 
   it("upsert inserts, round-trips, then updates in place bumping updated_at", async () => {
     const workspaceId = await seedWorkspace(pool, "ent-helper-upsert");
 
-    const inserted = await upsertWorkspaceEntitlements(pool, workspaceId, {
-      seatsLimit: 4,
-      reposLimit: 5,
-      retentionDays: 30,
-      expiresAt: null,
-    });
+    const inserted = await withContext(
+      pool,
+      { kind: "workspace", workspaceId },
+      (db) =>
+        upsertWorkspaceEntitlements(db, workspaceId, {
+          seatsLimit: 4,
+          reposLimit: 5,
+          retentionDays: 30,
+          expiresAt: null,
+        }),
+    );
     expect(inserted.seats_limit).toBe(4);
     expect(inserted.repos_limit).toBe(5);
     expect(inserted.retention_days).toBe(30);
     expect(inserted.expires_at).toBeNull();
 
-    const fetched = await getWorkspaceEntitlements(pool, workspaceId);
+    const fetched = await withContext(
+      pool,
+      { kind: "workspace", workspaceId },
+      (db) => getWorkspaceEntitlements(db, workspaceId),
+    );
     expect(fetched).not.toBeNull();
     expect(fetched!.seats_limit).toBe(4);
 
     const expiresAt = new Date("2026-08-01T00:00:00.000Z");
-    const updated = await upsertWorkspaceEntitlements(pool, workspaceId, {
-      seatsLimit: 50,
-      reposLimit: null,
-      retentionDays: 365,
-      expiresAt,
-    });
+    const updated = await withContext(
+      pool,
+      { kind: "workspace", workspaceId },
+      (db) =>
+        upsertWorkspaceEntitlements(db, workspaceId, {
+          seatsLimit: 50,
+          reposLimit: null,
+          retentionDays: 365,
+          expiresAt,
+        }),
+    );
     expect(updated.seats_limit).toBe(50);
     expect(updated.repos_limit).toBeNull();
     expect(updated.retention_days).toBe(365);
@@ -371,14 +390,28 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
   it("deleteWorkspaceEntitlements deletes once, then reports false (idempotent)", async () => {
     const workspaceId = await seedWorkspace(pool, "ent-helper-del");
 
-    await upsertWorkspaceEntitlements(pool, workspaceId, {
-      seatsLimit: null,
-      reposLimit: null,
-      retentionDays: null,
-      expiresAt: null,
-    });
-    expect(await deleteWorkspaceEntitlements(pool, workspaceId)).toBe(true);
-    expect(await deleteWorkspaceEntitlements(pool, workspaceId)).toBe(false);
-    expect(await getWorkspaceEntitlements(pool, workspaceId)).toBeNull();
+    await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      upsertWorkspaceEntitlements(db, workspaceId, {
+        seatsLimit: null,
+        reposLimit: null,
+        retentionDays: null,
+        expiresAt: null,
+      }),
+    );
+    expect(
+      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+        deleteWorkspaceEntitlements(db, workspaceId),
+      ),
+    ).toBe(true);
+    expect(
+      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+        deleteWorkspaceEntitlements(db, workspaceId),
+      ),
+    ).toBe(false);
+    expect(
+      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+        getWorkspaceEntitlements(db, workspaceId),
+      ),
+    ).toBeNull();
   });
 });

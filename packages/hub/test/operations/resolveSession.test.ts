@@ -34,9 +34,9 @@ import {
   createAgent,
   createSession,
 } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { resolveSession } from "../../src/sessionScope.js";
-import { NO_ROUTE_WORKSPACE } from "../../src/tenant.js";
+import { NO_ROUTE_WORKSPACE, contextForTenant } from "../../src/tenant.js";
 import type { TenantContext } from "../../src/tenant.js";
 import { UnknownSessionError } from "../../src/errors.js";
 
@@ -66,22 +66,26 @@ describe.skipIf(!dbAvailable)(
       workspaceId: string,
       human: string,
     ): Promise<string> {
-      return withTransaction(pool, async (tx) => {
-        const agent = await createAgent(tx, {
-          workspaceId,
-          name: `agent-${human}`,
-          human,
-          program: "claude",
-          model: null,
-        });
-        const session = await createSession(tx, {
-          workspaceId,
-          agentId: agent.id,
-          repo: "org/repo",
-          branch: "main",
-        });
-        return session.id;
-      });
+      return withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        async (tx) => {
+          const agent = await createAgent(tx, {
+            workspaceId,
+            name: `agent-${human}`,
+            human,
+            program: "claude",
+            model: null,
+          });
+          const session = await createSession(tx, {
+            workspaceId,
+            agentId: agent.id,
+            repo: "org/repo",
+            branch: "main",
+          });
+          return session.id;
+        },
+      );
     }
 
     /** Run resolveSession inside a transaction (its real call context). */
@@ -89,7 +93,7 @@ describe.skipIf(!dbAvailable)(
       tenant: TenantContext,
       sessionId: string,
     ): Promise<Awaited<ReturnType<typeof resolveSession>>> {
-      return withTransaction(pool, (tx) =>
+      return withContext(pool, contextForTenant(tenant), (tx) =>
         resolveSession(tx, tenant, sessionId),
       );
     }
@@ -101,16 +105,26 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("account-scoped MEMBER resolves a session in its workspace", async () => {
-      const w = await createWorkspace(pool, {
-        slug: "w",
-        name: "W",
-        createdBy: "acct-a",
-      });
-      await addMembership(pool, {
-        workspaceId: w.id,
-        accountId: "acct-a",
-        role: "member",
-      });
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "w",
+            name: "W",
+            createdBy: "acct-a",
+          }),
+      );
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
+      );
       const sessionId = await mintSession(w.id, "alice");
 
       const session = await resolve(accountTenant("acct-a"), sessionId);
@@ -119,28 +133,86 @@ describe.skipIf(!dbAvailable)(
       expect(session.agentName).toBe("agent-alice");
     });
 
+    it("adoption re-points the LIVE transaction to the session's workspace triple", async () => {
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, { slug: "w", name: "W", createdBy: "acct-a" }),
+      );
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
+      );
+      const sessionId = await mintSession(w.id, "alice");
+      const tenant = accountTenant("acct-a");
+
+      // Probe the GUCs ON THE SAME TRANSACTION resolveSession ran in: the
+      // operation's writes execute right here, so THIS triple — not the
+      // primitive's unit-tested mapping — is what the Phase 2 policies will
+      // see. Pins that adoption lands the SESSION's workspace id plus the
+      // caller's account (a stale/swapped variable would pass every
+      // behavioral test today, GUCs being inert, and surface only as Phase 2
+      // zero-row no-ops).
+      await withContext(pool, contextForTenant(tenant), async (tx) => {
+        await resolveSession(tx, tenant, sessionId);
+        const { rows } = await tx.query(
+          `SELECT current_setting('app.context') AS ctx,
+                  current_setting('app.workspace_id') AS ws,
+                  current_setting('app.account_id') AS acct`,
+        );
+        expect(rows[0]).toEqual({ ctx: "workspace", ws: w.id, acct: "acct-a" });
+      });
+    });
+
     it("account-scoped NON-member → 404, SAME error as unknown (no existence disclosure)", async () => {
       // acct-a is a member of W but NOT of X; the session lives in X.
-      const w = await createWorkspace(pool, {
-        slug: "w",
-        name: "W",
-        createdBy: "acct-a",
-      });
-      await addMembership(pool, {
-        workspaceId: w.id,
-        accountId: "acct-a",
-        role: "member",
-      });
-      const x = await createWorkspace(pool, {
-        slug: "x",
-        name: "X",
-        createdBy: "acct-b",
-      });
-      await addMembership(pool, {
-        workspaceId: x.id,
-        accountId: "acct-b",
-        role: "admin",
-      });
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "w",
+            name: "W",
+            createdBy: "acct-a",
+          }),
+      );
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
+      );
+      const x = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-b" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "x",
+            name: "X",
+            createdBy: "acct-b",
+          }),
+      );
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-b", workspaceId: x.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: x.id,
+            accountId: "acct-b",
+            role: "admin",
+          }),
+      );
       const sessionIdX = await mintSession(x.id, "bob");
 
       // The non-member attempt must throw UnknownSessionError...
@@ -168,16 +240,26 @@ describe.skipIf(!dbAvailable)(
     it("legacy/self-host (concrete workspaceId): a session in ANOTHER workspace → 404", async () => {
       // Credential resolved to workspace W; the session lives in X. getSession's
       // workspace_id predicate is the existing cross-tenant gate — unchanged.
-      const w = await createWorkspace(pool, {
-        slug: "w",
-        name: "W",
-        createdBy: "acct-a",
-      });
-      const x = await createWorkspace(pool, {
-        slug: "x",
-        name: "X",
-        createdBy: "acct-b",
-      });
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "w",
+            name: "W",
+            createdBy: "acct-a",
+          }),
+      );
+      const x = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-b" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "x",
+            name: "X",
+            createdBy: "acct-b",
+          }),
+      );
       const sessionIdX = await mintSession(x.id, "bob");
 
       const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
@@ -187,11 +269,16 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("legacy/self-host: resolves a session in its OWN workspace", async () => {
-      const w = await createWorkspace(pool, {
-        slug: "w",
-        name: "W",
-        createdBy: "acct-a",
-      });
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "w",
+            name: "W",
+            createdBy: "acct-a",
+          }),
+      );
       const sessionId = await mintSession(w.id, "alice");
 
       const teamTenant: TenantContext = { workspaceId: w.id, via: "team" };
@@ -201,16 +288,26 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("unknown session id → 404 for BOTH credential kinds", async () => {
-      const w = await createWorkspace(pool, {
-        slug: "w",
-        name: "W",
-        createdBy: "acct-a",
-      });
-      await addMembership(pool, {
-        workspaceId: w.id,
-        accountId: "acct-a",
-        role: "member",
-      });
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, {
+            slug: "w",
+            name: "W",
+            createdBy: "acct-a",
+          }),
+      );
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
+      );
 
       await expect(
         resolve(accountTenant("acct-a"), UNKNOWN_ID),

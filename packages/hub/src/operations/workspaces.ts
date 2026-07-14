@@ -28,7 +28,7 @@ import type {
 } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
-import { withTransaction } from "../db.js";
+import { withContext, setDbContext } from "../scopedDb.js";
 import { AuthError } from "../errors.js";
 import {
   createWorkspace as createWorkspaceRow,
@@ -43,6 +43,7 @@ import {
   requireAccountId,
   requireAdmin,
   requireWorkspaceId,
+  contextForTenant,
   type TenantContext,
 } from "../tenant.js";
 
@@ -90,24 +91,36 @@ export async function createWorkspace(
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
 
-  const created = await countWorkspacesCreatedBy(pool, accountId);
+  const created = await withContext(pool, { kind: "account", accountId }, (db) =>
+    countWorkspacesCreatedBy(db, accountId),
+  );
   if (created >= MAX_WORKSPACES_PER_ACCOUNT) {
     throw new AuthError(403, "workspace creation cap reached");
   }
 
-  // Derive the slug on the pool BEFORE the transaction so the collision check
-  // sees committed rows; the UNIQUE constraint is the final backstop.
-  const slug = await deriveUniqueSlug(pool, input.name);
+  // Slug uniqueness is GLOBAL: probe in auth context (unscoped workspaces read) —
+  // account context would hide other tenants' slugs and break collision suffixing.
+  // The pre-transaction probe still races a concurrent same-name create; the
+  // UNIQUE constraint stays the final backstop.
+  const slug = await withContext(pool, { kind: "auth" }, (db) =>
+    deriveUniqueSlug(db, input.name),
+  );
 
-  const workspace = await withTransaction(pool, async (tx) => {
-    const ws = await createWorkspaceRow(tx, {
-      slug,
-      name: input.name,
-      createdBy: accountId,
-    });
-    await addMembership(tx, { workspaceId: ws.id, accountId, role: "admin" });
-    return ws;
-  });
+  const workspace = await withContext(
+    pool,
+    { kind: "account", accountId },
+    async (tx) => {
+      const ws = await createWorkspaceRow(tx, {
+        slug,
+        name: input.name,
+        createdBy: accountId,
+      });
+      // FOCUS the new workspace: the membership INSERT policy demands it.
+      await setDbContext(tx, { kind: "account", accountId, workspaceId: ws.id });
+      await addMembership(tx, { workspaceId: ws.id, accountId, role: "admin" });
+      return ws;
+    },
+  );
 
   // The creator is the workspace's first admin AND its owner (created_by).
   return {
@@ -125,7 +138,11 @@ export async function listWorkspaces(
 ): Promise<ListWorkspacesResponseT> {
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
-  const workspaces = await listWorkspacesForAccount(pool, accountId);
+  const workspaces = await withContext(
+    pool,
+    { kind: "account", accountId },
+    (db) => listWorkspacesForAccount(db, accountId),
+  );
   return { workspaces };
 }
 
@@ -150,7 +167,9 @@ export async function deleteWorkspace(
   const workspaceId = requireWorkspaceId(tenant);
   requireAdmin(tenant);
 
-  await withTransaction(pool, (tx) => deleteWorkspaceCascade(tx, workspaceId));
+  await withContext(pool, contextForTenant(tenant), (tx) =>
+    deleteWorkspaceCascade(tx, workspaceId),
+  );
 
   return { deleted: true };
 }

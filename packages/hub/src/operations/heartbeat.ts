@@ -45,9 +45,9 @@ import {
   recordAnnouncementDeliveries,
 } from "../repo.js";
 import { resolveSession } from "../sessionScope.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { maybePruneRetention } from "../retention.js";
-import { type TenantContext } from "../tenant.js";
+import { contextForTenant, type TenantContext } from "../tenant.js";
 
 export async function heartbeat(
   input: HeartbeatRequestT,
@@ -55,7 +55,7 @@ export async function heartbeat(
 ): Promise<HeartbeatResponseT> {
   const { pool, config } = getContext();
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
     const now = new Date();
     // Resolve + authorize the session as the FIRST statement. resolveSession
     // handles both credential kinds; a session the caller may not reach throws

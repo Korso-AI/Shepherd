@@ -21,11 +21,10 @@
  * but it is unexploitable given unguessable 122-bit UUID session ids.
  */
 
-import type pg from "pg";
-
 import { UnknownSessionError } from "./errors.js";
 import { getSession, getSessionById, findMembership } from "./repo.js";
 import type { SessionWithAgent } from "./repo.js";
+import { setDbContext, type ScopedDb } from "./scopedDb.js";
 import { NO_ROUTE_WORKSPACE, requireAccountId } from "./tenant.js";
 import type { TenantContext } from "./tenant.js";
 
@@ -34,8 +33,8 @@ import type { TenantContext } from "./tenant.js";
  * calling tenant, or throw {@link UnknownSessionError} (→ 404). The returned
  * session's `workspaceId` is the concrete workspace the operation then scopes to.
  *
- * Runs on the operation's transaction client so the lookup + membership check
- * share the same transaction/connection as the write that follows (READ
+ * Runs on the operation's {@link ScopedDb} transaction so the lookup + membership
+ * check share the same transaction/connection as the write that follows (READ
  * COMMITTED — statements share the connection, NOT one MVCC snapshot, so a
  * concurrent membership revocation may still commit between this check and a
  * later write; that is no worse than today's per-request check).
@@ -43,40 +42,48 @@ import type { TenantContext } from "./tenant.js";
  * - Workspace-scoped / self-host credential (`workspaceId` is a concrete id):
  *   defer to {@link getSession}, whose `workspace_id` predicate is the existing
  *   cross-tenant isolation gate — a session in another workspace is simply not
- *   found and throws (404).
+ *   found and throws (404). The transaction is already in that workspace's
+ *   context (see {@link contextForTenant}), so no context change is needed.
  * - Account-scoped credential (`workspaceId` is {@link NO_ROUTE_WORKSPACE}): the
- *   route/token names no workspace, so read the session UNSCOPED, then require
- *   the account to be a LIVE member of THAT session's workspace. A missing
- *   session and a non-member both throw the SAME error — the caller cannot tell
- *   "no such session" from "a session you may not see" (no existence disclosure).
+ *   transaction runs in ACCOUNT context, so sessions/agents are visible only
+ *   through the caller's own memberships (migration 021's membership-EXISTS
+ *   arm) — a session in a foreign workspace is simply invisible and both
+ *   "no such session" and "a session you may not see" collapse to the same
+ *   {@link UnknownSessionError} (404), no existence disclosure. Once membership
+ *   is proven the session's workspace is ADOPTED into the transaction context so
+ *   the operation's writes run under workspace-context policies.
  */
 export async function resolveSession(
-  tx: pg.PoolClient,
+  db: ScopedDb,
   tenant: TenantContext,
   sessionId: string,
 ): Promise<SessionWithAgent> {
   if (tenant.workspaceId !== NO_ROUTE_WORKSPACE) {
-    // Concrete workspace already resolved (legacy/workspace-scoped token or
-    // self-host): getSession's workspace_id predicate IS the isolation gate.
-    return getSession(tx, tenant.workspaceId, sessionId);
+    return getSession(db, tenant.workspaceId, sessionId);
   }
-
-  // Account-scoped: no route workspace. Read the session, then authorize the
-  // account against ITS workspace via live membership. Both the unknown-session
-  // and the non-member paths throw the identical UnknownSessionError so the
-  // response never reveals that the session exists in a workspace the account
-  // cannot reach.
-  const session = await getSessionById(tx, sessionId);
+  // Account-scoped credential: the transaction is in ACCOUNT context, where
+  // sessions/agents are readable only through the caller's own memberships
+  // (migration 021's membership-EXISTS arm) — so a session in a foreign
+  // workspace is simply invisible and both "unknown" and "not yours" collapse
+  // to the same 404, exactly as today.
+  const session = await getSessionById(db, sessionId);
   if (session === null) {
     throw new UnknownSessionError(sessionId);
   }
   const membership = await findMembership(
-    tx,
+    db,
     requireAccountId(tenant),
     session.workspaceId,
   );
   if (membership === null) {
     throw new UnknownSessionError(sessionId);
   }
+  // Membership proven — ADOPT the session's workspace for the rest of the
+  // transaction so the operation's writes run under workspace-context policies.
+  await setDbContext(db, {
+    kind: "workspace",
+    workspaceId: session.workspaceId,
+    accountId: requireAccountId(tenant),
+  });
   return session;
 }

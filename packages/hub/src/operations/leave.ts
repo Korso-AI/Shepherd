@@ -25,8 +25,8 @@ import type { LeaveRequestT, LeaveResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
 import { expireSessionPresence } from "../repo.js";
 import { resolveSession } from "../sessionScope.js";
-import { withTransaction } from "../db.js";
-import { type TenantContext } from "../tenant.js";
+import { withContext } from "../scopedDb.js";
+import { contextForTenant, type TenantContext } from "../tenant.js";
 
 export async function leave(
   input: LeaveRequestT,
@@ -34,7 +34,7 @@ export async function leave(
 ): Promise<LeaveResponseT> {
   const { pool, config } = getContext();
 
-  await withTransaction(pool, async (tx) => {
+  await withContext(pool, contextForTenant(tenant), async (tx) => {
     // Resolve + authorize the session as the FIRST statement so the presence
     // expiry below is scoped to the SESSION's own workspace (not a route) and a
     // session the caller may not reach 404s before any write — the cross-tenant

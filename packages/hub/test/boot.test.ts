@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { createTestPool, dbAvailable, runTestMigrations } from "./setup.js";
 import { seedSelfHostWorkspace } from "../src/boot.js";
+import { withContext } from "../src/scopedDb.js";
 
 describe.skipIf(!dbAvailable)("seedSelfHostWorkspace", () => {
   let pool: pg.Pool;
@@ -30,7 +31,9 @@ describe.skipIf(!dbAvailable)("seedSelfHostWorkspace", () => {
   });
 
   it("seeds exactly one workspace row for the allowed slug", async () => {
-    await seedSelfHostWorkspace(pool, "default");
+    await withContext(pool, { kind: "maintenance" }, (db) =>
+      seedSelfHostWorkspace(db, "default"),
+    );
 
     const { rows } = await pool.query<{
       slug: string;
@@ -49,8 +52,12 @@ describe.skipIf(!dbAvailable)("seedSelfHostWorkspace", () => {
   });
 
   it("is idempotent — calling it twice leaves a single row", async () => {
-    await seedSelfHostWorkspace(pool, "default");
-    await seedSelfHostWorkspace(pool, "default");
+    await withContext(pool, { kind: "maintenance" }, (db) =>
+      seedSelfHostWorkspace(db, "default"),
+    );
+    await withContext(pool, { kind: "maintenance" }, (db) =>
+      seedSelfHostWorkspace(db, "default"),
+    );
 
     const { rows } = await pool.query(
       "SELECT 1 FROM workspaces WHERE slug = $1",
@@ -61,7 +68,9 @@ describe.skipIf(!dbAvailable)("seedSelfHostWorkspace", () => {
   });
 
   it("is a no-op when no allowed workspace is configured (hosted-only)", async () => {
-    await seedSelfHostWorkspace(pool, undefined);
+    await withContext(pool, { kind: "maintenance" }, (db) =>
+      seedSelfHostWorkspace(db, undefined),
+    );
 
     const { rows } = await pool.query(
       "SELECT 1 FROM workspaces WHERE created_by = 'self-host'",

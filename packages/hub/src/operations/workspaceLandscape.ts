@@ -16,8 +16,12 @@ import type { WorkspaceLandscapeResponseT } from "@shepherd/shared";
 import { getContext } from "../context.js";
 import { getWorkspaceLandscape } from "../repo.js";
 import { presenceFor } from "../presence.js";
-import { withTransaction } from "../db.js";
-import { requireWorkspaceId, type TenantContext } from "../tenant.js";
+import { withContext } from "../scopedDb.js";
+import {
+  contextForTenant,
+  requireWorkspaceId,
+  type TenantContext,
+} from "../tenant.js";
 
 export async function workspaceLandscape(
   tenant: TenantContext,
@@ -28,7 +32,7 @@ export async function workspaceLandscape(
 
   // One transaction so the three reads share a single consistent snapshot.
   // Scoped to the credential's workspace_id (NOT config.ALLOWED_WORKSPACE).
-  const rows = await withTransaction(pool, (tx) =>
+  const rows = await withContext(pool, contextForTenant(tenant), (tx) =>
     getWorkspaceLandscape(tx, workspaceId, now, config.STALE_AFTER_SECONDS),
   );
 

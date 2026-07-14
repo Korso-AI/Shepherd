@@ -37,7 +37,7 @@ import {
   insertWorkItem,
   listActiveClaims,
 } from "../src/repo.js";
-import { withTransaction } from "../src/db.js";
+import { withContext } from "../src/scopedDb.js";
 import { UnknownSessionError } from "../src/errors.js";
 import { __resetRateLimiter } from "../src/tenant.js";
 import type { Config } from "../src/config.js";
@@ -137,7 +137,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -236,7 +236,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -313,7 +313,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -377,7 +377,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -452,7 +452,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -576,7 +576,7 @@ describe.skipIf(!dbAvailable)(
       await runTestMigrations(pool);
       workspaceIdA = await seedWorkspace(pool, WS);
       workspaceIdB = await seedWorkspace(pool, "team-b");
-      tenantA = { workspaceId: workspaceIdA };
+      tenantA = { workspaceId: workspaceIdA, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -602,64 +602,66 @@ describe.skipIf(!dbAvailable)(
       );
 
       // Seed a team-b agent + session + work item directly under workspaceIdB.
-      await withTransaction(pool, async (tx) => {
-        const agentB = await createAgent(tx, {
-          workspaceId: workspaceIdB,
-          name: "TeamBAgent",
-          human: "dave",
-          program: "claude",
-          model: "claude-3-5-sonnet",
-        });
-        const sessionB = await createSession(tx, {
-          workspaceId: workspaceIdB,
-          agentId: agentB.id,
-          repo: REPO,
-          branch: BRANCH,
-        });
-        const now = new Date();
-        await insertWorkItem(tx, {
-          workspaceId: workspaceIdB,
-          sessionId: sessionB.id,
-          repo: REPO,
-          intentText: "team-b work",
-          pathGlobs: ["src/**"],
-          ttlSeconds: 1800,
-          expiresAt: new Date(now.getTime() + 1800 * 1000),
-        });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: workspaceIdB },
+        async (tx) => {
+          const agentB = await createAgent(tx, {
+            workspaceId: workspaceIdB,
+            name: "TeamBAgent",
+            human: "dave",
+            program: "claude",
+            model: "claude-3-5-sonnet",
+          });
+          const sessionB = await createSession(tx, {
+            workspaceId: workspaceIdB,
+            agentId: agentB.id,
+            repo: REPO,
+            branch: BRANCH,
+          });
+          const now = new Date();
+          await insertWorkItem(tx, {
+            workspaceId: workspaceIdB,
+            sessionId: sessionB.id,
+            repo: REPO,
+            intentText: "team-b work",
+            pathGlobs: ["src/**"],
+            ttlSeconds: 1800,
+            expiresAt: new Date(now.getTime() + 1800 * 1000),
+          });
 
-        // Assert from team-b's perspective: listActiveClaims for team-b should
-        // NOT include anything from team-a.
-        // Read via `tx` (NOT pool): the team-b rows above are still uncommitted,
-        // so a separate pool connection could never see them. listActiveClaims
-        // accepts a PoolClient (P1-1 widening), which is exactly what lets this
-        // in-transaction read work.
-        const teamBClaims = await listActiveClaims(
-          tx,
-          workspaceIdB,
-          REPO,
-          now,
-          120,
-          { excludeSessionId: "00000000-0000-0000-0000-000000000000" },
-        );
+          // Assert from team-b's perspective: listActiveClaims for team-b should
+          // NOT include anything from team-a.
+          // Read via `tx` (NOT pool): the team-b rows above are still uncommitted,
+          // so a separate pool connection could never see them. listActiveClaims
+          // runs on the shared withContext transaction client, which is exactly
+          // what lets this in-transaction read work.
+          const teamBClaims = await listActiveClaims(
+            tx,
+            workspaceIdB,
+            REPO,
+            now,
+            120,
+            { excludeSessionId: "00000000-0000-0000-0000-000000000000" },
+          );
 
-        const teamAClaims = teamBClaims.filter((c) => c.human === "alice");
-        expect(teamAClaims).toHaveLength(0);
+          const teamAClaims = teamBClaims.filter((c) => c.human === "alice");
+          expect(teamAClaims).toHaveLength(0);
 
-        // Team-b's own claim IS present
-        expect(teamBClaims.some((c) => c.human === "dave")).toBe(true);
-      });
+          // Team-b's own claim IS present
+          expect(teamBClaims.some((c) => c.human === "dave")).toBe(true);
+        },
+      );
 
       // Also assert from team-a's side: listActiveClaims for team-a has no team-b row
       const now = new Date();
-      const teamAClaims = await listActiveClaims(
+      const teamAClaims = await withContext(
         pool,
-        workspaceIdA,
-        REPO,
-        now,
-        120,
-        {
-          excludeSessionId: "00000000-0000-0000-0000-000000000000",
-        },
+        { kind: "workspace", workspaceId: workspaceIdA },
+        (db) =>
+          listActiveClaims(db, workspaceIdA, REPO, now, 120, {
+            excludeSessionId: "00000000-0000-0000-0000-000000000000",
+          }),
       );
       const daveClaims = teamAClaims.filter((c) => c.human === "dave");
       expect(daveClaims).toHaveLength(0);
@@ -675,22 +677,26 @@ describe.skipIf(!dbAvailable)(
     it("a sessionId minted in team-b, replayed via the team-a tenant, is rejected 404 with no row written", async () => {
       // Mint a real session in team-b directly (bypassing the op layer, which
       // only knows team-a's tenant here).
-      const sessionIdB = await withTransaction(pool, async (tx) => {
-        const agentB = await createAgent(tx, {
-          workspaceId: workspaceIdB,
-          name: "TeamBVictim",
-          human: "dave",
-          program: "claude",
-          model: null,
-        });
-        const sessionB = await createSession(tx, {
-          workspaceId: workspaceIdB,
-          agentId: agentB.id,
-          repo: REPO,
-          branch: BRANCH,
-        });
-        return sessionB.id;
-      });
+      const sessionIdB = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: workspaceIdB },
+        async (tx) => {
+          const agentB = await createAgent(tx, {
+            workspaceId: workspaceIdB,
+            name: "TeamBVictim",
+            human: "dave",
+            program: "claude",
+            model: null,
+          });
+          const sessionB = await createSession(tx, {
+            workspaceId: workspaceIdB,
+            agentId: agentB.id,
+            repo: REPO,
+            branch: BRANCH,
+          });
+          return sessionB.id;
+        },
+      );
 
       // Replay team-b's sessionId through the team-a tenant. getSession scopes by
       // workspaceIdA, so the row is invisible → UnknownSessionError (→ 404).

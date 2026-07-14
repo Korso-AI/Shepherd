@@ -28,6 +28,7 @@ import {
   findWorkspaceBySlug,
   touchApiTokenLastUsed,
 } from "./repo.js";
+import { withContext, setDbContext, type DbContext } from "./scopedDb.js";
 import type pg from "pg";
 
 /**
@@ -179,6 +180,48 @@ export function requireInternal(tenant: TenantContext): void {
   if (tenant.via !== "internal") {
     throw new AuthError(403, "operation requires an internal service call");
   }
+}
+
+/**
+ * Map a resolved tenant to the DB context its operation runs in. The ONE
+ * via→context mapping (design rule: route code never picks contexts ad hoc):
+ *  - a concrete route/credential workspace  → workspace context;
+ *  - the NO_ROUTE_WORKSPACE sentinel with an account → account context
+ *    (non-:id browser routes, account-scoped tokens — session-bearing
+ *    operations later ADOPT the session's workspace via resolveSession);
+ *  - via "internal" → internal context — the CALLER passes the route's
+ *    workspace id explicitly (it is not on the tenant).
+ * The operator context is chosen explicitly by the /admin analytics path
+ * (requireOperator gates it), never inferred here.
+ *
+ * Sanctioned exception: ACCOUNT-SURFACE operations (workspace create/list,
+ * token management, invite redemption, account deletion) PIN
+ * `{ kind: "account" }` literals — with an explicit capability-validated
+ * focus where a workspace read is unlocked — rather than calling this
+ * mapping. That pinning states the surface's intent (these routes are
+ * account-scoped no matter what the tenant carries) and is deliberate, not
+ * ad-hoc context picking.
+ */
+export function contextForTenant(
+  tenant: TenantContext,
+  internalWorkspaceId?: string,
+): DbContext {
+  if (tenant.via === "internal") {
+    if (internalWorkspaceId === undefined) {
+      throw new Error("internal context requires the route workspace id");
+    }
+    return { kind: "internal", workspaceId: internalWorkspaceId };
+  }
+  if (tenant.workspaceId !== NO_ROUTE_WORKSPACE) {
+    return {
+      kind: "workspace",
+      workspaceId: tenant.workspaceId,
+      ...(tenant.accountId !== undefined
+        ? { accountId: tenant.accountId }
+        : {}),
+    };
+  }
+  return { kind: "account", accountId: requireAccountId(tenant) };
 }
 
 // ---------------------------------------------------------------------------
@@ -509,6 +552,19 @@ const lastTokenTouch = new Map<string, number>();
 const lastProfileUpsert = new Map<string, number>();
 
 /**
+ * Memoized ALLOWED_WORKSPACE slug→id resolution for the self-host TEAM_TOKEN
+ * path. The workspace is seeded at boot and a slug→id mapping never changes for
+ * the life of the process, so re-reading it on EVERY authenticated self-host
+ * request (work/sync/heartbeat) would burn a whole extra transaction per
+ * request to re-learn a constant. Only a successful resolution is cached — a
+ * not-yet-provisioned workspace keeps failing 401 per request rather than
+ * caching the miss — and the slug is stored alongside the id so a config
+ * change (tests re-init with a different ALLOWED_WORKSPACE) can never serve a
+ * stale id.
+ */
+let selfHostWorkspace: { slug: string; id: string } | undefined;
+
+/**
  * Record a write for `key` and report whether it should be SKIPPED because the
  * previous write for that key falls inside the throttle window. The first call
  * for a key (and the first after the window lapses) always returns false (write),
@@ -528,16 +584,17 @@ function throttleWrite(
 }
 
 /**
- * Test-only: clear all in-memory per-credential state — the rate-limit buckets
- * AND the hot-path write throttles — so each test starts fresh (e.g. a test
- * that asserts last_used_at moves, or that the profile is upserted, on the very
- * first request after a reset).
+ * Test-only: clear all in-memory resolver state — the rate-limit buckets, the
+ * hot-path write throttles, AND the memoized self-host workspace id — so each
+ * test starts fresh (e.g. a test that asserts last_used_at moves, or that
+ * re-seeds the team workspace with a new id after a truncate).
  */
 export function __resetRateLimiter(): void {
   buckets.clear();
   preauthFailures.clear();
   lastTokenTouch.clear();
   lastProfileUpsert.clear();
+  selfHostWorkspace = undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -664,13 +721,15 @@ async function resolveCredentials(
     // metadata, not an auth input, so a slightly stale refresh is harmless; this
     // keeps an unconditional write off every browser request.
     if (!throttleWrite(lastProfileUpsert, accountId, Date.now())) {
-      await upsertAccountProfile(pool, {
-        accountId,
-        displayName: headerValue(request, "x-display-name") ?? null,
-        githubLogin: headerValue(request, "x-github-login") ?? null,
-        email: headerValue(request, "x-email") ?? null,
-        avatarUrl: headerValue(request, "x-avatar-url") ?? null,
-      });
+      await withContext(pool, { kind: "auth", accountId }, (db) =>
+        upsertAccountProfile(db, {
+          accountId,
+          displayName: headerValue(request, "x-display-name") ?? null,
+          githubLogin: headerValue(request, "x-github-login") ?? null,
+          email: headerValue(request, "x-email") ?? null,
+          avatarUrl: headerValue(request, "x-avatar-url") ?? null,
+        }),
+      );
     }
 
     // A verified internal operator: the BFF-signed HMAC proof, re-verified
@@ -695,7 +754,11 @@ async function resolveCredentials(
 
     // :id route: the caller must be a member of THIS workspace. A missing
     // membership is reported as 404 — never reveal whether the workspace exists.
-    const membership = await findMembership(pool, accountId, workspaceId);
+    const membership = await withContext(
+      pool,
+      { kind: "auth", accountId },
+      (db) => findMembership(db, accountId, workspaceId),
+    );
     if (membership === null) {
       throw new AuthError(404, "not a member of the requested workspace");
     }
@@ -721,73 +784,106 @@ async function resolveCredentials(
   //    is checked BEFORE the team token: we look up the hash first, and only on
   //    a miss fall through to the TEAM_TOKEN check (step 3) below.
   const tokenHash = hashToken(bearer);
-  const tokenRow = await findApiTokenByHash(pool, tokenHash);
-  if (tokenRow !== null) {
-    // Per-token rate limit on the agent path — applies to BOTH token kinds.
-    consumeRateLimit(`tok:${tokenRow.id}`);
-    // last_used_at is best-effort liveness — throttle it off the hot path.
-    // Also common to both kinds, so it happens before we branch on scope.
-    if (!throttleWrite(lastTokenTouch, tokenRow.id, Date.now())) {
-      await touchApiTokenLastUsed(pool, tokenRow.id);
-    }
+  // The whole agent-token resolution rides ONE auth-context transaction: the
+  // hash lookup, the throttled last-used touch, and the membership check each
+  // used to open their own withContext, which put 2-3 extra pool checkouts +
+  // BEGIN/COMMIT round-trips on the hottest path (every work/sync/heartbeat).
+  // The per-query GUC state is unchanged: the lookup runs with a bare auth
+  // context exactly as before, and setDbContext widens it with the token's
+  // account — the same context the follow-up queries always carried — once the
+  // token is known. Returns null on a hash miss so the TEAM_TOKEN fallthrough
+  // below still runs. One behavioral nuance: an AuthError thrown inside now
+  // rolls back the last-used touch — fine, a rejected request shouldn't count
+  // as token liveness.
+  const agentTenant = await withContext(
+    pool,
+    { kind: "auth" },
+    async (db): Promise<TenantContext | null> => {
+      const tokenRow = await findApiTokenByHash(db, tokenHash);
+      if (tokenRow === null) {
+        return null;
+      }
+      // Per-token rate limit on the agent path — applies to BOTH token kinds.
+      consumeRateLimit(`tok:${tokenRow.id}`);
+      // The token resolved: widen the auth context with its account for the
+      // remaining queries (escalation proof: the just-fetched token row).
+      await setDbContext(db, { kind: "auth", accountId: tokenRow.account_id });
+      // last_used_at is best-effort liveness — throttle it off the hot path.
+      // Also common to both kinds, so it happens before we branch on scope.
+      if (!throttleWrite(lastTokenTouch, tokenRow.id, Date.now())) {
+        await touchApiTokenLastUsed(db, tokenRow.id);
+      }
 
-    if (tokenRow.workspace_id === null) {
-      // ACCOUNT-scoped token (migration 015): bound to an account, not a single
-      // workspace. There is no route workspace to validate here — resolve to the
-      // NO_ROUTE_WORKSPACE sentinel carrying only the accountId, exactly like the
-      // browser non-`:id` path. The operation layer supplies the concrete
-      // workspace and authorizes membership per request (later tasks). We do NOT
-      // call findMembership: there is no workspace yet to check against.
+      if (tokenRow.workspace_id === null) {
+        // ACCOUNT-scoped token (migration 015): bound to an account, not a single
+        // workspace. There is no route workspace to validate here — resolve to the
+        // NO_ROUTE_WORKSPACE sentinel carrying only the accountId, exactly like the
+        // browser non-`:id` path. The operation layer supplies the concrete
+        // workspace and authorizes membership per request (later tasks). We do NOT
+        // call findMembership: there is no workspace yet to check against.
+        return {
+          workspaceId: NO_ROUTE_WORKSPACE,
+          accountId: tokenRow.account_id,
+          via: "agent",
+        };
+      }
+
+      // WORKSPACE-scoped token: the caller must still be a LIVE member of the
+      // token's workspace.
+      const membership = await findMembership(
+        db,
+        tokenRow.account_id,
+        tokenRow.workspace_id,
+      );
+      if (membership === null) {
+        // Fail closed: the token authenticates, but its account is no longer
+        // a member of the token's workspace. It is the MEMBERSHIP — not the token —
+        // that grants workspace access, so a token whose membership has lapsed must
+        // NOT resolve. removeMember/leaveWorkspace also revoke a member's tokens in
+        // the same transaction (so this is normally unreachable), but gating on the
+        // LIVE membership is the actual invariant — the token is just one way to
+        // present it. 401 rather than the browser path's 404: the caller holds a
+        // real token naming its OWN workspace, so there is no cross-workspace
+        // existence to hide here — this is a plain authentication failure.
+        throw new AuthError(
+          401,
+          "token account is no longer a member of its workspace",
+        );
+      }
       return {
-        workspaceId: NO_ROUTE_WORKSPACE,
+        workspaceId: tokenRow.workspace_id,
         accountId: tokenRow.account_id,
+        role: membership.role,
         via: "agent",
       };
-    }
-
-    // WORKSPACE-scoped token: the caller must still be a LIVE member of the
-    // token's workspace.
-    const membership = await findMembership(
-      pool,
-      tokenRow.account_id,
-      tokenRow.workspace_id,
-    );
-    if (membership === null) {
-      // Fail closed: the token authenticates, but its account is no longer
-      // a member of the token's workspace. It is the MEMBERSHIP — not the token —
-      // that grants workspace access, so a token whose membership has lapsed must
-      // NOT resolve. removeMember/leaveWorkspace also revoke a member's tokens in
-      // the same transaction (so this is normally unreachable), but gating on the
-      // LIVE membership is the actual invariant — the token is just one way to
-      // present it. 401 rather than the browser path's 404: the caller holds a
-      // real token naming its OWN workspace, so there is no cross-workspace
-      // existence to hide here — this is a plain authentication failure.
-      throw new AuthError(
-        401,
-        "token account is no longer a member of its workspace",
-      );
-    }
-    return {
-      workspaceId: tokenRow.workspace_id,
-      accountId: tokenRow.account_id,
-      role: membership.role,
-      via: "agent",
-    };
+    },
+  );
+  if (agentTenant !== null) {
+    return agentTenant;
   }
 
   // 3. Self-host TEAM_TOKEN. Constant-time compare; unconfigured TEAM_TOKEN
   //    never matches. Scope is the single ALLOWED_WORKSPACE, looked up by slug.
   if (timingSafeCompare(bearer, config.TEAM_TOKEN)) {
     const slug = config.ALLOWED_WORKSPACE;
-    const ws =
-      slug !== undefined ? await findWorkspaceBySlug(pool, slug) : null;
-    if (ws === null) {
+    if (slug !== undefined && selfHostWorkspace?.slug !== slug) {
+      // First resolution (or the configured slug changed): one transaction to
+      // learn the boot-seeded workspace id, memoized for every later request.
+      const ws = await withContext(pool, { kind: "auth" }, (db) =>
+        findWorkspaceBySlug(db, slug),
+      );
+      if (ws !== null) {
+        selfHostWorkspace = { slug, id: ws.id };
+      }
+    }
+    const cached = selfHostWorkspace;
+    if (slug === undefined || cached === undefined || cached.slug !== slug) {
       // The team token is valid but its workspace was never seeded (boot seeds
       // it on startup). Treat as a server-misconfiguration auth failure.
       throw new AuthError(401, "self-host workspace not provisioned");
     }
     // Full access, no per-account identity.
-    return { workspaceId: ws.id, via: "team" };
+    return { workspaceId: cached.id, via: "team" };
   }
 
   // --- 4. Nothing matched -------------------------------------------------

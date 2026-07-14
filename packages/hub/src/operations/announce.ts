@@ -30,9 +30,9 @@ import {
   listMembers,
 } from "../repo.js";
 import { resolveSession } from "../sessionScope.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { ValidationError } from "../errors.js";
-import { type TenantContext } from "../tenant.js";
+import { contextForTenant, type TenantContext } from "../tenant.js";
 
 /** The name a member is shown under in feeds and matched by as a target. */
 function memberLabel(m: MemberSummaryT): string {
@@ -80,7 +80,7 @@ export async function announce(
     );
   }
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
     // Resolve + authorize the session as the FIRST statement (no second
     // connection). resolveSession handles both credential kinds; a session the
     // caller may not reach throws UnknownSessionError (→ 404), the cross-tenant

@@ -22,7 +22,7 @@ import {
   replaceChangeRecords,
   addMembership,
 } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import { initContext, resetContext } from "../../src/context.js";
 import { leave } from "../../src/operations/leave.js";
 import { UnknownSessionError } from "../../src/errors.js";
@@ -60,15 +60,15 @@ async function seedAgentAndSession(
   opts: { suffix?: string } = {},
 ): Promise<{ agentId: string; agentName: string; sessionId: string }> {
   const suffix = opts.suffix ?? Math.random().toString(36).slice(2, 8);
-  return withTransaction(pool, async (tx) => {
-    const agent = await createAgent(tx, {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (db) => {
+    const agent = await createAgent(db, {
       workspaceId,
       name: `agent-${suffix}`,
       human: "alice",
       program: `my-prog-${suffix}`,
       model: "claude-3",
     });
-    const session = await createSession(tx, {
+    const session = await createSession(db, {
       workspaceId,
       agentId: agent.id,
       repo: "my-repo",
@@ -93,7 +93,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
       ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
-    tenant = { workspaceId };
+    tenant = { workspaceId, via: "team" };
     initContext({ pool, config: TEST_CONFIG });
   });
 
@@ -111,8 +111,8 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     const owner = await seedAgentAndSession(pool, { suffix: "owner" });
     const peer = await seedAgentAndSession(pool, { suffix: "peer" });
 
-    await withTransaction(pool, (tx) =>
-      insertWorkItem(tx, {
+    await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      insertWorkItem(db, {
         workspaceId,
         sessionId: owner.sessionId,
         repo: "my-repo",
@@ -124,13 +124,13 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     );
 
     // Visible before leaving (owner is freshly heart-beaten).
-    const before = await listActiveClaims(
+    const before = await withContext(
       pool,
-      workspaceId,
-      "my-repo",
-      now,
-      STALE_AFTER_SECONDS,
-      { excludeSessionId: peer.sessionId },
+      { kind: "workspace", workspaceId },
+      (db) =>
+        listActiveClaims(db, workspaceId, "my-repo", now, STALE_AFTER_SECONDS, {
+          excludeSessionId: peer.sessionId,
+        }),
     );
     expect(before).toHaveLength(1);
 
@@ -138,13 +138,13 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     expect(result).toEqual({ ok: true });
 
     // Hidden after leaving — the owner now reads as offline.
-    const after = await listActiveClaims(
+    const after = await withContext(
       pool,
-      workspaceId,
-      "my-repo",
-      now,
-      STALE_AFTER_SECONDS,
-      { excludeSessionId: peer.sessionId },
+      { kind: "workspace", workspaceId },
+      (db) =>
+        listActiveClaims(db, workspaceId, "my-repo", now, STALE_AFTER_SECONDS, {
+          excludeSessionId: peer.sessionId,
+        }),
     );
     expect(after).toHaveLength(0);
   });
@@ -153,16 +153,19 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     const now = new Date();
     const owner = await seedAgentAndSession(pool, { suffix: "owner2" });
 
-    const workItemId = await withTransaction(pool, (tx) =>
-      insertWorkItem(tx, {
-        workspaceId,
-        sessionId: owner.sessionId,
-        repo: "my-repo",
-        intentText: "auth work",
-        pathGlobs: ["src/auth/**"],
-        ttlSeconds: 1800,
-        expiresAt: secsFromNow(now, 1800),
-      }),
+    const workItemId = await withContext(
+      pool,
+      { kind: "workspace", workspaceId },
+      (db) =>
+        insertWorkItem(db, {
+          workspaceId,
+          sessionId: owner.sessionId,
+          repo: "my-repo",
+          intentText: "auth work",
+          pathGlobs: ["src/auth/**"],
+          ttlSeconds: 1800,
+          expiresAt: secsFromNow(now, 1800),
+        }),
     );
 
     await leave({ sessionId: owner.sessionId }, tenant);
@@ -178,8 +181,8 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
   it("does NOT clear the session's change records", async () => {
     const owner = await seedAgentAndSession(pool, { suffix: "owner3" });
 
-    await withTransaction(pool, (tx) =>
-      replaceChangeRecords(tx, {
+    await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      replaceChangeRecords(db, {
         agentId: owner.agentId,
         agentName: owner.agentName,
         workspaceId,
@@ -233,8 +236,8 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
   // an account-scoped token (no route workspace), expiring presence for the
   // session's OWN workspace.
   it("account-scoped member: leave expires presence for the session's workspace", async () => {
-    await withTransaction(pool, (tx) =>
-      addMembership(tx, {
+    await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      addMembership(db, {
         workspaceId,
         accountId: "acct-member",
         role: "member",
@@ -242,8 +245,8 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     );
     const now = new Date();
     const owner = await seedAgentAndSession(pool, { suffix: "acct" });
-    await withTransaction(pool, (tx) =>
-      insertWorkItem(tx, {
+    await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      insertWorkItem(db, {
         workspaceId,
         sessionId: owner.sessionId,
         repo: "my-repo",
@@ -263,13 +266,13 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     expect(result).toEqual({ ok: true });
 
     // The owner now reads as offline — its live claim disappears from the repo.
-    const after = await listActiveClaims(
+    const after = await withContext(
       pool,
-      workspaceId,
-      "my-repo",
-      now,
-      STALE_AFTER_SECONDS,
-      { excludeSessionId: "00000000-0000-0000-0000-000000000000" },
+      { kind: "workspace", workspaceId },
+      (db) =>
+        listActiveClaims(db, workspaceId, "my-repo", now, STALE_AFTER_SECONDS, {
+          excludeSessionId: "00000000-0000-0000-0000-000000000000",
+        }),
     );
     expect(after).toHaveLength(0);
   });
@@ -282,22 +285,26 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
     );
     const otherWs = wsRows[0]!.id;
     // Seed an agent + session directly under the OTHER workspace.
-    const otherSessionId = await withTransaction(pool, async (tx) => {
-      const agent = await createAgent(tx, {
-        workspaceId: otherWs,
-        name: "outsider-agent",
-        human: "outsider",
-        program: "claude",
-        model: "claude-3",
-      });
-      const session = await createSession(tx, {
-        workspaceId: otherWs,
-        agentId: agent.id,
-        repo: "my-repo",
-        branch: "main",
-      });
-      return session.id;
-    });
+    const otherSessionId = await withContext(
+      pool,
+      { kind: "workspace", workspaceId: otherWs },
+      async (db) => {
+        const agent = await createAgent(db, {
+          workspaceId: otherWs,
+          name: "outsider-agent",
+          human: "outsider",
+          program: "claude",
+          model: "claude-3",
+        });
+        const session = await createSession(db, {
+          workspaceId: otherWs,
+          agentId: agent.id,
+          repo: "my-repo",
+          branch: "main",
+        });
+        return session.id;
+      },
+    );
     const before = await pool.query<{ last_heartbeat_at: Date }>(
       `SELECT last_heartbeat_at FROM sessions WHERE id = $1`,
       [otherSessionId],

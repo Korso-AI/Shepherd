@@ -18,7 +18,7 @@ import {
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
-import { withTransaction } from "../src/db.js";
+import { withContext } from "../src/scopedDb.js";
 import {
   maybePruneRetention,
   __resetRetentionThrottle,
@@ -44,197 +44,190 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   };
 }
 
-describe.skipIf(!dbAvailable)(
-  "announcement retention prune (DB-gated)",
-  () => {
-    let pool: pg.Pool;
-    let workspaceId: string;
-    let sessionId: string;
+describe.skipIf(!dbAvailable)("announcement retention prune (DB-gated)", () => {
+  let pool: pg.Pool;
+  let workspaceId: string;
+  let sessionId: string;
 
-    beforeAll(async () => {
-      pool = createTestPool();
-      await runTestMigrations(pool);
-    });
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
 
-    /** Seed workspace + agent + session fresh for each test (truncateAll clears them). */
-    async function seedSession(): Promise<void> {
-      const { rows: ws } = await pool.query<{ id: string }>(
-        `INSERT INTO workspaces (slug, name, created_by) VALUES ('ret-ws', 'ret-ws', 'tester')
+  /** Seed workspace + agent + session fresh for each test (truncateAll clears them). */
+  async function seedSession(): Promise<void> {
+    const { rows: ws } = await pool.query<{ id: string }>(
+      `INSERT INTO workspaces (slug, name, created_by) VALUES ('ret-ws', 'ret-ws', 'tester')
          ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      );
-      workspaceId = ws[0]!.id;
-      const { rows: agents } = await pool.query<{ id: string }>(
-        `INSERT INTO agents (workspace_id, name, human, program, model)
+    );
+    workspaceId = ws[0]!.id;
+    const { rows: agents } = await pool.query<{ id: string }>(
+      `INSERT INTO agents (workspace_id, name, human, program, model)
          VALUES ($1, 'ret-agent', 'alice', 'prog', 'model') RETURNING id`,
-        [workspaceId],
-      );
-      const { rows: sessions } = await pool.query<{ id: string }>(
-        `INSERT INTO sessions (workspace_id, agent_id, repo, branch)
+      [workspaceId],
+    );
+    const { rows: sessions } = await pool.query<{ id: string }>(
+      `INSERT INTO sessions (workspace_id, agent_id, repo, branch)
          VALUES ($1, $2, 'ret-repo', 'main') RETURNING id`,
-        [workspaceId, agents[0]!.id],
-      );
-      sessionId = sessions[0]!.id;
-    }
+      [workspaceId, agents[0]!.id],
+    );
+    sessionId = sessions[0]!.id;
+  }
 
-    /** Insert an announcement `ageDays` old (+ a delivery row); returns its id. */
-    async function seedAnnouncement(
-      ageDays: number,
-      withDelivery = true,
-    ): Promise<string> {
-      const { rows } = await pool.query<{ id: string }>(
-        `INSERT INTO announcements (workspace_id, repo, from_session_id, body, created_at)
+  /** Insert an announcement `ageDays` old (+ a delivery row); returns its id. */
+  async function seedAnnouncement(
+    ageDays: number,
+    withDelivery = true,
+  ): Promise<string> {
+    const { rows } = await pool.query<{ id: string }>(
+      `INSERT INTO announcements (workspace_id, repo, from_session_id, body, created_at)
          VALUES ($1, 'ret-repo', $2, 'hello', now() - ($3 * interval '1 day'))
          RETURNING id`,
-        [workspaceId, sessionId, ageDays],
-      );
-      const id = rows[0]!.id;
-      if (withDelivery) {
-        await pool.query(
-          `INSERT INTO announcement_deliveries (session_id, announcement_id)
+      [workspaceId, sessionId, ageDays],
+    );
+    const id = rows[0]!.id;
+    if (withDelivery) {
+      await pool.query(
+        `INSERT INTO announcement_deliveries (session_id, announcement_id)
            VALUES ($1, $2)`,
-          [sessionId, id],
-        );
-      }
-      return id;
-    }
-
-    async function runPrune(config: Config, now = new Date()): Promise<void> {
-      await withTransaction(pool, async (tx) => {
-        await maybePruneRetention(tx, config, workspaceId, now);
-      });
-    }
-
-    async function remainingIds(): Promise<string[]> {
-      const { rows } = await pool.query<{ id: string }>(
-        `SELECT id FROM announcements WHERE workspace_id = $1 ORDER BY id`,
-        [workspaceId],
+        [sessionId, id],
       );
-      return rows.map((r) => r.id);
     }
+    return id;
+  }
 
-    async function deliveryCount(): Promise<number> {
-      const { rows } = await pool.query<{ count: string }>(
-        `SELECT count(*) AS count FROM announcement_deliveries`,
-      );
-      return Number(rows[0]!.count);
-    }
-
-    afterEach(async () => {
-      __resetRetentionThrottle();
-      await truncateAll(pool);
-      await pool.query(`DELETE FROM workspaces WHERE slug = 'ret-ws'`);
+  async function runPrune(config: Config, now = new Date()): Promise<void> {
+    await withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
+      await maybePruneRetention(tx, config, workspaceId, now);
     });
+  }
 
-    afterAll(async () => {
-      await pool.end();
-    });
+  async function remainingIds(): Promise<string[]> {
+    const { rows } = await pool.query<{ id: string }>(
+      `SELECT id FROM announcements WHERE workspace_id = $1 ORDER BY id`,
+      [workspaceId],
+    );
+    return rows.map((r) => r.id);
+  }
 
-    it("prunes past the 30-day default window (with delivery rows), keeps fresh rows", async () => {
-      await seedSession();
-      const stale = await seedAnnouncement(40);
-      const fresh = await seedAnnouncement(1);
+  async function deliveryCount(): Promise<number> {
+    const { rows } = await pool.query<{ count: string }>(
+      `SELECT count(*) AS count FROM announcement_deliveries`,
+    );
+    return Number(rows[0]!.count);
+  }
 
-      await runPrune(makeConfig());
+  afterEach(async () => {
+    __resetRetentionThrottle();
+    await truncateAll(pool);
+    await pool.query(`DELETE FROM workspaces WHERE slug = 'ret-ws'`);
+  });
 
-      const left = await remainingIds();
-      expect(left).toContain(fresh);
-      expect(left).not.toContain(stale);
-      // Only the fresh announcement's delivery row survives.
-      expect(await deliveryCount()).toBe(1);
-    });
+  afterAll(async () => {
+    await pool.end();
+  });
 
-    it("a live entitlements row with retention_days = 365 keeps both", async () => {
-      await seedSession();
-      await pool.query(
-        `INSERT INTO workspace_entitlements (workspace_id, retention_days) VALUES ($1, 365)`,
-        [workspaceId],
-      );
-      await seedAnnouncement(40);
-      await seedAnnouncement(1);
+  it("prunes past the 30-day default window (with delivery rows), keeps fresh rows", async () => {
+    await seedSession();
+    const stale = await seedAnnouncement(40);
+    const fresh = await seedAnnouncement(1);
 
-      await runPrune(makeConfig());
-      expect(await remainingIds()).toHaveLength(2);
-    });
+    await runPrune(makeConfig());
 
-    it("a null retention cap in a live row means never prune", async () => {
-      await seedSession();
-      await pool.query(
-        `INSERT INTO workspace_entitlements (workspace_id, retention_days) VALUES ($1, NULL)`,
-        [workspaceId],
-      );
-      await seedAnnouncement(400);
+    const left = await remainingIds();
+    expect(left).toContain(fresh);
+    expect(left).not.toContain(stale);
+    // Only the fresh announcement's delivery row survives.
+    expect(await deliveryCount()).toBe(1);
+  });
 
-      await runPrune(makeConfig());
-      expect(await remainingIds()).toHaveLength(1);
-    });
+  it("a live entitlements row with retention_days = 365 keeps both", async () => {
+    await seedSession();
+    await pool.query(
+      `INSERT INTO workspace_entitlements (workspace_id, retention_days) VALUES ($1, 365)`,
+      [workspaceId],
+    );
+    await seedAnnouncement(40);
+    await seedAnnouncement(1);
 
-    it("an EXPIRED entitlements row falls back to the default window", async () => {
-      await seedSession();
-      await pool.query(
-        `INSERT INTO workspace_entitlements (workspace_id, retention_days, expires_at)
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(2);
+  });
+
+  it("a null retention cap in a live row means never prune", async () => {
+    await seedSession();
+    await pool.query(
+      `INSERT INTO workspace_entitlements (workspace_id, retention_days) VALUES ($1, NULL)`,
+      [workspaceId],
+    );
+    await seedAnnouncement(400);
+
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(1);
+  });
+
+  it("an EXPIRED entitlements row falls back to the default window", async () => {
+    await seedSession();
+    await pool.query(
+      `INSERT INTO workspace_entitlements (workspace_id, retention_days, expires_at)
          VALUES ($1, 365, now() - interval '1 day')`,
-        [workspaceId],
-      );
-      const stale = await seedAnnouncement(40);
-      const fresh = await seedAnnouncement(1);
+      [workspaceId],
+    );
+    const stale = await seedAnnouncement(40);
+    const fresh = await seedAnnouncement(1);
 
-      await runPrune(makeConfig());
+    await runPrune(makeConfig());
 
-      const left = await remainingIds();
-      expect(left).toContain(fresh);
-      expect(left).not.toContain(stale);
-    });
+    const left = await remainingIds();
+    expect(left).toContain(fresh);
+    expect(left).not.toContain(stale);
+  });
 
-    it("never prunes with ENTITLEMENTS_DEFAULT_LIMITS unset", async () => {
-      await seedSession();
-      await seedAnnouncement(400);
+  it("never prunes with ENTITLEMENTS_DEFAULT_LIMITS unset", async () => {
+    await seedSession();
+    await seedAnnouncement(400);
 
-      await runPrune(makeConfig({ ENTITLEMENTS_DEFAULT_LIMITS: undefined }));
-      expect(await remainingIds()).toHaveLength(1);
-    });
+    await runPrune(makeConfig({ ENTITLEMENTS_DEFAULT_LIMITS: undefined }));
+    expect(await remainingIds()).toHaveLength(1);
+  });
 
-    it("throttles to once per workspace per hour; __resetRetentionThrottle re-arms it", async () => {
-      await seedSession();
-      await seedAnnouncement(40);
+  it("throttles to once per workspace per hour; __resetRetentionThrottle re-arms it", async () => {
+    await seedSession();
+    await seedAnnouncement(40);
 
-      await runPrune(makeConfig());
-      expect(await remainingIds()).toHaveLength(0);
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(0);
 
-      // A second stale row within the hour is NOT pruned (throttled skip).
-      await seedAnnouncement(50);
-      await runPrune(makeConfig());
-      expect(await remainingIds()).toHaveLength(1);
+    // A second stale row within the hour is NOT pruned (throttled skip).
+    await seedAnnouncement(50);
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(1);
 
-      // After a reset (standing in for the hour lapsing) it prunes again.
-      __resetRetentionThrottle();
-      await runPrune(makeConfig());
-      expect(await remainingIds()).toHaveLength(0);
-    });
+    // After a reset (standing in for the hour lapsing) it prunes again.
+    __resetRetentionThrottle();
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(0);
+  });
 
-    it(
-      "one pass deletes at most the batch bound; the rest drains later",
-      async () => {
-        await seedSession();
-        const surplus = 20;
-        const total = ANNOUNCEMENT_PRUNE_BATCH_LIMIT + surplus;
-        // Bulk-seed stale announcements (no deliveries — bulk keeps this fast).
-        await pool.query(
-          `INSERT INTO announcements (workspace_id, repo, from_session_id, body, created_at)
+  it("one pass deletes at most the batch bound; the rest drains later", async () => {
+    await seedSession();
+    const surplus = 20;
+    const total = ANNOUNCEMENT_PRUNE_BATCH_LIMIT + surplus;
+    // Bulk-seed stale announcements (no deliveries — bulk keeps this fast).
+    await pool.query(
+      `INSERT INTO announcements (workspace_id, repo, from_session_id, body, created_at)
            SELECT $1, 'ret-repo', $2, 'bulk', now() - interval '40 days'
            FROM generate_series(1, $3)`,
-          [workspaceId, sessionId, total],
-        );
-
-        await runPrune(makeConfig());
-        expect(await remainingIds()).toHaveLength(surplus);
-
-        // The hourly throttle owns the drain cadence; once it re-arms, the
-        // next pass finishes the backlog.
-        __resetRetentionThrottle();
-        await runPrune(makeConfig());
-        expect(await remainingIds()).toHaveLength(0);
-      },
-      20000,
+      [workspaceId, sessionId, total],
     );
-  },
-);
+
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(surplus);
+
+    // The hourly throttle owns the drain cadence; once it re-arms, the
+    // next pass finishes the backlog.
+    __resetRetentionThrottle();
+    await runPrune(makeConfig());
+    expect(await remainingIds()).toHaveLength(0);
+  }, 20000);
+});

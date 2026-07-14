@@ -19,6 +19,7 @@ import { DEFAULT_UNCOMMITTED_GRACE_SECONDS } from "../config.js";
 import { assertRepoAllowed } from "../entitlements.js";
 import { ValidationError, AuthError, HubError } from "../errors.js";
 import {
+  contextForTenant,
   requireWorkspaceId,
   requireAccountId,
   NO_ROUTE_WORKSPACE,
@@ -36,7 +37,7 @@ import {
   getAccountProfile,
   type AgentRow,
 } from "../repo.js";
-import { withTransaction } from "../db.js";
+import { withContext, type DbContext } from "../scopedDb.js";
 
 /** True when the pg error is a unique-constraint violation (SQLSTATE 23505). */
 function isUniqueViolation(
@@ -137,22 +138,35 @@ export async function join(
   let workspaceId: string;
   if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
     const accountId = requireAccountId(tenant);
-    const ws = await findWorkspaceBySlug(pool, input.workspace);
-    if (ws === null) {
-      throw new AuthError(404, "workspace not found");
-    }
-    const membership = await findMembership(pool, accountId, ws.id);
-    if (membership === null) {
-      // Same 404 (and identical message) as the unknown-slug case above: a
-      // non-member must not be able to distinguish "exists but you're not in it"
-      // from "doesn't exist", or an authenticated account-token holder could
-      // enumerate which workspace slugs exist on the hub.
-      throw new AuthError(404, "workspace not found");
-    }
-    workspaceId = ws.id;
+    // Resolve the slug in ACCOUNT context: a workspace the account is not a
+    // member of is invisible (migration 021's account arm on `workspaces`), so
+    // findWorkspaceBySlug returns null for it and the unknown-slug 404 below
+    // fires identically — the membership check that follows STAYS as the
+    // backstop for the pre-021 world and any non-RLS-covered read.
+    workspaceId = await withContext(
+      pool,
+      { kind: "account", accountId },
+      async (db) => {
+        const ws = await findWorkspaceBySlug(db, input.workspace);
+        if (ws === null) {
+          throw new AuthError(404, "workspace not found");
+        }
+        const membership = await findMembership(db, accountId, ws.id);
+        if (membership === null) {
+          // Same 404 (and identical message) as the unknown-slug case above: a
+          // non-member must not be able to distinguish "exists but you're not in it"
+          // from "doesn't exist", or an authenticated account-token holder could
+          // enumerate which workspace slugs exist on the hub.
+          throw new AuthError(404, "workspace not found");
+        }
+        return ws.id;
+      },
+    );
   } else {
     workspaceId = requireWorkspaceId(tenant);
-    const ws = await findWorkspaceById(pool, workspaceId);
+    const ws = await withContext(pool, contextForTenant(tenant), (db) =>
+      findWorkspaceById(db, workspaceId),
+    );
     if (ws === null || input.workspace !== ws.slug) {
       if (tenant.accountId === undefined) {
         throw new ValidationError(
@@ -174,7 +188,14 @@ export async function join(
   // keeps the client-supplied `human`.
   let human = input.human;
   if (tenant.accountId !== undefined) {
-    const profile = await getAccountProfile(pool, tenant.accountId);
+    const accountId = tenant.accountId;
+    // Read the profile in the caller-shaped context (account context for an
+    // account-scoped token with no route workspace yet, workspace context for
+    // a concrete-workspace credential) — exactly the one mapping
+    // contextForTenant encodes.
+    const profile = await withContext(pool, contextForTenant(tenant), (db) =>
+      getAccountProfile(db, accountId),
+    );
     const identity =
       profile?.github_login ??
       profile?.display_name ??
@@ -188,7 +209,31 @@ export async function join(
   const now = new Date();
   const handle = normalizeHandle(human);
 
-  return withTransaction(pool, async (tx) => {
+  // Main transaction — the workspace is CONCRETE now (resolved above), so every
+  // write runs under workspace context regardless of the credential kind.
+  const mainContext: DbContext = {
+    kind: "workspace",
+    workspaceId,
+    ...(tenant.accountId !== undefined ? { accountId: tenant.accountId } : {}),
+  };
+  return withContext(pool, mainContext, async (tx) => {
+    // Account-scoped path: re-verify LIVE membership inside the WRITING
+    // transaction. The slug→workspace validation above ran in its own
+    // transaction, so a revocation committing in the gap would otherwise still
+    // land this join — and once the Phase 2 policies exist, it is this
+    // transaction's workspace-context GUC (not live membership) that they
+    // trust. Same 404 as the resolution above (no existence disclosure).
+    if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
+      const membership = await findMembership(
+        tx,
+        requireAccountId(tenant),
+        workspaceId,
+      );
+      if (membership === null) {
+        throw new AuthError(404, "workspace not found");
+      }
+    }
+
     // Canonicalize repo HERE, at the single ingestion point — repo is the
     // coordination boundary and the hub owns it. Every downstream row
     // (work_items, announcements, change_records) derives its repo from this

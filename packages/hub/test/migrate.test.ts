@@ -6,7 +6,7 @@ import {
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
-import { runMigrations } from "../src/migrate.js";
+import { runMigrations, assertMigrationsCurrent } from "../src/migrate.js";
 
 /**
  * Seed (idempotently) a workspace and return its uuid. Coordination tables
@@ -579,6 +579,48 @@ describe.skipIf(!dbAvailable)("migrate 015 — account-scoped tokens", () => {
     expect(rows[0]!.is_nullable).toBe("YES");
   });
 });
+
+describe.skipIf(!dbAvailable)(
+  "assertMigrationsCurrent — split-database boot guard",
+  () => {
+    let pool: pg.Pool;
+
+    beforeAll(async () => {
+      pool = createTestPool();
+      await runTestMigrations(pool);
+    });
+
+    afterAll(async () => {
+      await pool.end();
+    });
+
+    it("passes on the database the migrations ran against", async () => {
+      await expect(assertMigrationsCurrent(pool)).resolves.toBeUndefined();
+    });
+
+    it("fails loudly when the serving database is missing a migration", async () => {
+      // Simulate the split-database boot (migrations landed elsewhere) by
+      // removing the newest recorded version, then restore it.
+      const { rows } = await pool.query<{ version: string }>(
+        "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1",
+      );
+      const newest = rows[0]!.version;
+      await pool.query("DELETE FROM schema_migrations WHERE version = $1", [
+        newest,
+      ]);
+      try {
+        await expect(assertMigrationsCurrent(pool)).rejects.toThrow(
+          new RegExp(`missing applied migrations: .*${newest}`),
+        );
+      } finally {
+        await pool.query(
+          "INSERT INTO schema_migrations (version) VALUES ($1)",
+          [newest],
+        );
+      }
+    });
+  },
+);
 
 describe("migrate — pure (no Postgres needed)", () => {
   it("dbAvailable flag is a boolean", () => {

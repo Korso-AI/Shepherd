@@ -1,0 +1,16 @@
+{
+  // Test-inclusive no-emit typecheck. The build tsconfig deliberately covers
+  // `src` only, and Vitest strips types without checking them — so without
+  // this config the ~365 ScopedDb-wrapped test call sites could silently
+  // regress to raw/unscoped repo callers. `npm run check` (root) runs
+  // `tsc -p` on this file after the build (which produces the @shepherd/shared
+  // declarations it resolves against).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "test"]
+}

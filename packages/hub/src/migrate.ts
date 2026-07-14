@@ -133,6 +133,63 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
   }
 }
 
+/**
+ * Assert that every migration file is recorded as applied in THIS database.
+ *
+ * Boot calls it on the REQUEST-SERVING pool after running migrations on the
+ * (possibly different) owner connection: a valid but mistyped
+ * MIGRATIONS_DATABASE_URL would migrate one database and then serve another —
+ * schema-compatible but missing the newest migration — so the serving
+ * database must prove it carries the full set before the hub starts
+ * listening. URL-string comparison cannot give this guarantee (legitimate
+ * proxy/direct URLs for the same database differ); the recorded versions can.
+ * Fails loudly on any missing version, including a missing schema_migrations
+ * table, which aborts boot.
+ */
+export async function assertMigrationsCurrent(pool: pg.Pool): Promise<void> {
+  const expected = readMigrationFiles().map((m) => m.version);
+  let applied: Set<string>;
+  try {
+    const { rows } = await pool.query<{ version: string }>(
+      "SELECT version FROM schema_migrations",
+    );
+    applied = new Set(rows.map((r) => r.version));
+  } catch (err) {
+    throw new Error(
+      "serving database has no readable schema_migrations table — do " +
+        "DATABASE_URL and MIGRATIONS_DATABASE_URL point at the same database?",
+      { cause: err },
+    );
+  }
+  const missing = expected.filter((v) => !applied.has(v));
+  if (missing.length > 0) {
+    throw new Error(
+      `serving database is missing applied migrations: ${missing.join(", ")} — ` +
+        "DATABASE_URL and MIGRATIONS_DATABASE_URL likely point at different databases",
+    );
+  }
+}
+
+/**
+ * Format a boot-path fatal error as message + stack + cause chain, WITHOUT the
+ * error's other own properties. Boot errors can carry raw credentials: a
+ * WHATWG-invalid connection string makes pg-connection-string throw
+ * ERR_INVALID_URL, which keeps the complete input — password included — in the
+ * error's `input` property, and `console.error(err)` prints own properties
+ * into persisted logs. Stacks and messages don't embed the URL, so printing
+ * only those (walking `cause` so the underlying driver error stays visible)
+ * keeps the owner credential out of the logs.
+ */
+export function formatBootError(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const stack = err.stack ?? `${err.name}: ${err.message}`;
+  return err.cause === undefined
+    ? stack
+    : `${stack}\ncaused by: ${formatBootError(err.cause)}`;
+}
+
 // ---------------------------------------------------------------------------
 // CLI entry-point: `tsx packages/hub/src/migrate.ts`
 // ---------------------------------------------------------------------------
@@ -142,9 +199,10 @@ const isMain =
     path.resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
-  const connString = process.env["DATABASE_URL"];
+  const connString =
+    process.env["MIGRATIONS_DATABASE_URL"] ?? process.env["DATABASE_URL"];
   if (!connString) {
-    console.error("DATABASE_URL is not set");
+    console.error("MIGRATIONS_DATABASE_URL or DATABASE_URL must be set");
     process.exit(1);
   }
   const pool = createPool(connString);
@@ -153,8 +211,10 @@ if (isMain) {
       console.log("[migrate] done");
       return pool.end();
     })
-    .catch((err) => {
-      console.error("[migrate] failed:", err);
+    .catch((err: unknown) => {
+      // formatBootError, not the raw object: see its doc — the raw error can
+      // carry the full connection string.
+      console.error("[migrate] failed:", formatBootError(err));
       process.exit(1);
     });
 }

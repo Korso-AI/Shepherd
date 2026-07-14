@@ -4,12 +4,12 @@
  * EVERY SQL query lives here. Workspace scoping and the "active claim"
  * definition are enforced in exactly one place.
  *
- * Mutating functions accept a `tx` (pg.PoolClient from withTransaction) so
- * callers can compose multiple operations atomically.
- * Read-only functions (`getSession`, `listActiveClaims`) accept the pool.
+ * Every function — mutating or read-only — accepts a `Queryable`, which is now
+ * a `ScopedDb`: a transaction client whose RLS context GUCs are set. Callers
+ * compose multiple operations atomically on the one `ScopedDb` withContext
+ * hands them; an unscoped query no longer type-checks.
  */
 
-import pg from "pg";
 import type {
   ClaimT,
   AnnouncementT,
@@ -29,14 +29,14 @@ import type {
   DurationPercentilesT,
 } from "@shepherd/shared";
 import { UnknownSessionError } from "./errors.js";
+import type { ScopedDb } from "./scopedDb.js";
 
 /**
- * Anything that can run a parameterised query: the pool itself OR a checked-out
- * client (pg.PoolClient from withTransaction). Read functions accept either so
- * callers inside a transaction can pass `tx` and avoid checking out a SECOND
- * connection — see the pool-exhaustion note in operations/work.ts.
+ * Every repo function requires a ScopedDb — a transaction client whose RLS
+ * context GUCs are set (see scopedDb.ts). Only withContext mints one, so an
+ * unscoped query is a COMPILE ERROR. (Formerly `Queryable = Pool | PoolClient`.)
  */
-export type Queryable = pg.Pool | pg.PoolClient;
+export type Queryable = ScopedDb;
 
 /**
  * Max pending announcements delivered to a session in a single work/sync call.
@@ -59,8 +59,8 @@ const DELIVERY_MAX_AGE_HOURS = 48;
 // Identity & tenancy (migration 011) — lookups used by resolveTenant
 //
 // These five functions are the ONLY data access the auth/tenancy layer needs.
-// The mutating ones take a Queryable so resolveTenant can run them on the pool
-// (it never opens a transaction). The fuller management CRUD over these tables
+// resolveTenant runs them inside short auth-context transactions via
+// withContext (see tenant.ts). The fuller management CRUD over these tables
 // lives further below.
 // ---------------------------------------------------------------------------
 
@@ -238,9 +238,9 @@ export async function touchApiTokenLastUsed(
 // rows is scoped by `workspaceId` (or `accountId` for the account-scoped
 // listings) so a credential can never read or mutate another tenant's data —
 // the same isolation discipline the coordination queries above enforce.
-// Mutating functions take a Queryable so callers can compose them under
-// `withTransaction` (workspace-create is createWorkspace + addMembership in one
-// transaction; member-remove is removeMembership + revokeApiTokensForMember).
+// Mutating functions take a Queryable so callers can compose them on one
+// `withContext` ScopedDb (workspace-create is createWorkspace + addMembership in
+// one transaction; member-remove is removeMembership + revokeApiTokensForMember).
 // ---------------------------------------------------------------------------
 
 /** A full workspaces row (migration 011). */
@@ -289,7 +289,7 @@ export async function createWorkspace(
 
 /**
  * Permanently delete `workspaceId` and every row scoped to it, in ONE
- * transaction (the caller passes a `tx` from withTransaction).
+ * transaction (the caller passes the ScopedDb from withContext).
  *
  * WHY explicit ordered child-deletes rather than relying on the FKs: of the
  * tables referencing workspaces(id), only `memberships` and `invites` are
@@ -310,7 +310,7 @@ export async function createWorkspace(
  * this delete until it is added here (or given ON DELETE CASCADE in a migration).
  */
 export async function deleteWorkspaceCascade(
-  tx: pg.PoolClient,
+  tx: Queryable,
   workspaceId: string,
 ): Promise<void> {
   await tx.query(
@@ -1024,7 +1024,7 @@ export interface AgentRow {
  * may be unknown when an agent first joins. When absent/null we insert NULL.
  */
 export async function createAgent(
-  tx: pg.PoolClient,
+  tx: Queryable,
   params: {
     workspaceId: string;
     name: string;
@@ -1220,7 +1220,7 @@ export interface SessionWithAgent {
  * Insert a new session row and return it.
  */
 export async function createSession(
-  tx: pg.PoolClient,
+  tx: Queryable,
   params: {
     workspaceId: string;
     agentId: string;
@@ -1346,7 +1346,7 @@ export async function getSessionById(
  * Update a session's branch. Used when an agent switches branches mid-session.
  */
 export async function updateSessionBranch(
-  tx: pg.PoolClient,
+  tx: Queryable,
   sessionId: string,
   branch: string,
 ): Promise<void> {
@@ -1371,7 +1371,7 @@ export async function updateSessionBranch(
  * own frozen TTL — exactly the behavior the heartbeat loop wants.
  */
 export async function touchPresence(
-  tx: pg.PoolClient,
+  tx: Queryable,
   sessionId: string,
   now: Date,
 ): Promise<void> {
@@ -1397,7 +1397,7 @@ export async function touchPresence(
  * cross-tenant isolation gate, applied even on this presence-only path).
  */
 export async function expireSessionPresence(
-  tx: pg.PoolClient,
+  tx: Queryable,
   workspaceId: string,
   sessionId: string,
   asOf: Date,
@@ -1421,7 +1421,7 @@ export async function expireSessionPresence(
  * behavior is unchanged (presence + renewal in one call).
  */
 export async function touchHeartbeat(
-  tx: pg.PoolClient,
+  tx: Queryable,
   sessionId: string,
   now: Date,
 ): Promise<void> {
@@ -1446,7 +1446,7 @@ export async function touchHeartbeat(
  * Persist a new work_item row and return its id.
  */
 export async function insertWorkItem(
-  tx: pg.PoolClient,
+  tx: Queryable,
   params: {
     workspaceId: string;
     sessionId: string;
@@ -1632,7 +1632,7 @@ export async function listSessionClaims(
  * Returns rowCount (0 is fine — caller treats as idempotent success).
  */
 export async function releaseWorkItem(
-  tx: pg.PoolClient,
+  tx: Queryable,
   sessionId: string,
   workItemId: string,
   now: Date,
@@ -1657,7 +1657,7 @@ export async function releaseWorkItem(
  * Insert a new announcement and return its id (bigint serialised as number).
  */
 export async function insertAnnouncement(
-  tx: pg.PoolClient,
+  tx: Queryable,
   params: {
     workspaceId: string;
     repo: string;
@@ -1704,7 +1704,7 @@ export async function insertAnnouncement(
  * true, and `from_label` snapshots the sender identity. Returns the new id.
  */
 export async function insertAdminAnnouncement(
-  tx: pg.PoolClient,
+  tx: Queryable,
   params: {
     workspaceId: string;
     repo: string;
@@ -1788,7 +1788,7 @@ export async function listWorkspaceRepos(
  * findings (P2-2), not yet implemented.
  */
 export async function fetchPendingAnnouncements(
-  tx: pg.PoolClient,
+  tx: Queryable,
   session: SessionWithAgent,
 ): Promise<AnnouncementT[]> {
   // LEFT JOIN (not JOIN) so admin-sent rows — which have a NULL from_session_id
@@ -1855,7 +1855,7 @@ export async function fetchPendingAnnouncements(
  * No-op when announcementIds is empty.
  */
 export async function recordAnnouncementDeliveries(
-  tx: pg.PoolClient,
+  tx: Queryable,
   sessionId: string,
   announcementIds: number[],
 ): Promise<void> {
@@ -1911,7 +1911,7 @@ export async function recordAnnouncementDeliveries(
  * so all statements commit atomically.
  */
 export async function replaceChangeRecords(
-  tx: pg.PoolClient,
+  tx: Queryable,
   params: {
     agentId: string;
     agentName: string;
@@ -2388,7 +2388,7 @@ export async function getWorkspaceLandscape(
  * `(workspace_id, repo, updated_at)` applies.
  */
 export async function pruneChangeRecords(
-  tx: pg.PoolClient,
+  tx: Queryable,
   workspaceId: string,
   repo: string,
   now: Date,
@@ -2421,7 +2421,7 @@ export const ANNOUNCEMENT_PRUNE_BATCH_LIMIT = 500;
  * announcements deleted.
  */
 export async function pruneAnnouncements(
-  tx: pg.PoolClient,
+  tx: Queryable,
   workspaceId: string,
   now: Date,
   retentionDays: number,
@@ -2547,7 +2547,7 @@ export async function deleteWorkspaceEntitlements(
  * Returns the new row's uuid.
  */
 export async function insertFeedback(
-  pool: pg.Pool,
+  db: Queryable,
   params: {
     workspaceId: string | null;
     accountId: string | null;
@@ -2560,7 +2560,7 @@ export async function insertFeedback(
   },
 ): Promise<string> {
   const { workspaceId, accountId, type, body, context } = params;
-  const { rows } = await pool.query<{ id: string }>(
+  const { rows } = await db.query<{ id: string }>(
     `INSERT INTO feedback (workspace_id, account_id, type, body, context)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
@@ -2774,12 +2774,16 @@ async function durationPercentiles(
  * `liveWindowSeconds` is the presence window that counts a session as "live"
  * (the hub's STALE_AFTER_SECONDS) and drives the current-state liveSessions.
  *
- * The independent aggregate queries are fanned out in bounded sequential
- * `Promise.all` batches (totals, engagement + leaderboard, period comparison,
- * timing, then the current+previous trend series) so a single rollup never
- * demands more concurrent connections than the pool's max (10) — one flat
- * ~30-query `Promise.all` would queue behind itself and could starve concurrent
- * requests. Four of the five period KPIs are derived by summing their trend
+ * The aggregate queries are grouped in `Promise.all` batches (totals,
+ * engagement + leaderboard, period comparison, timing, then the
+ * current+previous trend series) for readability, but they all run on the ONE
+ * scoped transaction client the caller's withContext provides — node-postgres
+ * serializes queries per connection, so a rollup holds a single connection
+ * and executes its ~30 aggregates sequentially, never fanning out across the
+ * pool. (Restoring bounded multi-connection concurrency would need a
+ * per-connection scoped-context runner; deliberately not built while the
+ * rollup stays operator-only and cached for 60s — see analytics.ts.)
+ * Four of the five period KPIs are derived by summing their trend
  * series (identical table/window/predicate) rather than re-queried. Only
  * window bounds are bound as parameters (see the SQL-injection safety
  * invariant above); the leaderboard computes its per-workspace, window-scoped

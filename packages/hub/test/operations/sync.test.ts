@@ -23,7 +23,7 @@ import {
   fetchPendingAnnouncements,
   recordAnnouncementDeliveries,
 } from "../../src/repo.js";
-import { withTransaction } from "../../src/db.js";
+import { withContext } from "../../src/scopedDb.js";
 import type { TenantContext } from "../../src/tenant.js";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,7 @@ describe.skipIf(!dbAvailable)(
         ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -210,15 +210,19 @@ describe.skipIf(!dbAvailable)(
       // session's canonical repo). The real `announce` op derives repo from the
       // session, so it is always canonical; this test inserts directly, so it must
       // canonicalize itself.
-      await withTransaction(pool, async (tx) => {
-        await insertAnnouncement(tx, {
-          workspaceId,
-          repo: "repo",
-          fromSessionId: sessionA.sessionId,
-          targetAgentName: null,
-          body: "Hello from A!",
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        async (tx) => {
+          await insertAnnouncement(tx, {
+            workspaceId,
+            repo: "repo",
+            fromSessionId: sessionA.sessionId,
+            targetAgentName: null,
+            body: "Hello from A!",
+          });
+        },
+      );
 
       // First sync by B should deliver the announcement
       const firstSync = await sync({ sessionId: sessionB.sessionId }, tenant);

@@ -37,7 +37,7 @@ import {
   getAccountProfile,
   type SessionWithAgent,
 } from "../src/repo.js";
-import { withTransaction } from "../src/db.js";
+import { withContext } from "../src/scopedDb.js";
 
 // ---------------------------------------------------------------------------
 // Workspace seeding (migration 011)
@@ -142,7 +142,7 @@ async function seedAgentAndSession(
   const model = opts.model ?? "claude-3";
   const name = `agent-${suffix}`;
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
     const agent = await createAgent(tx, {
       workspaceId,
       name,
@@ -156,7 +156,11 @@ async function seedAgentAndSession(
       repo,
       branch,
     });
-    return { agentId: agent.id, agentName: agent.name, sessionId: session.id };
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      sessionId: session.id,
+    };
   });
 }
 
@@ -187,7 +191,7 @@ async function seedNamedAgentWithSession(
   const model = opts.model === undefined ? "claude-3" : opts.model;
   const withSession = opts.withSession ?? true;
 
-  return withTransaction(pool, async (tx) => {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
     const agent = await createAgent(tx, {
       workspaceId,
       name: opts.name,
@@ -248,13 +252,19 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         model: "claude-3",
       };
 
-      const created = await withTransaction(pool, (tx) =>
-        createAgent(tx, params),
+      const created = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => createAgent(tx, params),
       );
       expect(created).toHaveProperty("id");
       expect(created.name).toBe("agent-alpha");
 
-      const found = await findAgentByName(pool, wsId("acme"), "agent-alpha");
+      const found = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => findAgentByName(db, wsId("acme"), "agent-alpha"),
+      );
       expect(found).not.toBeNull();
       expect(found!.id).toBe(created.id);
       expect(found!.name).toBe("agent-alpha");
@@ -277,27 +287,36 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "req",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "fix bug",
-          pathGlobs: ["src/**/*.ts"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        });
-      });
-
-      const claims = await listActiveClaims(
+      await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: requester.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "fix bug",
+            pathGlobs: ["src/**/*.ts"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          });
         },
+      );
+
+      const claims = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: requester.sessionId,
+            },
+          ),
       );
 
       expect(claims).toHaveLength(1);
@@ -312,27 +331,36 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "self",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "self claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        });
-      });
-
-      const claims = await listActiveClaims(
+      await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: owner.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "self claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          });
         },
+      );
+
+      const claims = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: owner.sessionId,
+            },
+          ),
       );
 
       expect(claims).toHaveLength(0);
@@ -344,33 +372,45 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "ownclaims",
       });
 
-      const workItemId = await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "my own claim",
-          pathGlobs: ["src/feed/**"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      const workItemId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "my own claim",
+            pathGlobs: ["src/feed/**"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
 
       // listActiveClaims (excluding self) hides it...
-      const others = await listActiveClaims(
+      const others = await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: owner.sessionId,
-        },
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: owner.sessionId,
+            },
+          ),
       );
       expect(others).toHaveLength(0);
 
       // ...but listSessionClaims surfaces it so the agent can self-verify.
-      const mine = await listSessionClaims(pool, owner.sessionId, now);
+      const mine = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => listSessionClaims(db, owner.sessionId, now),
+      );
       expect(mine).toHaveLength(1);
       expect(mine[0]!.workItemId).toBe(workItemId);
       expect(mine[0]!.intent).toBe("my own claim");
@@ -384,34 +424,46 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       // An expired claim
-      await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "expired own claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 10,
-          expiresAt: secsAgo(now, 5),
-        }),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "expired own claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 10,
+            expiresAt: secsAgo(now, 5),
+          }),
       );
       // An active-then-released claim
-      const releasedId = await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "released own claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      const releasedId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "released own claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
-      await withTransaction(pool, (tx) =>
-        releaseWorkItem(tx, owner.sessionId, releasedId, now),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => releaseWorkItem(tx, owner.sessionId, releasedId, now),
       );
 
-      const mine = await listSessionClaims(pool, owner.sessionId, now);
+      const mine = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => listSessionClaims(db, owner.sessionId, now),
+      );
       expect(mine).toHaveLength(0);
     });
 
@@ -424,28 +476,37 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "viewer",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "old claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 10,
-          // expired 5 seconds ago
-          expiresAt: secsAgo(now, 5),
-        });
-      });
-
-      const claims = await listActiveClaims(
+      await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: viewer.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "old claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 10,
+            // expired 5 seconds ago
+            expiresAt: secsAgo(now, 5),
+          });
         },
+      );
+
+      const claims = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: viewer.sessionId,
+            },
+          ),
       );
 
       expect(claims).toHaveLength(0);
@@ -464,17 +525,21 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "viewer2",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "stale-session claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 9999,
-          expiresAt: secsFromNow(now, 9999),
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "stale-session claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 9999,
+            expiresAt: secsFromNow(now, 9999),
+          });
+        },
+      );
 
       // Owner session hasn't heart-beaten in longer than the stale window: even
       // though the claim's TTL is nowhere near expiry, it must now be hidden.
@@ -483,15 +548,20 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         [secsAgo(now, STALE_AFTER_SECONDS + 1), owner.sessionId],
       );
 
-      const claims = await listActiveClaims(
+      const claims = await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: viewer.sessionId,
-        },
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: viewer.sessionId,
+            },
+          ),
       );
 
       expect(claims).toHaveLength(0);
@@ -508,27 +578,36 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "viewer3",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "fresh-session claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 9999,
-          expiresAt: secsFromNow(now, 9999),
-        });
-      });
-
-      const claims = await listActiveClaims(
+      await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: viewer.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "fresh-session claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 9999,
+            expiresAt: secsFromNow(now, 9999),
+          });
         },
+      );
+
+      const claims = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: viewer.sessionId,
+            },
+          ),
       );
 
       expect(claims).toHaveLength(1);
@@ -549,31 +628,37 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       let workItemIdShort: string;
       let workItemIdLong: string;
 
-      await withTransaction(pool, async (tx) => {
-        workItemIdShort = await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId,
-          repo: "my-repo",
-          intentText: "short ttl claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 60,
-          expiresAt: secsFromNow(now, 60),
-        });
-        workItemIdLong = await insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId,
-          repo: "my-repo",
-          intentText: "long ttl claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 3600,
-          expiresAt: secsFromNow(now, 3600),
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          workItemIdShort = await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId,
+            repo: "my-repo",
+            intentText: "short ttl claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 60,
+            expiresAt: secsFromNow(now, 60),
+          });
+          workItemIdLong = await insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId,
+            repo: "my-repo",
+            intentText: "long ttl claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 3600,
+            expiresAt: secsFromNow(now, 3600),
+          });
+        },
+      );
 
       // Advance time by 30 seconds and touch heartbeat.
       const renewalTime = secsFromNow(now, 30);
-      await withTransaction(pool, (tx) =>
-        touchHeartbeat(tx, sessionId, renewalTime),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => touchHeartbeat(tx, sessionId, renewalTime),
       );
 
       // Check that each claim's expires_at = renewalTime + its own ttl.
@@ -617,16 +702,19 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       const originalExpiry = secsFromNow(now, 300);
-      await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId,
-          repo: "my-repo",
-          intentText: "presence claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: originalExpiry,
-        }),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId,
+            repo: "my-repo",
+            intentText: "presence claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: originalExpiry,
+          }),
       );
 
       // Backdate heartbeat so we can detect the bump.
@@ -643,8 +731,10 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       expect(before.rows).toHaveLength(1);
 
       const presenceTime = secsFromNow(now, 30);
-      await withTransaction(pool, (tx) =>
-        touchPresence(tx, sessionId, presenceTime),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => touchPresence(tx, sessionId, presenceTime),
       );
 
       // Heartbeat bumped to presenceTime.
@@ -677,16 +767,19 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "tp2viewer",
       });
 
-      await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "lapsing claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 60,
-          expiresAt: secsFromNow(now, 60),
-        }),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "lapsing claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 60,
+            expiresAt: secsFromNow(now, 60),
+          }),
       );
 
       // Backdate the claim's expires_at past its TTL (touchPresence will NOT renew).
@@ -696,19 +789,26 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       // touchPresence proves liveness but must NOT renew the claim.
-      await withTransaction(pool, (tx) =>
-        touchPresence(tx, owner.sessionId, now),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => touchPresence(tx, owner.sessionId, now),
       );
 
-      const claims = await listActiveClaims(
+      const claims = await withContext(
         pool,
-        wsId("acme"),
-        "my-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: viewer.sessionId,
-        },
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("acme"),
+            "my-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: viewer.sessionId,
+            },
+          ),
       );
       expect(claims).toHaveLength(0);
     });
@@ -727,24 +827,30 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "recip",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null, // broadcast
-          body: "hello everyone",
-        });
-      });
-
-      const recipientSession = await getSession(
+      await withContext(
         pool,
-        wsId("acme"),
-        recipient.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null, // broadcast
+            body: "hello everyone",
+          });
+        },
       );
 
-      const announcements = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipientSession),
+      const recipientSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipient.sessionId),
+      );
+
+      const announcements = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
 
       expect(announcements).toHaveLength(1);
@@ -761,22 +867,26 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "stalerecip",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "stale broadcast",
-        });
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "still-fresh broadcast",
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "stale broadcast",
+          });
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "still-fresh broadcast",
+          });
+        },
+      );
       // Backdate: a brand-new session must NOT replay history older than the
       // 48h window as if it were current coordination state.
       await pool.query(
@@ -788,13 +898,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
          WHERE body = 'still-fresh broadcast'`,
       );
 
-      const recipientSession = await getSession(
+      const recipientSession = await withContext(
         pool,
-        wsId("acme"),
-        recipient.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
-      const announcements = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipientSession),
+      const announcements = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
 
       expect(announcements.map((a) => a.body)).toEqual([
@@ -808,24 +920,30 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "selfannounce",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "I am talking to myself",
-        });
-      });
-
-      const senderSession = await getSession(
+      await withContext(
         pool,
-        wsId("acme"),
-        sender.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "I am talking to myself",
+          });
+        },
       );
 
-      const announcements = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, senderSession),
+      const senderSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), sender.sessionId),
+      );
+
+      const announcements = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, senderSession),
       );
 
       expect(announcements).toHaveLength(0);
@@ -843,35 +961,43 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "bystander",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: target.agentName,
-          body: "targeted message",
-        });
-      });
-
-      const targetSession = await getSession(
+      await withContext(
         pool,
-        wsId("acme"),
-        target.sessionId,
-      );
-      const bystanderSession = await getSession(
-        pool,
-        wsId("acme"),
-        bystander.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: target.agentName,
+            body: "targeted message",
+          });
+        },
       );
 
-      const targetAnnouncements = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, targetSession),
+      const targetSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), target.sessionId),
+      );
+      const bystanderSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), bystander.sessionId),
+      );
+
+      const targetAnnouncements = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, targetSession),
       );
       expect(targetAnnouncements).toHaveLength(1);
       expect(targetAnnouncements[0]!.body).toBe("targeted message");
 
-      const bystanderAnnouncements = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, bystanderSession),
+      const bystanderAnnouncements = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, bystanderSession),
       );
       expect(bystanderAnnouncements).toHaveLength(0);
     });
@@ -886,38 +1012,49 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       let announcementId: number;
-      await withTransaction(pool, async (tx) => {
-        announcementId = await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "deliver once",
-        });
-      });
-
-      const recipientSession = await getSession(
+      await withContext(
         pool,
-        wsId("acme"),
-        recipient.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          announcementId = await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "deliver once",
+          });
+        },
+      );
+
+      const recipientSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       // First fetch — should have 1 announcement.
-      const first = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipientSession),
+      const first = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
       expect(first).toHaveLength(1);
 
       // Record delivery.
-      await withTransaction(pool, (tx) =>
-        recordAnnouncementDeliveries(tx, recipient.sessionId, [
-          announcementId!,
-        ]),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          recordAnnouncementDeliveries(tx, recipient.sessionId, [
+            announcementId!,
+          ]),
       );
 
       // Second fetch — should be empty.
-      const second = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipientSession),
+      const second = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
       expect(second).toHaveLength(0);
     });
@@ -935,35 +1072,44 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       let announcementId: number;
-      await withTransaction(pool, async (tx) => {
-        announcementId = await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "broadcast for all",
-        });
-      });
-
-      const recipASession = await getSession(
+      await withContext(
         pool,
-        wsId("acme"),
-        recipA.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          announcementId = await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "broadcast for all",
+          });
+        },
       );
-      const recipBSession = await getSession(
+
+      const recipASession = await withContext(
         pool,
-        wsId("acme"),
-        recipB.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipA.sessionId),
+      );
+      const recipBSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipB.sessionId),
       );
 
       // Session A records delivery.
-      await withTransaction(pool, (tx) =>
-        recordAnnouncementDeliveries(tx, recipA.sessionId, [announcementId!]),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          recordAnnouncementDeliveries(tx, recipA.sessionId, [announcementId!]),
       );
 
       // Session B should still get the announcement.
-      const recipBPending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipBSession),
+      const recipBPending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipBSession),
       );
       expect(recipBPending).toHaveLength(1);
       expect(recipBPending[0]!.body).toBe("broadcast for all");
@@ -979,51 +1125,66 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       let announcementId: number;
-      await withTransaction(pool, async (tx) => {
-        announcementId = await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "idempotent test",
-        });
-      });
-
-      const recipientSession = await getSession(
+      await withContext(
         pool,
-        wsId("acme"),
-        recipient.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          announcementId = await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "idempotent test",
+          });
+        },
+      );
+
+      const recipientSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       // Record delivery twice — should not throw.
-      await withTransaction(pool, (tx) =>
-        recordAnnouncementDeliveries(tx, recipient.sessionId, [
-          announcementId!,
-        ]),
-      );
-      await expect(
-        withTransaction(pool, (tx) =>
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
           recordAnnouncementDeliveries(tx, recipient.sessionId, [
             announcementId!,
           ]),
+      );
+      await expect(
+        withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            recordAnnouncementDeliveries(tx, recipient.sessionId, [
+              announcementId!,
+            ]),
         ),
       ).resolves.not.toThrow();
 
       // Still not pending.
-      const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipientSession),
+      const pending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
       expect(pending).toHaveLength(0);
     });
 
     it("recordAnnouncementDeliveries is a no-op for an empty list", async () => {
       await expect(
-        withTransaction(pool, (tx) =>
-          recordAnnouncementDeliveries(
-            tx,
-            "00000000-0000-0000-0000-000000000000",
-            [],
-          ),
+        withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            recordAnnouncementDeliveries(
+              tx,
+              "00000000-0000-0000-0000-000000000000",
+              [],
+            ),
         ),
       ).resolves.not.toThrow();
     });
@@ -1050,37 +1211,46 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       let idLow: number;
       let idHigh: number;
 
-      await withTransaction(pool, async (tx) => {
-        idLow = await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "low id announcement",
-        });
-        idHigh = await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId,
-          targetAgentName: null,
-          body: "high id announcement",
-        });
-      });
-
-      // Only record delivery for the HIGH id (simulates: low id not yet seen).
-      await withTransaction(pool, (tx) =>
-        recordAnnouncementDeliveries(tx, recipient.sessionId, [idHigh!]),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          idLow = await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "low id announcement",
+          });
+          idHigh = await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId,
+            targetAgentName: null,
+            body: "high id announcement",
+          });
+        },
       );
 
-      const recipientSession = await getSession(
+      // Only record delivery for the HIGH id (simulates: low id not yet seen).
+      await withContext(
         pool,
-        wsId("acme"),
-        recipient.sessionId,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          recordAnnouncementDeliveries(tx, recipient.sessionId, [idHigh!]),
+      );
+
+      const recipientSession = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       // Low id should still appear as pending.
-      const pending = await withTransaction(pool, (tx) =>
-        fetchPendingAnnouncements(tx, recipientSession),
+      const pending = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
 
       expect(pending).toHaveLength(1);
@@ -1106,17 +1276,21 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         model: "claude-3",
       });
 
-      await withTransaction(pool, async (tx) => {
-        await insertWorkItem(tx, {
-          workspaceId: wsId("alpha"),
-          sessionId: ownerAlpha.sessionId,
-          repo: "shared-repo",
-          intentText: "claim in alpha",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("alpha") },
+        async (tx) => {
+          await insertWorkItem(tx, {
+            workspaceId: wsId("alpha"),
+            sessionId: ownerAlpha.sessionId,
+            repo: "shared-repo",
+            intentText: "claim in alpha",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          });
+        },
+      );
 
       // Viewer in workspace "beta" — different workspace, same repo name
       const viewerBeta = await seedAgentAndSession(pool, {
@@ -1128,15 +1302,20 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         model: "claude-3",
       });
 
-      const claims = await listActiveClaims(
+      const claims = await withContext(
         pool,
-        wsId("beta"),
-        "shared-repo",
-        now,
-        STALE_AFTER_SECONDS,
-        {
-          excludeSessionId: viewerBeta.sessionId,
-        },
+        { kind: "workspace", workspaceId: wsId("beta") },
+        (db) =>
+          listActiveClaims(
+            db,
+            wsId("beta"),
+            "shared-repo",
+            now,
+            STALE_AFTER_SECONDS,
+            {
+              excludeSessionId: viewerBeta.sessionId,
+            },
+          ),
       );
 
       expect(claims).toHaveLength(0);
@@ -1152,7 +1331,11 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "gstest",
       });
 
-      const session = await getSession(pool, wsId("acme"), sessionId);
+      const session = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) => getSession(db, wsId("acme"), sessionId),
+      );
 
       expect(session.id).toBe(sessionId);
       expect(session.agentName).toBe(agentName);
@@ -1163,7 +1346,16 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
     it("throws UnknownSessionError for a missing sessionId", async () => {
       const { UnknownSessionError } = await import("../src/errors.js");
       await expect(
-        getSession(pool, wsId("acme"), "00000000-0000-0000-0000-000000000000"),
+        withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            getSession(
+              db,
+              wsId("acme"),
+              "00000000-0000-0000-0000-000000000000",
+            ),
+        ),
       ).rejects.toBeInstanceOf(UnknownSessionError);
     });
   });
@@ -1178,20 +1370,25 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "rel",
       });
 
-      const workItemId = await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId,
-          repo: "my-repo",
-          intentText: "to be released",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      const workItemId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId,
+            repo: "my-repo",
+            intentText: "to be released",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
 
-      const rowCount = await withTransaction(pool, (tx) =>
-        releaseWorkItem(tx, sessionId, workItemId, now),
+      const rowCount = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => releaseWorkItem(tx, sessionId, workItemId, now),
       );
       expect(rowCount).toBe(1);
 
@@ -1208,23 +1405,30 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "rel2",
       });
 
-      const workItemId = await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId,
-          repo: "my-repo",
-          intentText: "release twice",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      const workItemId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId,
+            repo: "my-repo",
+            intentText: "release twice",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
 
-      await withTransaction(pool, (tx) =>
-        releaseWorkItem(tx, sessionId, workItemId, now),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => releaseWorkItem(tx, sessionId, workItemId, now),
       );
-      const secondRowCount = await withTransaction(pool, (tx) =>
-        releaseWorkItem(tx, sessionId, workItemId, now),
+      const secondRowCount = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => releaseWorkItem(tx, sessionId, workItemId, now),
       );
       expect(secondRowCount).toBe(0);
     });
@@ -1238,20 +1442,25 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
         agentNameSuffix: "relother",
       });
 
-      const workItemId = await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId,
-          repo: "my-repo",
-          intentText: "owner's claim",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      const workItemId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId,
+            repo: "my-repo",
+            intentText: "owner's claim",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
 
-      const rowCount = await withTransaction(pool, (tx) =>
-        releaseWorkItem(tx, other.sessionId, workItemId, now),
+      const rowCount = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => releaseWorkItem(tx, other.sessionId, workItemId, now),
       );
       expect(rowCount).toBe(0);
     });
@@ -1309,14 +1518,19 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, 10),
         });
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
 
         expect(names.sort()).toEqual(["alex-1", "alex-2"]);
@@ -1330,26 +1544,35 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         // ...but it still holds a live claim, so its name must stay parked.
-        await withTransaction(pool, async (tx) => {
-          await insertWorkItem(tx, {
-            workspaceId: wsId("acme"),
-            sessionId: stale.sessionId!,
-            repo: "my-repo",
-            intentText: "unfinished work",
-            pathGlobs: ["src/**"],
-            ttlSeconds: 1800,
-            expiresAt: secsFromNow(now, 1800),
-          });
-        });
-
-        const names = await reservedAgentNamesForHandle(
+        await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          async (tx) => {
+            await insertWorkItem(tx, {
+              workspaceId: wsId("acme"),
+              sessionId: stale.sessionId!,
+              repo: "my-repo",
+              intentText: "unfinished work",
+              pathGlobs: ["src/**"],
+              ttlSeconds: 1800,
+              expiresAt: secsFromNow(now, 1800),
+            });
+          },
+        );
+
+        const names = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual(["alex-1"]);
       });
@@ -1361,26 +1584,35 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         // An expired claim is no longer outstanding, so it parks nothing.
-        await withTransaction(pool, async (tx) => {
-          await insertWorkItem(tx, {
-            workspaceId: wsId("acme"),
-            sessionId: stale.sessionId!,
-            repo: "my-repo",
-            intentText: "long-gone work",
-            pathGlobs: ["src/**"],
-            ttlSeconds: 1800,
-            expiresAt: secsAgo(now, 5),
-          });
-        });
-
-        const names = await reservedAgentNamesForHandle(
+        await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          async (tx) => {
+            await insertWorkItem(tx, {
+              workspaceId: wsId("acme"),
+              sessionId: stale.sessionId!,
+              repo: "my-repo",
+              intentText: "long-gone work",
+              pathGlobs: ["src/**"],
+              ttlSeconds: 1800,
+              expiresAt: secsAgo(now, 5),
+            });
+          },
+        );
+
+        const names = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual([]);
       });
@@ -1391,32 +1623,41 @@ describe.skipIf(!dbAvailable)(
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
-        await withTransaction(pool, async (tx) => {
-          await replaceChangeRecords(tx, {
-            agentId: stale.agentId,
-            agentName: "alex-1",
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "abc123",
-                message: "unlanded auth work",
-                paths: ["src/auth/**"],
-              },
-            ],
-          });
-        });
-
-        const names = await reservedAgentNamesForHandle(
+        await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          async (tx) => {
+            await replaceChangeRecords(tx, {
+              agentId: stale.agentId,
+              agentName: "alex-1",
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "abc123",
+                  message: "unlanded auth work",
+                  paths: ["src/auth/**"],
+                },
+              ],
+            });
+          },
+        );
+
+        const names = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual(["alex-1"]);
       });
@@ -1427,37 +1668,46 @@ describe.skipIf(!dbAvailable)(
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
-        await withTransaction(pool, async (tx) => {
-          await replaceChangeRecords(tx, {
-            agentId: stale.agentId,
-            agentName: "alex-1",
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "abc123",
-                message: "ancient work",
-                paths: ["src/auth/**"],
-              },
-            ],
-          });
-          // Backdate the record past the TTL so it no longer counts.
-          await tx.query(
-            `UPDATE change_records SET updated_at = $1 WHERE agent_id = $2`,
-            [secsAgo(now, CHANGE_RECORD_TTL_SECONDS + 60), stale.agentId],
-          );
-        });
-
-        const names = await reservedAgentNamesForHandle(
+        await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          async (tx) => {
+            await replaceChangeRecords(tx, {
+              agentId: stale.agentId,
+              agentName: "alex-1",
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "abc123",
+                  message: "ancient work",
+                  paths: ["src/auth/**"],
+                },
+              ],
+            });
+            // Backdate the record past the TTL so it no longer counts.
+            await tx.query(
+              `UPDATE change_records SET updated_at = $1 WHERE agent_id = $2`,
+              [secsAgo(now, CHANGE_RECORD_TTL_SECONDS + 60), stale.agentId],
+            );
+          },
+        );
+
+        const names = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual([]);
       });
@@ -1469,32 +1719,40 @@ describe.skipIf(!dbAvailable)(
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: offline.agentId,
-            agentName: "alex-1",
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/x.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: offline.agentId,
+              agentName: "alex-1",
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/x.ts"],
+                },
+              ],
+            }),
         );
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual(["alex-1"]);
       });
@@ -1507,32 +1765,40 @@ describe.skipIf(!dbAvailable)(
           name: "alex-1",
           heartbeatAt: secsAgo(now, UNCOMMITTED_GRACE_SECONDS + 60),
         });
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: gone.agentId,
-            agentName: "alex-1",
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/x.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: gone.agentId,
+              agentName: "alex-1",
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/x.ts"],
+                },
+              ],
+            }),
         );
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual([]);
       });
@@ -1548,14 +1814,17 @@ describe.skipIf(!dbAvailable)(
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
-        await withTransaction(pool, (tx) =>
-          insertAnnouncement(tx, {
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            fromSessionId: stale.sessionId!,
-            targetAgentName: null,
-            body: "heads up from the past",
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            insertAnnouncement(tx, {
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              fromSessionId: stale.sessionId!,
+              targetAgentName: null,
+              body: "heads up from the past",
+            }),
         );
         // Near the END of the delivery window — still deliverable.
         await pool.query(
@@ -1563,14 +1832,19 @@ describe.skipIf(!dbAvailable)(
            WHERE body = 'heads up from the past'`,
         );
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual(["alex-1"]);
       });
@@ -1585,24 +1859,32 @@ describe.skipIf(!dbAvailable)(
           name: "jordan-1",
           heartbeatAt: secsAgo(now, 10),
         });
-        await withTransaction(pool, (tx) =>
-          insertAnnouncement(tx, {
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            fromSessionId: sender.sessionId!,
-            targetAgentName: "alex-1",
-            body: "for alex-1 specifically",
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            insertAnnouncement(tx, {
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              fromSessionId: sender.sessionId!,
+              targetAgentName: "alex-1",
+              body: "for alex-1 specifically",
+            }),
         );
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual(["alex-1"]);
       });
@@ -1613,28 +1895,36 @@ describe.skipIf(!dbAvailable)(
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
-        await withTransaction(pool, (tx) =>
-          insertAnnouncement(tx, {
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            fromSessionId: stale.sessionId!,
-            targetAgentName: null,
-            body: "ancient history",
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            insertAnnouncement(tx, {
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              fromSessionId: stale.sessionId!,
+              targetAgentName: null,
+              body: "ancient history",
+            }),
         );
         await pool.query(
           `UPDATE announcements SET created_at = now() - interval '3 days'
            WHERE body = 'ancient history'`,
         );
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual([]);
       });
@@ -1647,14 +1937,19 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, 10),
         });
 
-        const names = await reservedAgentNamesForHandle(
+        const names = await withContext(
           pool,
-          wsId("acme"),
-          "alex",
-          now,
-          STALE_AFTER_SECONDS,
-          CHANGE_RECORD_TTL_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            reservedAgentNamesForHandle(
+              db,
+              wsId("acme"),
+              "alex",
+              now,
+              STALE_AFTER_SECONDS,
+              CHANGE_RECORD_TTL_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(names).toEqual([]);
       });
@@ -1671,14 +1966,22 @@ describe.skipIf(!dbAvailable)(
           withSession: false,
         });
 
-        const found = await findAgentByName(pool, wsId("acme"), "casey-1");
+        const found = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) => findAgentByName(db, wsId("acme"), "casey-1"),
+        );
         expect(found).not.toBeNull();
         expect(found!.id).toBe(agentId);
         expect(found!.name).toBe("casey-1");
       });
 
       it("returns null for an absent name", async () => {
-        const found = await findAgentByName(pool, wsId("acme"), "nobody-9");
+        const found = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) => findAgentByName(db, wsId("acme"), "nobody-9"),
+        );
         expect(found).toBeNull();
       });
 
@@ -1689,7 +1992,11 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: new Date(),
           withSession: false,
         });
-        const found = await findAgentByName(pool, wsId("acme"), "casey-1");
+        const found = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) => findAgentByName(db, wsId("acme"), "casey-1"),
+        );
         expect(found).toBeNull();
       });
     });
@@ -1699,26 +2006,32 @@ describe.skipIf(!dbAvailable)(
     // -------------------------------------------------------------------------
     describe("createAgent with optional model", () => {
       it("inserts NULL when model is omitted and returns model: null", async () => {
-        const created = await withTransaction(pool, (tx) =>
-          createAgent(tx, {
-            workspaceId: wsId("acme"),
-            name: "nomodel-1",
-            human: "alice",
-            program: "prog",
-          }),
+        const created = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            createAgent(tx, {
+              workspaceId: wsId("acme"),
+              name: "nomodel-1",
+              human: "alice",
+              program: "prog",
+            }),
         );
         expect(created.model).toBeNull();
       });
 
       it("inserts NULL when model is explicitly null", async () => {
-        const created = await withTransaction(pool, (tx) =>
-          createAgent(tx, {
-            workspaceId: wsId("acme"),
-            name: "nomodel-2",
-            human: "alice",
-            program: "prog",
-            model: null,
-          }),
+        const created = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            createAgent(tx, {
+              workspaceId: wsId("acme"),
+              name: "nomodel-2",
+              human: "alice",
+              program: "prog",
+              model: null,
+            }),
         );
         expect(created.model).toBeNull();
       });
@@ -1744,28 +2057,31 @@ describe.skipIf(!dbAvailable)(
         });
 
         // First report: one committed (aaa) + one uncommitted, on main.
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId,
-            agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "aaa",
-                message: "first",
-                paths: ["src/a.ts"],
-              },
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: null,
-                paths: ["src/b.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId,
+              agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "aaa",
+                  message: "first",
+                  paths: ["src/a.ts"],
+                },
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: null,
+                  paths: ["src/b.ts"],
+                },
+              ],
+            }),
         );
         expect(await countRecords(agentId)).toBe(2);
 
@@ -1773,22 +2089,25 @@ describe.skipIf(!dbAvailable)(
         // `aaa` was on `main`, which this agent no longer reports → it is dropped
         // (no more 72h ghost on the abandoned branch). `bbb` is added; the prior
         // uncommitted is cleared.
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId,
-            agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feature",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "bbb",
-                message: "latest",
-                paths: ["src/c.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId,
+              agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feature",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "bbb",
+                  message: "latest",
+                  paths: ["src/c.ts"],
+                },
+              ],
+            }),
         );
 
         const { rows } = await pool.query<{
@@ -1811,49 +2130,55 @@ describe.skipIf(!dbAvailable)(
         });
 
         // Two unlanded commits on main.
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId,
-            agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "p",
-                message: "p",
-                paths: ["src/p.ts"],
-              },
-              {
-                kind: "committed",
-                commitSha: "q",
-                message: "q",
-                paths: ["src/q.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId,
+              agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "p",
+                  message: "p",
+                  paths: ["src/p.ts"],
+                },
+                {
+                  kind: "committed",
+                  commitSha: "q",
+                  message: "q",
+                  paths: ["src/q.ts"],
+                },
+              ],
+            }),
         );
         expect(await countRecords(agentId)).toBe(2);
 
         // After a squash/rebase, `q` is gone from base..HEAD → next report omits it.
         // It must be removed, not linger 72h showing a wrong "unpushed" hint.
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId,
-            agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "p",
-                message: "p",
-                paths: ["src/p.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId,
+              agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "p",
+                  message: "p",
+                  paths: ["src/p.ts"],
+                },
+              ],
+            }),
         );
 
         const { rows } = await pool.query<{ commit_sha: string | null }>(
@@ -1876,22 +2201,25 @@ describe.skipIf(!dbAvailable)(
         });
 
         const reportShared = (agentId: string, agentName: string) =>
-          withTransaction(pool, (tx) =>
-            replaceChangeRecords(tx, {
-              agentId,
-              agentName,
-              workspaceId: wsId("acme"),
-              repo: "my-repo",
-              branch: "main",
-              entries: [
-                {
-                  kind: "committed",
-                  commitSha: "shared",
-                  message: "shared work",
-                  paths: ["src/s.ts"],
-                },
-              ],
-            }),
+          withContext(
+            pool,
+            { kind: "workspace", workspaceId: wsId("acme") },
+            (tx) =>
+              replaceChangeRecords(tx, {
+                agentId,
+                agentName,
+                workspaceId: wsId("acme"),
+                repo: "my-repo",
+                branch: "main",
+                entries: [
+                  {
+                    kind: "committed",
+                    commitSha: "shared",
+                    message: "shared work",
+                    paths: ["src/s.ts"],
+                  },
+                ],
+              }),
           );
 
         await reportShared(a.agentId, a.agentName); // A commits it first → owns it
@@ -1924,42 +2252,48 @@ describe.skipIf(!dbAvailable)(
 
         // A reports `merged` while on a feature branch (first reporter → owns the
         // row, snapshots branch="feat").
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: a.agentId,
-            agentName: a.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "merged",
-                message: "shared work",
-                paths: ["src/s.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: a.agentId,
+              agentName: a.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "merged",
+                  message: "shared work",
+                  paths: ["src/s.ts"],
+                },
+              ],
+            }),
         );
 
         // B reports the SAME sha from `main` (it fast-forward-merged the branch).
         // Pre-009 this created a second row keyed on branch; now it dedups to one.
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: b.agentId,
-            agentName: b.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "merged",
-                message: "shared work",
-                paths: ["src/s.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: b.agentId,
+              agentName: b.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "merged",
+                  message: "shared work",
+                  paths: ["src/s.ts"],
+                },
+              ],
+            }),
         );
 
         const { rows } = await pool.query<{
@@ -1990,59 +2324,68 @@ describe.skipIf(!dbAvailable)(
           withSession: false,
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: a.agentId,
-            agentName: a.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "x",
-                message: "m",
-                paths: ["src/x.ts"],
-              },
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: null,
-                paths: ["src/xu.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: a.agentId,
+              agentName: a.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "x",
+                  message: "m",
+                  paths: ["src/x.ts"],
+                },
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: null,
+                  paths: ["src/xu.ts"],
+                },
+              ],
+            }),
         );
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: b.agentId,
-            agentName: b.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "y",
-                message: "m",
-                paths: ["src/y.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: b.agentId,
+              agentName: b.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "y",
+                  message: "m",
+                  paths: ["src/y.ts"],
+                },
+              ],
+            }),
         );
 
         // A reports a clean tree (empty) — nothing dirty AND nothing unlanded. Both
         // its uncommitted and its committed rows clear; B's row is untouched (the
         // committed delete is scoped to agent_id).
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: a.agentId,
-            agentName: a.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: a.agentId,
+              agentName: a.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [],
+            }),
         );
 
         expect(await countRecords(a.agentId)).toBe(0);
@@ -2071,50 +2414,61 @@ describe.skipIf(!dbAvailable)(
         });
 
         // Caller's own record (must be excluded).
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: caller.agentId,
-            agentName: caller.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "own",
-                message: "mine",
-                paths: ["src/own.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: caller.agentId,
+              agentName: caller.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "own",
+                  message: "mine",
+                  paths: ["src/own.ts"],
+                },
+              ],
+            }),
         );
         // Live author's record.
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: liveAuthor.agentId,
-            agentName: liveAuthor.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/live.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: liveAuthor.agentId,
+              agentName: liveAuthor.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/live.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
 
         expect(records).toHaveLength(1);
@@ -2142,32 +2496,40 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 30),
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: staleAuthor.agentId,
-            agentName: staleAuthor.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "s",
-                message: "m",
-                paths: ["src/s.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: staleAuthor.agentId,
+              agentName: staleAuthor.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "s",
+                  message: "m",
+                  paths: ["src/s.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(records).toHaveLength(1);
         expect(records[0]!.authorIsLive).toBe(false);
@@ -2185,32 +2547,40 @@ describe.skipIf(!dbAvailable)(
           withSession: false,
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: noSession.agentId,
-            agentName: noSession.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "n",
-                message: "m",
-                paths: ["src/n.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: noSession.agentId,
+              agentName: noSession.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "n",
+                  message: "m",
+                  paths: ["src/n.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(records).toHaveLength(1);
         expect(records[0]!.authorIsLive).toBe(false);
@@ -2228,32 +2598,40 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, UNCOMMITTED_GRACE_SECONDS + 30),
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: staleAuthor.agentId,
-            agentName: staleAuthor.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/u.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: staleAuthor.agentId,
+              agentName: staleAuthor.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/u.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         // Past the grace window the "may change" hint is dropped — a long-dead
         // session can no longer change anything.
@@ -2273,32 +2651,40 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 30),
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: offlineAuthor.agentId,
-            agentName: offlineAuthor.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/u.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: offlineAuthor.agentId,
+              agentName: offlineAuthor.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/u.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(records).toHaveLength(1);
         expect(records[0]!.kind).toBe("uncommitted");
@@ -2318,32 +2704,40 @@ describe.skipIf(!dbAvailable)(
           withSession: false,
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: noSession.agentId,
-            agentName: noSession.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/u.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: noSession.agentId,
+              agentName: noSession.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/u.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(records).toHaveLength(0);
       });
@@ -2359,38 +2753,46 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: secsAgo(now, UNCOMMITTED_GRACE_SECONDS + 30),
         });
 
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: staleAuthor.agentId,
-            agentName: staleAuthor.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "feat",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "abc123",
-                message: "landed",
-                paths: ["src/c.ts"],
-              },
-              {
-                kind: "uncommitted",
-                commitSha: null,
-                message: "wip",
-                paths: ["src/u.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: staleAuthor.agentId,
+              agentName: staleAuthor.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "feat",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "abc123",
+                  message: "landed",
+                  paths: ["src/c.ts"],
+                },
+                {
+                  kind: "uncommitted",
+                  commitSha: null,
+                  message: "wip",
+                  paths: ["src/u.ts"],
+                },
+              ],
+            }),
         );
 
-        const records = await listOtherChangeRecords(
+        const records = await withContext(
           pool,
-          wsId("acme"),
-          "my-repo",
-          caller.agentId,
-          now,
-          STALE_AFTER_SECONDS,
-          UNCOMMITTED_GRACE_SECONDS,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) =>
+            listOtherChangeRecords(
+              db,
+              wsId("acme"),
+              "my-repo",
+              caller.agentId,
+              now,
+              STALE_AFTER_SECONDS,
+              UNCOMMITTED_GRACE_SECONDS,
+            ),
         );
         expect(records).toHaveLength(1);
         expect(records[0]!.kind).toBe("committed");
@@ -2411,29 +2813,33 @@ describe.skipIf(!dbAvailable)(
         });
 
         // Insert one stale + one fresh in (acme, my-repo), and one fresh in another repo.
-        await withTransaction(pool, async (tx) => {
-          await replaceChangeRecords(tx, {
-            agentId: agent.agentId,
-            agentName: agent.agentName,
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "old",
-                message: "old",
-                paths: ["src/old.ts"],
-              },
-              {
-                kind: "committed",
-                commitSha: "new",
-                message: "new",
-                paths: ["src/new.ts"],
-              },
-            ],
-          });
-        });
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          async (tx) => {
+            await replaceChangeRecords(tx, {
+              agentId: agent.agentId,
+              agentName: agent.agentName,
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "old",
+                  message: "old",
+                  paths: ["src/old.ts"],
+                },
+                {
+                  kind: "committed",
+                  commitSha: "new",
+                  message: "new",
+                  paths: ["src/new.ts"],
+                },
+              ],
+            });
+          },
+        );
         // Backdate the "old" one well past TTL.
         const ttlSeconds = 3600;
         await pool.query(
@@ -2448,30 +2854,36 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: now,
           withSession: false,
         });
-        await withTransaction(pool, (tx) =>
-          replaceChangeRecords(tx, {
-            agentId: other.agentId,
-            agentName: other.agentName,
-            workspaceId: wsId("acme"),
-            repo: "other-repo",
-            branch: "main",
-            entries: [
-              {
-                kind: "committed",
-                commitSha: "otherrepo",
-                message: "m",
-                paths: ["x.ts"],
-              },
-            ],
-          }),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            replaceChangeRecords(tx, {
+              agentId: other.agentId,
+              agentName: other.agentName,
+              workspaceId: wsId("acme"),
+              repo: "other-repo",
+              branch: "main",
+              entries: [
+                {
+                  kind: "committed",
+                  commitSha: "otherrepo",
+                  message: "m",
+                  paths: ["x.ts"],
+                },
+              ],
+            }),
         );
         await pool.query(
           `UPDATE change_records SET updated_at = $1 WHERE commit_sha = 'otherrepo'`,
           [secsAgo(now, ttlSeconds + 100)],
         );
 
-        await withTransaction(pool, (tx) =>
-          pruneChangeRecords(tx, wsId("acme"), "my-repo", now, ttlSeconds),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) =>
+            pruneChangeRecords(tx, wsId("acme"), "my-repo", now, ttlSeconds),
         );
 
         const { rows } = await pool.query<{ commit_sha: string | null }>(
@@ -2493,11 +2905,17 @@ describe.skipIf(!dbAvailable)(
           heartbeatAt: new Date(),
         });
 
-        await withTransaction(pool, (tx) =>
-          updateSessionBranch(tx, sessionId!, "new-branch"),
+        await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (tx) => updateSessionBranch(tx, sessionId!, "new-branch"),
         );
 
-        const session = await getSession(pool, wsId("acme"), sessionId!);
+        const session = await withContext(
+          pool,
+          { kind: "workspace", workspaceId: wsId("acme") },
+          (db) => getSession(db, wsId("acme"), sessionId!),
+        );
         expect(session.branch).toBe("new-branch");
       });
     });
@@ -2538,11 +2956,11 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         heartbeatAt: secsAgo(now, 10),
       });
 
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
 
       expect(result.agents).toHaveLength(1);
@@ -2563,11 +2981,11 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         withSession: false,
       });
 
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       expect(result.agents).toHaveLength(1);
       const a = result.agents[0]!;
@@ -2586,24 +3004,28 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         heartbeatAt: secsAgo(now, 600),
       });
       // A newer session on a different branch.
-      await withTransaction(pool, async (tx) => {
-        const s = await createSession(tx, {
-          workspaceId: wsId("acme"),
-          agentId: seeded.agentId,
-          repo: "my-repo",
-          branch: "new-branch",
-        });
-        await tx.query(
-          `UPDATE sessions SET last_heartbeat_at = $1 WHERE id = $2`,
-          [secsAgo(now, 5), s.id],
-        );
-      });
-
-      const result = await getWorkspaceLandscape(
+      await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          const s = await createSession(tx, {
+            workspaceId: wsId("acme"),
+            agentId: seeded.agentId,
+            repo: "my-repo",
+            branch: "new-branch",
+          });
+          await tx.query(
+            `UPDATE sessions SET last_heartbeat_at = $1 WHERE id = $2`,
+            [secsAgo(now, 5), s.id],
+          );
+        },
+      );
+
+      const result = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       expect(result.agents).toHaveLength(1);
       expect(result.agents[0]!.branch).toBe("new-branch");
@@ -2616,11 +3038,11 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         name: "Elsewhere-1",
         heartbeatAt: now,
       });
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       expect(result.agents).toHaveLength(0);
     });
@@ -2635,23 +3057,26 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         name: "Owner-1",
         heartbeatAt: secsAgo(now, 8),
       });
-      await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId!,
-          repo: "my-repo",
-          intentText: "claim intent",
-          pathGlobs: ["src/feed/**"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId!,
+            repo: "my-repo",
+            intentText: "claim intent",
+            pathGlobs: ["src/feed/**"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
 
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       expect(result.tasks).toHaveLength(1);
       const t = result.tasks[0]!;
@@ -2672,26 +3097,31 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         name: "Owner-2",
         heartbeatAt: secsAgo(now, 8),
       });
-      const id = await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId!,
-          repo: "my-repo",
-          intentText: "done work",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 300,
-          expiresAt: secsFromNow(now, 300),
-        }),
+      const id = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId!,
+            repo: "my-repo",
+            intentText: "done work",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 300,
+            expiresAt: secsFromNow(now, 300),
+          }),
       );
-      await withTransaction(pool, (tx) =>
-        releaseWorkItem(tx, owner.sessionId!, id, now),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) => releaseWorkItem(tx, owner.sessionId!, id, now),
       );
 
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       const done = result.tasks.find((t) => t.intent === "done work")!;
       expect(done.status).toBe("done");
@@ -2706,23 +3136,26 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         name: "StaleOwner",
         heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 60),
       });
-      await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId!,
-          repo: "my-repo",
-          intentText: "abandoned",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 9999,
-          expiresAt: secsFromNow(now, 9999),
-        }),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId!,
+            repo: "my-repo",
+            intentText: "abandoned",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 9999,
+            expiresAt: secsFromNow(now, 9999),
+          }),
       );
 
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       const dropped = result.tasks.find((t) => t.intent === "abandoned")!;
       expect(dropped.status).toBe("dropped");
@@ -2743,23 +3176,26 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         name: "BoundaryOwner",
         heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS),
       });
-      await withTransaction(pool, (tx) =>
-        insertWorkItem(tx, {
-          workspaceId: wsId("acme"),
-          sessionId: owner.sessionId!,
-          repo: "my-repo",
-          intentText: "at the boundary",
-          pathGlobs: ["**/*"],
-          ttlSeconds: 9999,
-          expiresAt: secsFromNow(now, 9999),
-        }),
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (tx) =>
+          insertWorkItem(tx, {
+            workspaceId: wsId("acme"),
+            sessionId: owner.sessionId!,
+            repo: "my-repo",
+            intentText: "at the boundary",
+            pathGlobs: ["**/*"],
+            ttlSeconds: 9999,
+            expiresAt: secsFromNow(now, 9999),
+          }),
       );
 
-      const result = await getWorkspaceLandscape(
+      const result = await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       const task = result.tasks.find((t) => t.intent === "at the boundary")!;
       expect(task.status).toBe("dropped");
@@ -2776,28 +3212,32 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         human: "alice",
         heartbeatAt: now,
       });
-      await withTransaction(pool, async (tx) => {
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId!,
-          targetAgentName: null,
-          body: "first",
-        });
-        await insertAnnouncement(tx, {
-          workspaceId: wsId("acme"),
-          repo: "my-repo",
-          fromSessionId: sender.sessionId!,
-          targetAgentName: "Someone",
-          body: "second",
-        });
-      });
-
-      const result = await getWorkspaceLandscape(
+      await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId!,
+            targetAgentName: null,
+            body: "first",
+          });
+          await insertAnnouncement(tx, {
+            workspaceId: wsId("acme"),
+            repo: "my-repo",
+            fromSessionId: sender.sessionId!,
+            targetAgentName: "Someone",
+            body: "second",
+          });
+        },
+      );
+
+      const result = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       expect(result.announcements).toHaveLength(2);
       expect(result.announcements[0]!.body).toBe("second");
@@ -2816,23 +3256,27 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         name: "Sender-2",
         heartbeatAt: now,
       });
-      await withTransaction(pool, async (tx) => {
-        for (let i = 0; i < 55; i++) {
-          await insertAnnouncement(tx, {
-            workspaceId: wsId("acme"),
-            repo: "my-repo",
-            fromSessionId: sender.sessionId!,
-            targetAgentName: null,
-            body: `msg-${i}`,
-          });
-        }
-      });
-
-      const result = await getWorkspaceLandscape(
+      await withContext(
         pool,
-        wsId("acme"),
-        now,
-        STALE_AFTER_SECONDS,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        async (tx) => {
+          for (let i = 0; i < 55; i++) {
+            await insertAnnouncement(tx, {
+              workspaceId: wsId("acme"),
+              repo: "my-repo",
+              fromSessionId: sender.sessionId!,
+              targetAgentName: null,
+              body: `msg-${i}`,
+            });
+          }
+        },
+      );
+
+      const result = await withContext(
+        pool,
+        { kind: "workspace", workspaceId: wsId("acme") },
+        (db) =>
+          getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
       );
       expect(result.announcements).toHaveLength(50);
       // Newest first => msg-54 is first; the oldest 5 (msg-0..msg-4) are dropped.
@@ -2872,15 +3316,21 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
   });
 
   it("inserts a fresh profile row from the supplied headers", async () => {
-    await upsertAccountProfile(pool, {
-      accountId: "prof-new",
-      displayName: "Korso Admin",
-      githubLogin: null,
-      email: null,
-      avatarUrl: null,
-    });
+    await withContext(pool, { kind: "account", accountId: "prof-new" }, (db) =>
+      upsertAccountProfile(db, {
+        accountId: "prof-new",
+        displayName: "Korso Admin",
+        githubLogin: null,
+        email: null,
+        avatarUrl: null,
+      }),
+    );
 
-    const p = await getAccountProfile(pool, "prof-new");
+    const p = await withContext(
+      pool,
+      { kind: "account", accountId: "prof-new" },
+      (db) => getAccountProfile(db, "prof-new"),
+    );
     expect(p).toEqual({
       display_name: "Korso Admin",
       github_login: null,
@@ -2890,46 +3340,68 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
 
   it("does NOT clobber a good display_name when a later request omits the header", async () => {
     // First request: the trusted BFF snapshot lands with a real name.
-    await upsertAccountProfile(pool, {
-      accountId: "prof-keep",
-      displayName: "Korso Admin",
-      githubLogin: null,
-      email: null,
-      avatarUrl: null,
-    });
+    await withContext(pool, { kind: "account", accountId: "prof-keep" }, (db) =>
+      upsertAccountProfile(db, {
+        accountId: "prof-keep",
+        displayName: "Korso Admin",
+        githubLogin: null,
+        email: null,
+        avatarUrl: null,
+      }),
+    );
 
     // Second request authenticates the same account but arrives WITHOUT any
     // display headers (all null). The good name must survive.
-    await upsertAccountProfile(pool, {
-      accountId: "prof-keep",
-      displayName: null,
-      githubLogin: null,
-      email: null,
-      avatarUrl: null,
-    });
+    await withContext(pool, { kind: "account", accountId: "prof-keep" }, (db) =>
+      upsertAccountProfile(db, {
+        accountId: "prof-keep",
+        displayName: null,
+        githubLogin: null,
+        email: null,
+        avatarUrl: null,
+      }),
+    );
 
-    const p = await getAccountProfile(pool, "prof-keep");
+    const p = await withContext(
+      pool,
+      { kind: "account", accountId: "prof-keep" },
+      (db) => getAccountProfile(db, "prof-keep"),
+    );
     expect(p?.display_name).toBe("Korso Admin");
   });
 
   it("still overwrites with a NEW non-null value (updates are not blocked)", async () => {
-    await upsertAccountProfile(pool, {
-      accountId: "prof-update",
-      displayName: "Old Name",
-      githubLogin: "old-login",
-      email: "old@example.com",
-      avatarUrl: null,
-    });
+    await withContext(
+      pool,
+      { kind: "account", accountId: "prof-update" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-update",
+          displayName: "Old Name",
+          githubLogin: "old-login",
+          email: "old@example.com",
+          avatarUrl: null,
+        }),
+    );
 
-    await upsertAccountProfile(pool, {
-      accountId: "prof-update",
-      displayName: "New Name",
-      githubLogin: null, // omitted this time — must be preserved
-      email: "new@example.com",
-      avatarUrl: null,
-    });
+    await withContext(
+      pool,
+      { kind: "account", accountId: "prof-update" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-update",
+          displayName: "New Name",
+          githubLogin: null, // omitted this time — must be preserved
+          email: "new@example.com",
+          avatarUrl: null,
+        }),
+    );
 
-    const p = await getAccountProfile(pool, "prof-update");
+    const p = await withContext(
+      pool,
+      { kind: "account", accountId: "prof-update" },
+      (db) => getAccountProfile(db, "prof-update"),
+    );
     expect(p).toEqual({
       display_name: "New Name",
       github_login: "old-login", // preserved from the first request
@@ -2938,20 +3410,30 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
   });
 
   it("preserves avatar_url too when a later request omits it", async () => {
-    await upsertAccountProfile(pool, {
-      accountId: "prof-avatar",
-      displayName: "Korso Admin",
-      githubLogin: null,
-      email: null,
-      avatarUrl: "https://example.com/a.png",
-    });
-    await upsertAccountProfile(pool, {
-      accountId: "prof-avatar",
-      displayName: null,
-      githubLogin: null,
-      email: null,
-      avatarUrl: null,
-    });
+    await withContext(
+      pool,
+      { kind: "account", accountId: "prof-avatar" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-avatar",
+          displayName: "Korso Admin",
+          githubLogin: null,
+          email: null,
+          avatarUrl: "https://example.com/a.png",
+        }),
+    );
+    await withContext(
+      pool,
+      { kind: "account", accountId: "prof-avatar" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-avatar",
+          displayName: null,
+          githubLogin: null,
+          email: null,
+          avatarUrl: null,
+        }),
+    );
 
     const { rows } = await pool.query<{ avatar_url: string | null }>(
       `SELECT avatar_url FROM account_profiles WHERE account_id = $1`,

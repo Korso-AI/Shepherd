@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "build": "tsc -b && npm -w @korso/shepherd-ui run type-check && npm -w @korso/shepherd-ui run build",
     "test": "npm -w @korso/shepherd-ui run build:app && vitest run",
-    "check": "npm run lint && npm run build && npm test",
+    "typecheck:test": "tsc -p packages/hub/tsconfig.test.json",
+    "check": "npm run lint && npm run build && npm run typecheck:test && npm test",
     "dev:hub": "tsx --env-file-if-exists=.env watch packages/hub/src/index.ts",
     "dev:mcp": "tsx --env-file-if-exists=.env packages/mcp-server/src/index.ts",
     "migrate": "tsx --env-file-if-exists=.env packages/hub/src/migrate.ts"

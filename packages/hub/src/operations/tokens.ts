@@ -36,6 +36,7 @@ import type {
 } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
+import { withContext } from "../scopedDb.js";
 import { AuthError } from "../errors.js";
 import {
   insertApiToken,
@@ -47,6 +48,7 @@ import {
   hashToken,
   requireAccountId,
   requireWorkspaceId,
+  contextForTenant,
   NO_ROUTE_WORKSPACE,
   type TenantContext,
 } from "../tenant.js";
@@ -87,12 +89,14 @@ export async function mintToken(
       : requireWorkspaceId(tenant);
 
   const rawToken = generateRawToken();
-  const summary = await insertApiToken(pool, {
-    workspaceId,
-    accountId,
-    tokenHash: hashToken(rawToken),
-    name: input.name ?? null,
-  });
+  const summary = await withContext(pool, contextForTenant(tenant), (db) =>
+    insertApiToken(db, {
+      workspaceId,
+      accountId,
+      tokenHash: hashToken(rawToken),
+      name: input.name ?? null,
+    }),
+  );
 
   // The raw token is surfaced here and ONLY here — never persisted or logged.
   return { token: rawToken, id: summary.id };
@@ -109,10 +113,15 @@ export async function listTokens(
   const { pool } = getContext();
   if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
     const accountId = requireAccountId(tenant);
-    const tokens = await listApiTokensForAccount(pool, accountId);
+    const tokens = await withContext(pool, contextForTenant(tenant), (db) =>
+      listApiTokensForAccount(db, accountId),
+    );
     return { tokens };
   }
-  const tokens = await listApiTokens(pool, requireWorkspaceId(tenant));
+  const workspaceId = requireWorkspaceId(tenant);
+  const tokens = await withContext(pool, contextForTenant(tenant), (db) =>
+    listApiTokens(db, workspaceId),
+  );
   return { tokens };
 }
 
@@ -122,6 +131,13 @@ export async function listTokens(
  * unknown id — affects zero rows and surfaces as 404 (never reveal another
  * account's token, or that the id exists). Works for both account-scoped and
  * workspace-narrowed tokens: ownership keys on account_id, not the workspace.
+ *
+ * Context is PINNED to `account` (not contextForTenant): revocation is
+ * account-scoped by design — through the `/workspaces/:id/tokens/:tokenId`
+ * route it still revokes the caller's account-scoped (`workspace_id IS NULL`)
+ * and other-workspace tokens, which a workspace-context policy arm on
+ * api_tokens would turn into 0-row updates → spurious 404s. Same sanctioned
+ * account-surface pinning contextForTenant's doc records.
  */
 export async function revokeToken(
   tokenId: string,
@@ -130,7 +146,11 @@ export async function revokeToken(
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
 
-  const revoked = await revokeOwnApiToken(pool, accountId, tokenId);
+  const revoked = await withContext(
+    pool,
+    { kind: "account", accountId },
+    (db) => revokeOwnApiToken(db, accountId, tokenId),
+  );
   if (!revoked) {
     throw new AuthError(404, "token not found");
   }

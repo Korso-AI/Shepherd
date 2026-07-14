@@ -33,7 +33,7 @@
 import type { DeleteAccountResponseT } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
-import { withTransaction } from "../db.js";
+import { withContext, setDbContext } from "../scopedDb.js";
 import { AuthError, ConflictError } from "../errors.js";
 import {
   listWorkspacesForAccount,
@@ -66,16 +66,27 @@ export async function deleteAccount(
     );
   }
 
-  await withTransaction(pool, async (tx) => {
+  await withContext(pool, { kind: "account", accountId }, async (tx) => {
     // Membership snapshot + guards INSIDE the transaction, so the decision and
     // the mutation see the same committed state.
     const workspaces = await listWorkspacesForAccount(tx, accountId);
 
     for (const ws of workspaces) {
+      // FOCUS this workspace so countMembers/countAdmins see the whole roster
+      // (unfocused account context shows only the caller's own membership row —
+      // counting under it would make EVERY workspace look sole-member and
+      // wrongly cascade-delete it).
+      await setDbContext(tx, { kind: "account", accountId, workspaceId: ws.id });
       const members = await countMembers(tx, ws.id);
       if (members <= 1) {
         // The caller is the only member: the workspace would be an orphaned,
-        // admin-less husk — delete it with all its data.
+        // admin-less husk — delete it with all its data, under full workspace
+        // powers.
+        await setDbContext(tx, {
+          kind: "workspace",
+          workspaceId: ws.id,
+          accountId,
+        });
         await deleteWorkspaceCascade(tx, ws.id);
         continue;
       }
@@ -91,8 +102,10 @@ export async function deleteAccount(
       await revokeApiTokensForMember(tx, ws.id, accountId);
     }
 
-    // Account-wide sweep: any token not covered by the per-workspace revokes
-    // above (account-scoped tokens have workspace_id IS NULL) dies here too.
+    // Back to plain account context for the account-wide sweep: any token not
+    // covered by the per-workspace revokes above (account-scoped tokens have
+    // workspace_id IS NULL) dies here too.
+    await setDbContext(tx, { kind: "account", accountId });
     await revokeAllApiTokensForAccount(tx, accountId);
     await deleteAccountProfile(tx, accountId);
   });

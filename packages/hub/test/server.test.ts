@@ -286,52 +286,60 @@ describe.skipIf(!dbAvailable)(
     it("authenticated → 200 with a contract-valid payload, scoped to the credential's workspace", async () => {
       const { createAgent, createSession, insertWorkItem } =
         await import("../src/repo.js");
-      const { withTransaction } = await import("../src/db.js");
+      const { withContext } = await import("../src/scopedDb.js");
       const now = new Date();
 
       // A live agent in the credential's workspace holding an active claim.
-      await withTransaction(pool, async (tx) => {
-        const agent = await createAgent(tx, {
-          workspaceId,
-          name: "InWorkspace-1",
-          human: "alice",
-          program: "claude",
-          model: "claude-opus-4",
-        });
-        const session = await createSession(tx, {
-          workspaceId,
-          agentId: agent.id,
-          repo: "org/repo",
-          branch: "main",
-        });
-        await insertWorkItem(tx, {
-          workspaceId,
-          sessionId: session.id,
-          repo: "org/repo",
-          intentText: "wallboard claim",
-          pathGlobs: ["src/**"],
-          ttlSeconds: 300,
-          expiresAt: new Date(now.getTime() + 300_000),
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        async (tx) => {
+          const agent = await createAgent(tx, {
+            workspaceId,
+            name: "InWorkspace-1",
+            human: "alice",
+            program: "claude",
+            model: "claude-opus-4",
+          });
+          const session = await createSession(tx, {
+            workspaceId,
+            agentId: agent.id,
+            repo: "org/repo",
+            branch: "main",
+          });
+          await insertWorkItem(tx, {
+            workspaceId,
+            sessionId: session.id,
+            repo: "org/repo",
+            intentText: "wallboard claim",
+            pathGlobs: ["src/**"],
+            ttlSeconds: 300,
+            expiresAt: new Date(now.getTime() + 300_000),
+          });
+        },
+      );
 
       // An agent in a DIFFERENT workspace — must NOT appear.
       const otherWs = await seedWorkspace(pool, "other-ws");
-      await withTransaction(pool, async (tx) => {
-        const other = await createAgent(tx, {
-          workspaceId: otherWs,
-          name: "Outsider-1",
-          human: "bob",
-          program: "claude",
-          model: null,
-        });
-        await createSession(tx, {
-          workspaceId: otherWs,
-          agentId: other.id,
-          repo: "org/repo",
-          branch: "main",
-        });
-      });
+      await withContext(
+        pool,
+        { kind: "workspace", workspaceId: otherWs },
+        async (tx) => {
+          const other = await createAgent(tx, {
+            workspaceId: otherWs,
+            name: "Outsider-1",
+            human: "bob",
+            program: "claude",
+            model: null,
+          });
+          await createSession(tx, {
+            workspaceId: otherWs,
+            agentId: other.id,
+            repo: "org/repo",
+            branch: "main",
+          });
+        },
+      );
 
       const res = await app.inject({
         method: "GET",
@@ -675,24 +683,28 @@ describe.skipIf(!dbAvailable)(
 
     it("valid bearer + valid body → 200 { ok: true }", async () => {
       const { createAgent, createSession } = await import("../src/repo.js");
-      const { withTransaction } = await import("../src/db.js");
+      const { withContext } = await import("../src/scopedDb.js");
 
-      const sessionId = await withTransaction(pool, async (tx) => {
-        const agent = await createAgent(tx, {
-          workspaceId,
-          name: "agent-hb",
-          human: "alice",
-          program: "claude-hb",
-          model: "claude-3",
-        });
-        const session = await createSession(tx, {
-          workspaceId,
-          agentId: agent.id,
-          repo: "org/repo",
-          branch: "main",
-        });
-        return session.id;
-      });
+      const sessionId = await withContext(
+        pool,
+        { kind: "workspace", workspaceId },
+        async (tx) => {
+          const agent = await createAgent(tx, {
+            workspaceId,
+            name: "agent-hb",
+            human: "alice",
+            program: "claude-hb",
+            model: "claude-3",
+          });
+          const session = await createSession(tx, {
+            workspaceId,
+            agentId: agent.id,
+            repo: "org/repo",
+            branch: "main",
+          });
+          return session.id;
+        },
+      );
 
       const res = await app.inject({
         method: "POST",
