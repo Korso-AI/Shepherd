@@ -257,6 +257,10 @@ Migration `011` is a **clean cutover**, not a backfill: it TRUNCATEs the
 legacy rows pointed anywhere — agents re-join and claims re-acquire on their
 next heartbeat, so no durable data is lost.
 
+- **Tenant isolation:** beneath the `repo.ts` `workspace_id` scoping, every table
+  is protected by Postgres row-level security so a forgotten `WHERE` returns
+  nothing instead of leaking across workspaces — see [`docs/rls.md`](docs/rls.md).
+
 The operator-identity seam: `HUB_ADMIN_LABEL` stamps the sender on
 announcements the operator sends from the self-host dashboard, and the hosted
 `/admin/*` analytics surface additionally requires a BFF-signed operator

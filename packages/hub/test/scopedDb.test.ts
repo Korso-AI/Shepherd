@@ -1,31 +1,45 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type pg from "pg";
-import { dbAvailable, createTestPool, runTestMigrations } from "./setup.js";
+import {
+  dbAvailable,
+  createTestPool,
+  createAppPool,
+  runTestMigrations,
+} from "./setup.js";
 import { withContext, setDbContext, type DbContext } from "../src/scopedDb.js";
 
 describe.skipIf(!dbAvailable)("withContext", () => {
+  // Owner pool: raw leak/rollback assertions read DB state bypassing RLS.
   let pool: pg.Pool;
+  // Restricted app-role pool: the withContext-under-test runs here, so its
+  // GUC probes and maintenance/operator table access exercise the policies.
+  let appPool: pg.Pool;
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
   });
-  afterAll(async () => pool.end());
+  afterAll(async () => {
+    await appPool.end();
+    await pool.end();
+  });
 
-  /** Read the GUC triple on the given handle. */
+  /** Read the GUC 4-tuple on the given handle. */
   async function readGucs(
     db: Pick<pg.PoolClient, "query">,
-  ): Promise<{ ctx: string; ws: string; acct: string }> {
+  ): Promise<{ ctx: string; ws: string; acct: string; inv: string }> {
     const { rows } = await db.query(
       `SELECT current_setting('app.context') AS ctx,
               current_setting('app.workspace_id') AS ws,
-              current_setting('app.account_id') AS acct`,
+              current_setting('app.account_id') AS acct,
+              current_setting('app.invite_code') AS inv`,
     );
-    return rows[0] as { ctx: string; ws: string; acct: string };
+    return rows[0] as { ctx: string; ws: string; acct: string; inv: string };
   }
 
   it("sets all three GUCs transaction-locally for a workspace context", async () => {
     await withContext(
-      pool,
+      appPool,
       {
         kind: "workspace",
         workspaceId: "11111111-1111-1111-1111-111111111111",
@@ -36,6 +50,7 @@ describe.skipIf(!dbAvailable)("withContext", () => {
           ctx: "workspace",
           ws: "11111111-1111-1111-1111-111111111111",
           acct: "acct-1",
+          inv: "",
         });
       },
     );
@@ -46,40 +61,50 @@ describe.skipIf(!dbAvailable)("withContext", () => {
     expect(rows[0].ctx === null || rows[0].ctx === "").toBe(true);
   });
 
-  // Every kind's GUC triple, pinned one by one: these exact strings are the
-  // contract the Phase 2 policy SQL matches on, so an unnoticed drift here
-  // would surface as a policy mismatch there.
+  // Every kind's GUC 4-tuple, pinned one by one: these exact strings are the
+  // contract the Phase 2 policy SQL (migration 021) matches on, so an unnoticed
+  // drift here would surface as a policy mismatch there. The `inv` dimension is
+  // app.invite_code: only a code-bearing account context sets it; every other
+  // kind pins '' (and setDbContext OVERWRITES it on every re-scope, so a
+  // widening can never inherit a stale code).
   const KIND_TRIPLES: Array<
-    [DbContext, { ctx: string; ws: string; acct: string }]
+    [DbContext, { ctx: string; ws: string; acct: string; inv: string }]
   > = [
     [
       { kind: "workspace", workspaceId: "ws-1" },
-      { ctx: "workspace", ws: "ws-1", acct: "" },
+      { ctx: "workspace", ws: "ws-1", acct: "", inv: "" },
     ],
     [
       { kind: "account", accountId: "acct-1" },
-      { ctx: "account", ws: "", acct: "acct-1" },
+      { ctx: "account", ws: "", acct: "acct-1", inv: "" },
     ],
     [
       { kind: "account", accountId: "acct-1", workspaceId: "ws-focus" },
-      { ctx: "account", ws: "ws-focus", acct: "acct-1" },
+      { ctx: "account", ws: "ws-focus", acct: "acct-1", inv: "" },
     ],
-    [{ kind: "auth" }, { ctx: "auth", ws: "", acct: "" }],
+    [
+      { kind: "account", accountId: "acct-1", inviteCode: "invite-code-1" },
+      { ctx: "account", ws: "", acct: "acct-1", inv: "invite-code-1" },
+    ],
+    [{ kind: "auth" }, { ctx: "auth", ws: "", acct: "", inv: "" }],
     [
       { kind: "auth", accountId: "acct-1" },
-      { ctx: "auth", ws: "", acct: "acct-1" },
+      { ctx: "auth", ws: "", acct: "acct-1", inv: "" },
     ],
     [
       { kind: "internal", workspaceId: "ws-1" },
-      { ctx: "internal", ws: "ws-1", acct: "" },
+      { ctx: "internal", ws: "ws-1", acct: "", inv: "" },
     ],
-    [{ kind: "operator" }, { ctx: "operator", ws: "", acct: "" }],
-    [{ kind: "maintenance" }, { ctx: "maintenance", ws: "", acct: "" }],
+    [{ kind: "operator" }, { ctx: "operator", ws: "", acct: "", inv: "" }],
+    [
+      { kind: "maintenance" },
+      { ctx: "maintenance", ws: "", acct: "", inv: "" },
+    ],
   ];
   it.each(KIND_TRIPLES)(
     "maps %j to its exact GUC triple",
     async (ctx, expected) => {
-      await withContext(pool, ctx, async (db) => {
+      await withContext(appPool, ctx, async (db) => {
         expect(await readGucs(db)).toEqual(expected);
       });
     },
@@ -96,9 +121,12 @@ describe.skipIf(!dbAvailable)("withContext", () => {
       // threaded sentinel, not a deliberate omission.
       { kind: "workspace", workspaceId: "ws-1", accountId: "" },
       { kind: "auth", accountId: "" },
+      // The invite code is a capability, validated the same way: a present-but-
+      // empty code would fail closed under the code-scoped policy arms.
+      { kind: "account", accountId: "acct-1", inviteCode: "" },
     ] satisfies DbContext[]) {
       await expect(
-        withContext(pool, ctx, async () => {
+        withContext(appPool, ctx, async () => {
           ran.push(ctx.kind);
         }),
       ).rejects.toThrow(/must be non-empty/);
@@ -110,7 +138,7 @@ describe.skipIf(!dbAvailable)("withContext", () => {
 
   it("setDbContext re-scopes mid-transaction", async () => {
     await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "acct-1" },
       async (db) => {
         await setDbContext(db, {
@@ -131,7 +159,7 @@ describe.skipIf(!dbAvailable)("withContext", () => {
 
   it("rolls back the transaction's writes and rethrows on error", async () => {
     await expect(
-      withContext(pool, { kind: "maintenance" }, async (db) => {
+      withContext(appPool, { kind: "maintenance" }, async (db) => {
         await db.query(
           `INSERT INTO workspaces (slug, name, created_by)
            VALUES ('rollback-probe', 'rollback-probe', 'test')`,
@@ -158,12 +186,12 @@ describe.skipIf(!dbAvailable)("withContext", () => {
     // semantics that rule guards against: the inner transaction cannot see the
     // outer one's uncommitted write, and keeps its own context.
     await expect(
-      withContext(pool, { kind: "maintenance" }, async (outer) => {
+      withContext(appPool, { kind: "maintenance" }, async (outer) => {
         await outer.query(
           `INSERT INTO workspaces (slug, name, created_by)
            VALUES ('nesting-probe', 'nesting-probe', 'test')`,
         );
-        await withContext(pool, { kind: "operator" }, async (inner) => {
+        await withContext(appPool, { kind: "operator" }, async (inner) => {
           const { rows } = await inner.query(
             `SELECT count(*)::int AS n FROM workspaces WHERE slug = 'nesting-probe'`,
           );

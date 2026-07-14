@@ -10,6 +10,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
@@ -223,10 +224,12 @@ async function seedNamedAgentWithSession(
 
 describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
     await seedWorkspaces(pool);
   });
 
@@ -236,6 +239,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
   afterAll(async () => {
     await cleanupWorkspaces(pool);
+    await appPool.end();
     await pool.end();
   });
 
@@ -253,7 +257,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       };
 
       const created = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => createAgent(tx, params),
       );
@@ -261,7 +265,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       expect(created.name).toBe("agent-alpha");
 
       const found = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => findAgentByName(db, wsId("acme"), "agent-alpha"),
       );
@@ -279,16 +283,16 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       const now = new Date();
 
       // Owner session
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "owner",
       });
       // Requester session
-      const requester = await seedAgentAndSession(pool, {
+      const requester = await seedAgentAndSession(appPool, {
         agentNameSuffix: "req",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertWorkItem(tx, {
@@ -304,7 +308,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -327,12 +331,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("excludes the owner's own session from the results", async () => {
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "self",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertWorkItem(tx, {
@@ -348,7 +352,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -368,12 +372,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("#4: listSessionClaims returns the caller's OWN active claims (which listActiveClaims hides)", async () => {
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "ownclaims",
       });
 
       const workItemId = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -389,7 +393,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // listActiveClaims (excluding self) hides it...
       const others = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -407,7 +411,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // ...but listSessionClaims surfaces it so the agent can self-verify.
       const mine = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => listSessionClaims(db, owner.sessionId, now),
       );
@@ -419,13 +423,13 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("#4: listSessionClaims excludes the caller's EXPIRED and RELEASED claims", async () => {
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "ownclaims2",
       });
 
       // An expired claim
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -440,7 +444,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
       // An active-then-released claim
       const releasedId = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -454,13 +458,13 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
           }),
       );
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => releaseWorkItem(tx, owner.sessionId, releasedId, now),
       );
 
       const mine = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => listSessionClaims(db, owner.sessionId, now),
       );
@@ -469,15 +473,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("excludes an EXPIRED work_item (expires_at < now)", async () => {
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "expired",
       });
-      const viewer = await seedAgentAndSession(pool, {
+      const viewer = await seedAgentAndSession(appPool, {
         agentNameSuffix: "viewer",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertWorkItem(tx, {
@@ -494,7 +498,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -518,15 +522,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       // never conflict with a ghost. (The 60s background heartbeat keeps a
       // genuinely-live heads-down session fresh, so this can't hide a live one.)
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "stale",
       });
-      const viewer = await seedAgentAndSession(pool, {
+      const viewer = await seedAgentAndSession(appPool, {
         agentNameSuffix: "viewer2",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertWorkItem(tx, {
@@ -549,7 +553,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -571,15 +575,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       // The live-session counterpart to #3: a freshly-heart-beaten owner's claim
       // is visible to others (seedAgentAndSession leaves last_heartbeat_at = now).
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "fresh",
       });
-      const viewer = await seedAgentAndSession(pool, {
+      const viewer = await seedAgentAndSession(appPool, {
         agentNameSuffix: "viewer3",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertWorkItem(tx, {
@@ -595,7 +599,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -621,7 +625,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
   describe("touchHeartbeat", () => {
     it("renews each work_item using its OWN ttl_seconds", async () => {
       const now = new Date();
-      const { sessionId } = await seedAgentAndSession(pool, {
+      const { sessionId } = await seedAgentAndSession(appPool, {
         agentNameSuffix: "hb",
       });
 
@@ -629,7 +633,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       let workItemIdLong: string;
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           workItemIdShort = await insertWorkItem(tx, {
@@ -656,7 +660,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       // Advance time by 30 seconds and touch heartbeat.
       const renewalTime = secsFromNow(now, 30);
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => touchHeartbeat(tx, sessionId, renewalTime),
       );
@@ -697,13 +701,13 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
   describe("touchPresence", () => {
     it("bumps last_heartbeat_at but leaves every active claim's expires_at untouched", async () => {
       const now = new Date();
-      const { sessionId } = await seedAgentAndSession(pool, {
+      const { sessionId } = await seedAgentAndSession(appPool, {
         agentNameSuffix: "tp1",
       });
 
       const originalExpiry = secsFromNow(now, 300);
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -732,7 +736,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       const presenceTime = secsFromNow(now, 30);
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => touchPresence(tx, sessionId, presenceTime),
       );
@@ -760,15 +764,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("a session that only ever calls touchPresence has its claims lapse at TTL", async () => {
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "tp2owner",
       });
-      const viewer = await seedAgentAndSession(pool, {
+      const viewer = await seedAgentAndSession(appPool, {
         agentNameSuffix: "tp2viewer",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -790,13 +794,13 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // touchPresence proves liveness but must NOT renew the claim.
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => touchPresence(tx, owner.sessionId, now),
       );
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           listActiveClaims(
@@ -820,15 +824,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
   describe("fetchPendingAnnouncements / recordAnnouncementDeliveries", () => {
     it("returns a broadcast to everyone EXCEPT the sender", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "sender",
       });
-      const recipient = await seedAgentAndSession(pool, {
+      const recipient = await seedAgentAndSession(appPool, {
         agentNameSuffix: "recip",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertAnnouncement(tx, {
@@ -842,13 +846,13 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const recipientSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       const announcements = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
@@ -860,15 +864,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
     });
 
     it("does not deliver announcements older than the freshness window", async () => {
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "stalesend",
       });
-      const recipient = await seedAgentAndSession(pool, {
+      const recipient = await seedAgentAndSession(appPool, {
         agentNameSuffix: "stalerecip",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertAnnouncement(tx, {
@@ -899,12 +903,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const recipientSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
       const announcements = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
@@ -916,12 +920,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("does NOT return a broadcast to the sender themselves", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "selfannounce",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertAnnouncement(tx, {
@@ -935,13 +939,13 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const senderSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), sender.sessionId),
       );
 
       const announcements = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, senderSession),
       );
@@ -951,18 +955,18 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("returns a targeted announcement ONLY to the named agent's session", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "sender2",
       });
-      const target = await seedAgentAndSession(pool, {
+      const target = await seedAgentAndSession(appPool, {
         agentNameSuffix: "target",
       });
-      const bystander = await seedAgentAndSession(pool, {
+      const bystander = await seedAgentAndSession(appPool, {
         agentNameSuffix: "bystander",
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertAnnouncement(tx, {
@@ -976,18 +980,18 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const targetSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), target.sessionId),
       );
       const bystanderSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), bystander.sessionId),
       );
 
       const targetAnnouncements = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, targetSession),
       );
@@ -995,7 +999,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       expect(targetAnnouncements[0]!.body).toBe("targeted message");
 
       const bystanderAnnouncements = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, bystanderSession),
       );
@@ -1004,16 +1008,16 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("after recordAnnouncementDeliveries the same session does NOT get those again", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "sender3",
       });
-      const recipient = await seedAgentAndSession(pool, {
+      const recipient = await seedAgentAndSession(appPool, {
         agentNameSuffix: "recip2",
       });
 
       let announcementId: number;
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           announcementId = await insertAnnouncement(tx, {
@@ -1027,14 +1031,14 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const recipientSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       // First fetch — should have 1 announcement.
       const first = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
@@ -1042,7 +1046,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // Record delivery.
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           recordAnnouncementDeliveries(tx, recipient.sessionId, [
@@ -1052,7 +1056,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // Second fetch — should be empty.
       const second = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
@@ -1061,19 +1065,19 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("a DIFFERENT session still gets the announcement after another session records delivery", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "sender4",
       });
-      const recipA = await seedAgentAndSession(pool, {
+      const recipA = await seedAgentAndSession(appPool, {
         agentNameSuffix: "recipA",
       });
-      const recipB = await seedAgentAndSession(pool, {
+      const recipB = await seedAgentAndSession(appPool, {
         agentNameSuffix: "recipB",
       });
 
       let announcementId: number;
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           announcementId = await insertAnnouncement(tx, {
@@ -1087,19 +1091,19 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const recipASession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipA.sessionId),
       );
       const recipBSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipB.sessionId),
       );
 
       // Session A records delivery.
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           recordAnnouncementDeliveries(tx, recipA.sessionId, [announcementId!]),
@@ -1107,7 +1111,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // Session B should still get the announcement.
       const recipBPending = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipBSession),
       );
@@ -1117,16 +1121,16 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("recordAnnouncementDeliveries is idempotent (ON CONFLICT DO NOTHING)", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "sender5",
       });
-      const recipient = await seedAgentAndSession(pool, {
+      const recipient = await seedAgentAndSession(appPool, {
         agentNameSuffix: "recip3",
       });
 
       let announcementId: number;
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           announcementId = await insertAnnouncement(tx, {
@@ -1140,14 +1144,14 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const recipientSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       // Record delivery twice — should not throw.
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           recordAnnouncementDeliveries(tx, recipient.sessionId, [
@@ -1156,7 +1160,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
       await expect(
         withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             recordAnnouncementDeliveries(tx, recipient.sessionId, [
@@ -1167,7 +1171,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // Still not pending.
       const pending = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
@@ -1177,7 +1181,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
     it("recordAnnouncementDeliveries is a no-op for an empty list", async () => {
       await expect(
         withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             recordAnnouncementDeliveries(
@@ -1201,10 +1205,10 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
      */
     it("P1-2 regression: only explicitly handed IDs are marked delivered; unhanded IDs remain pending", async () => {
       const now = new Date();
-      const sender = await seedAgentAndSession(pool, {
+      const sender = await seedAgentAndSession(appPool, {
         agentNameSuffix: "p12sender",
       });
-      const recipient = await seedAgentAndSession(pool, {
+      const recipient = await seedAgentAndSession(appPool, {
         agentNameSuffix: "p12recip",
       });
 
@@ -1212,7 +1216,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       let idHigh: number;
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           idLow = await insertAnnouncement(tx, {
@@ -1234,21 +1238,21 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
       // Only record delivery for the HIGH id (simulates: low id not yet seen).
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           recordAnnouncementDeliveries(tx, recipient.sessionId, [idHigh!]),
       );
 
       const recipientSession = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), recipient.sessionId),
       );
 
       // Low id should still appear as pending.
       const pending = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => fetchPendingAnnouncements(tx, recipientSession),
       );
@@ -1267,7 +1271,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       const now = new Date();
 
       // Agent in workspace "alpha"
-      const ownerAlpha = await seedAgentAndSession(pool, {
+      const ownerAlpha = await seedAgentAndSession(appPool, {
         workspaceId: wsId("alpha"),
         repo: "shared-repo",
         agentNameSuffix: "wsA",
@@ -1277,7 +1281,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("alpha") },
         async (tx) => {
           await insertWorkItem(tx, {
@@ -1293,7 +1297,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       // Viewer in workspace "beta" — different workspace, same repo name
-      const viewerBeta = await seedAgentAndSession(pool, {
+      const viewerBeta = await seedAgentAndSession(appPool, {
         workspaceId: wsId("beta"),
         repo: "shared-repo",
         agentNameSuffix: "wsB",
@@ -1303,7 +1307,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       });
 
       const claims = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("beta") },
         (db) =>
           listActiveClaims(
@@ -1327,12 +1331,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
   // -------------------------------------------------------------------------
   describe("getSession", () => {
     it("returns session with agentName joined from agents table", async () => {
-      const { sessionId, agentName } = await seedAgentAndSession(pool, {
+      const { sessionId, agentName } = await seedAgentAndSession(appPool, {
         agentNameSuffix: "gstest",
       });
 
       const session = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) => getSession(db, wsId("acme"), sessionId),
       );
@@ -1347,7 +1351,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       const { UnknownSessionError } = await import("../src/errors.js");
       await expect(
         withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             getSession(
@@ -1366,12 +1370,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
   describe("releaseWorkItem", () => {
     it("releases an active work_item and returns rowCount 1", async () => {
       const now = new Date();
-      const { sessionId } = await seedAgentAndSession(pool, {
+      const { sessionId } = await seedAgentAndSession(appPool, {
         agentNameSuffix: "rel",
       });
 
       const workItemId = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -1386,7 +1390,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const rowCount = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => releaseWorkItem(tx, sessionId, workItemId, now),
       );
@@ -1401,12 +1405,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("returns 0 (idempotent) when the work_item is already released", async () => {
       const now = new Date();
-      const { sessionId } = await seedAgentAndSession(pool, {
+      const { sessionId } = await seedAgentAndSession(appPool, {
         agentNameSuffix: "rel2",
       });
 
       const workItemId = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -1421,12 +1425,12 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => releaseWorkItem(tx, sessionId, workItemId, now),
       );
       const secondRowCount = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => releaseWorkItem(tx, sessionId, workItemId, now),
       );
@@ -1435,15 +1439,15 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
 
     it("returns 0 when sessionId does not own the work_item (owner-scoped)", async () => {
       const now = new Date();
-      const owner = await seedAgentAndSession(pool, {
+      const owner = await seedAgentAndSession(appPool, {
         agentNameSuffix: "relowner",
       });
-      const other = await seedAgentAndSession(pool, {
+      const other = await seedAgentAndSession(appPool, {
         agentNameSuffix: "relother",
       });
 
       const workItemId = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -1458,7 +1462,7 @@ describe.skipIf(!dbAvailable)("repo — DB-dependent", () => {
       );
 
       const rowCount = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => releaseWorkItem(tx, other.sessionId, workItemId, now),
       );
@@ -1475,10 +1479,12 @@ describe.skipIf(!dbAvailable)(
   "repo — Task 2.4 (identity + change records)",
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspaces(pool);
     });
 
@@ -1488,6 +1494,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       await cleanupWorkspaces(pool);
+      await appPool.end();
       await pool.end();
     });
 
@@ -1498,28 +1505,28 @@ describe.skipIf(!dbAvailable)(
       it("returns names in the handle family with a live session; excludes stale-and-unreferenced and out-of-family", async () => {
         const now = new Date();
         // Live members of the "alex" family.
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, 10),
         });
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           name: "alex-2",
           heartbeatAt: secsAgo(now, 10),
         });
         // Stale member of the family with NO claims and NO change records → its
         // ordinal is free to recycle, so it must NOT be reserved.
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           name: "alex-3",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         // Live agent OUTSIDE the family.
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           name: "jordan-1",
           heartbeatAt: secsAgo(now, 10),
         });
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1539,13 +1546,13 @@ describe.skipIf(!dbAvailable)(
       it("#2: reserves a stale session's name while it holds an active, non-expired claim", async () => {
         const now = new Date();
         // Stale session (would be unreserved on presence alone)...
-        const stale = await seedNamedAgentWithSession(pool, {
+        const stale = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         // ...but it still holds a live claim, so its name must stay parked.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           async (tx) => {
             await insertWorkItem(tx, {
@@ -1561,7 +1568,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1579,13 +1586,13 @@ describe.skipIf(!dbAvailable)(
 
       it("#2: does NOT reserve a stale session whose claim has expired", async () => {
         const now = new Date();
-        const stale = await seedNamedAgentWithSession(pool, {
+        const stale = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         // An expired claim is no longer outstanding, so it parks nothing.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           async (tx) => {
             await insertWorkItem(tx, {
@@ -1601,7 +1608,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1619,12 +1626,12 @@ describe.skipIf(!dbAvailable)(
 
       it("#2: reserves a stale session's name while it has an outstanding change record", async () => {
         const now = new Date();
-        const stale = await seedNamedAgentWithSession(pool, {
+        const stale = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           async (tx) => {
             await replaceChangeRecords(tx, {
@@ -1646,7 +1653,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1664,12 +1671,12 @@ describe.skipIf(!dbAvailable)(
 
       it("#2: does NOT reserve a stale session whose change record has aged past the TTL", async () => {
         const now = new Date();
-        const stale = await seedNamedAgentWithSession(pool, {
+        const stale = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           async (tx) => {
             await replaceChangeRecords(tx, {
@@ -1696,7 +1703,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1715,12 +1722,12 @@ describe.skipIf(!dbAvailable)(
       it("reserves a name whose only footprint is an UNCOMMITTED record, while within the grace window", async () => {
         const now = new Date();
         // Offline (past staleness) but still within the uncommitted grace window.
-        const offline = await seedNamedAgentWithSession(pool, {
+        const offline = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -1741,7 +1748,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1761,12 +1768,12 @@ describe.skipIf(!dbAvailable)(
         const now = new Date();
         // Session last alive beyond the grace window — its dirty snapshot is no
         // longer shown, so its ordinal must be free to recycle.
-        const gone = await seedNamedAgentWithSession(pool, {
+        const gone = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, UNCOMMITTED_GRACE_SECONDS + 60),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -1787,7 +1794,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1810,12 +1817,12 @@ describe.skipIf(!dbAvailable)(
       // someone else entirely).
       it("reserves a stale agent's name while an announcement it SENT is still deliverable", async () => {
         const now = new Date();
-        const stale = await seedNamedAgentWithSession(pool, {
+        const stale = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             insertAnnouncement(tx, {
@@ -1833,7 +1840,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1851,16 +1858,16 @@ describe.skipIf(!dbAvailable)(
 
       it("reserves a stale name still TARGETED by a deliverable announcement", async () => {
         const now = new Date();
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
-        const sender = await seedNamedAgentWithSession(pool, {
+        const sender = await seedNamedAgentWithSession(appPool, {
           name: "jordan-1",
           heartbeatAt: secsAgo(now, 10),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             insertAnnouncement(tx, {
@@ -1873,7 +1880,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1891,12 +1898,12 @@ describe.skipIf(!dbAvailable)(
 
       it("does NOT reserve a name whose announcements have all aged past the delivery window", async () => {
         const now = new Date();
-        const stale = await seedNamedAgentWithSession(pool, {
+        const stale = await seedNamedAgentWithSession(appPool, {
           name: "alex-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 5),
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             insertAnnouncement(tx, {
@@ -1913,7 +1920,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1931,14 +1938,14 @@ describe.skipIf(!dbAvailable)(
 
       it("is scoped by workspace", async () => {
         const now = new Date();
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           workspaceId: wsId("other-ws"),
           name: "alex-1",
           heartbeatAt: secsAgo(now, 10),
         });
 
         const names = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             reservedAgentNamesForHandle(
@@ -1960,14 +1967,14 @@ describe.skipIf(!dbAvailable)(
     // -------------------------------------------------------------------------
     describe("findAgentByName", () => {
       it("returns the row for an existing (workspace, name)", async () => {
-        const { agentId } = await seedNamedAgentWithSession(pool, {
+        const { agentId } = await seedNamedAgentWithSession(appPool, {
           name: "casey-1",
           heartbeatAt: new Date(),
           withSession: false,
         });
 
         const found = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) => findAgentByName(db, wsId("acme"), "casey-1"),
         );
@@ -1978,7 +1985,7 @@ describe.skipIf(!dbAvailable)(
 
       it("returns null for an absent name", async () => {
         const found = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) => findAgentByName(db, wsId("acme"), "nobody-9"),
         );
@@ -1986,14 +1993,14 @@ describe.skipIf(!dbAvailable)(
       });
 
       it("is scoped by workspace", async () => {
-        await seedNamedAgentWithSession(pool, {
+        await seedNamedAgentWithSession(appPool, {
           workspaceId: wsId("other-ws"),
           name: "casey-1",
           heartbeatAt: new Date(),
           withSession: false,
         });
         const found = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) => findAgentByName(db, wsId("acme"), "casey-1"),
         );
@@ -2007,7 +2014,7 @@ describe.skipIf(!dbAvailable)(
     describe("createAgent with optional model", () => {
       it("inserts NULL when model is omitted and returns model: null", async () => {
         const created = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             createAgent(tx, {
@@ -2022,7 +2029,7 @@ describe.skipIf(!dbAvailable)(
 
       it("inserts NULL when model is explicitly null", async () => {
         const created = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             createAgent(tx, {
@@ -2050,15 +2057,18 @@ describe.skipIf(!dbAvailable)(
       }
 
       it("wholesale-replaces uncommitted AND drops committed rows from a branch the agent left", async () => {
-        const { agentId, agentName } = await seedNamedAgentWithSession(pool, {
-          name: "rcr-1",
-          heartbeatAt: new Date(),
-          withSession: false,
-        });
+        const { agentId, agentName } = await seedNamedAgentWithSession(
+          appPool,
+          {
+            name: "rcr-1",
+            heartbeatAt: new Date(),
+            withSession: false,
+          },
+        );
 
         // First report: one committed (aaa) + one uncommitted, on main.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2090,7 +2100,7 @@ describe.skipIf(!dbAvailable)(
         // (no more 72h ghost on the abandoned branch). `bbb` is added; the prior
         // uncommitted is cleared.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2123,15 +2133,18 @@ describe.skipIf(!dbAvailable)(
       });
 
       it("drops a committed row the agent stops reporting on the SAME branch (squash/rebase)", async () => {
-        const { agentId, agentName } = await seedNamedAgentWithSession(pool, {
-          name: "rcr-squash",
-          heartbeatAt: new Date(),
-          withSession: false,
-        });
+        const { agentId, agentName } = await seedNamedAgentWithSession(
+          appPool,
+          {
+            name: "rcr-squash",
+            heartbeatAt: new Date(),
+            withSession: false,
+          },
+        );
 
         // Two unlanded commits on main.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2161,7 +2174,7 @@ describe.skipIf(!dbAvailable)(
         // After a squash/rebase, `q` is gone from base..HEAD → next report omits it.
         // It must be removed, not linger 72h showing a wrong "unpushed" hint.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2189,12 +2202,12 @@ describe.skipIf(!dbAvailable)(
       });
 
       it("#6: a commit reported by two agents is stored once, owned by the first reporter", async () => {
-        const a = await seedNamedAgentWithSession(pool, {
+        const a = await seedNamedAgentWithSession(appPool, {
           name: "rcr-owner",
           heartbeatAt: new Date(),
           withSession: false,
         });
-        const b = await seedNamedAgentWithSession(pool, {
+        const b = await seedNamedAgentWithSession(appPool, {
           name: "rcr-puller",
           heartbeatAt: new Date(),
           withSession: false,
@@ -2202,7 +2215,7 @@ describe.skipIf(!dbAvailable)(
 
         const reportShared = (agentId: string, agentName: string) =>
           withContext(
-            pool,
+            appPool,
             { kind: "workspace", workspaceId: wsId("acme") },
             (tx) =>
               replaceChangeRecords(tx, {
@@ -2239,12 +2252,12 @@ describe.skipIf(!dbAvailable)(
       });
 
       it("P1-1: the same commit reported under two DIFFERENT branches is stored once (per-commit dedup)", async () => {
-        const a = await seedNamedAgentWithSession(pool, {
+        const a = await seedNamedAgentWithSession(appPool, {
           name: "rcr-xbranch-a",
           heartbeatAt: new Date(),
           withSession: false,
         });
-        const b = await seedNamedAgentWithSession(pool, {
+        const b = await seedNamedAgentWithSession(appPool, {
           name: "rcr-xbranch-b",
           heartbeatAt: new Date(),
           withSession: false,
@@ -2253,7 +2266,7 @@ describe.skipIf(!dbAvailable)(
         // A reports `merged` while on a feature branch (first reporter → owns the
         // row, snapshots branch="feat").
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2276,7 +2289,7 @@ describe.skipIf(!dbAvailable)(
         // B reports the SAME sha from `main` (it fast-forward-merged the branch).
         // Pre-009 this created a second row keyed on branch; now it dedups to one.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2313,19 +2326,19 @@ describe.skipIf(!dbAvailable)(
       });
 
       it("empty entries clear ALL of the agent's rows (committed + uncommitted), leaving other agents' untouched", async () => {
-        const a = await seedNamedAgentWithSession(pool, {
+        const a = await seedNamedAgentWithSession(appPool, {
           name: "rcr-a",
           heartbeatAt: new Date(),
           withSession: false,
         });
-        const b = await seedNamedAgentWithSession(pool, {
+        const b = await seedNamedAgentWithSession(appPool, {
           name: "rcr-b",
           heartbeatAt: new Date(),
           withSession: false,
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2351,7 +2364,7 @@ describe.skipIf(!dbAvailable)(
             }),
         );
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2375,7 +2388,7 @@ describe.skipIf(!dbAvailable)(
         // its uncommitted and its committed rows clear; B's row is untouched (the
         // committed delete is scoped to agent_id).
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2403,11 +2416,11 @@ describe.skipIf(!dbAvailable)(
     describe("listOtherChangeRecords", () => {
       it("returns only OTHER agents' records, with author presence enrichment", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-1",
           heartbeatAt: secsAgo(now, 5),
         });
-        const liveAuthor = await seedNamedAgentWithSession(pool, {
+        const liveAuthor = await seedNamedAgentWithSession(appPool, {
           name: "live-1",
           human: "bob",
           heartbeatAt: secsAgo(now, 10),
@@ -2415,7 +2428,7 @@ describe.skipIf(!dbAvailable)(
 
         // Caller's own record (must be excluded).
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2436,7 +2449,7 @@ describe.skipIf(!dbAvailable)(
         );
         // Live author's record.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2457,7 +2470,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2487,17 +2500,17 @@ describe.skipIf(!dbAvailable)(
 
       it("authorIsLive is false when the author's heartbeat is older than staleAfterSeconds", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-2",
           heartbeatAt: secsAgo(now, 5),
         });
-        const staleAuthor = await seedNamedAgentWithSession(pool, {
+        const staleAuthor = await seedNamedAgentWithSession(appPool, {
           name: "stale-1",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 30),
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2518,7 +2531,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2537,18 +2550,18 @@ describe.skipIf(!dbAvailable)(
 
       it("an author with NO session still has its records returned with authorIsLive=false", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-3",
           heartbeatAt: secsAgo(now, 5),
         });
-        const noSession = await seedNamedAgentWithSession(pool, {
+        const noSession = await seedNamedAgentWithSession(appPool, {
           name: "nosess-1",
           heartbeatAt: now,
           withSession: false,
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2569,7 +2582,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2589,17 +2602,17 @@ describe.skipIf(!dbAvailable)(
 
       it("excludes an UNCOMMITTED record when the author is past the grace window", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-4",
           heartbeatAt: secsAgo(now, 5),
         });
-        const staleAuthor = await seedNamedAgentWithSession(pool, {
+        const staleAuthor = await seedNamedAgentWithSession(appPool, {
           name: "stale-2",
           heartbeatAt: secsAgo(now, UNCOMMITTED_GRACE_SECONDS + 30),
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2620,7 +2633,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2640,19 +2653,19 @@ describe.skipIf(!dbAvailable)(
 
       it("KEEPS an UNCOMMITTED record while the author is offline but within the grace window", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-grace",
           heartbeatAt: secsAgo(now, 5),
         });
         // Past staleness (offline label) but still inside the grace window — e.g. a
         // just-crashed agent that may restart and resume these edits.
-        const offlineAuthor = await seedNamedAgentWithSession(pool, {
+        const offlineAuthor = await seedNamedAgentWithSession(appPool, {
           name: "offline-grace",
           heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 30),
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2673,7 +2686,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2694,18 +2707,18 @@ describe.skipIf(!dbAvailable)(
 
       it("excludes an UNCOMMITTED record when the author has NO session", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-5",
           heartbeatAt: secsAgo(now, 5),
         });
-        const noSession = await seedNamedAgentWithSession(pool, {
+        const noSession = await seedNamedAgentWithSession(appPool, {
           name: "nosess-2",
           heartbeatAt: now,
           withSession: false,
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2726,7 +2739,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2744,17 +2757,17 @@ describe.skipIf(!dbAvailable)(
 
       it("keeps a past-grace author's COMMITTED record but drops their UNCOMMITTED one", async () => {
         const now = new Date();
-        const caller = await seedNamedAgentWithSession(pool, {
+        const caller = await seedNamedAgentWithSession(appPool, {
           name: "caller-6",
           heartbeatAt: secsAgo(now, 5),
         });
-        const staleAuthor = await seedNamedAgentWithSession(pool, {
+        const staleAuthor = await seedNamedAgentWithSession(appPool, {
           name: "stale-3",
           heartbeatAt: secsAgo(now, UNCOMMITTED_GRACE_SECONDS + 30),
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2781,7 +2794,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         const records = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) =>
             listOtherChangeRecords(
@@ -2806,7 +2819,7 @@ describe.skipIf(!dbAvailable)(
     describe("pruneChangeRecords", () => {
       it("deletes records older than TTL, keeps fresh, and is scoped by (workspace, repo)", async () => {
         const now = new Date();
-        const agent = await seedNamedAgentWithSession(pool, {
+        const agent = await seedNamedAgentWithSession(appPool, {
           name: "prune-1",
           heartbeatAt: now,
           withSession: false,
@@ -2814,7 +2827,7 @@ describe.skipIf(!dbAvailable)(
 
         // Insert one stale + one fresh in (acme, my-repo), and one fresh in another repo.
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           async (tx) => {
             await replaceChangeRecords(tx, {
@@ -2849,13 +2862,13 @@ describe.skipIf(!dbAvailable)(
         // A record in a DIFFERENT repo, also stale — must survive (scoped prune).
         // Authored by a DIFFERENT agent because replaceChangeRecords is per-agent
         // wholesale (it would otherwise delete this same agent's my-repo rows).
-        const other = await seedNamedAgentWithSession(pool, {
+        const other = await seedNamedAgentWithSession(appPool, {
           name: "prune-2",
           heartbeatAt: now,
           withSession: false,
         });
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             replaceChangeRecords(tx, {
@@ -2880,7 +2893,7 @@ describe.skipIf(!dbAvailable)(
         );
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) =>
             pruneChangeRecords(tx, wsId("acme"), "my-repo", now, ttlSeconds),
@@ -2900,19 +2913,19 @@ describe.skipIf(!dbAvailable)(
     // -------------------------------------------------------------------------
     describe("updateSessionBranch", () => {
       it("changes sessions.branch and a subsequent read reflects it", async () => {
-        const { sessionId } = await seedNamedAgentWithSession(pool, {
+        const { sessionId } = await seedNamedAgentWithSession(appPool, {
           name: "branch-1",
           heartbeatAt: new Date(),
         });
 
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (tx) => updateSessionBranch(tx, sessionId!, "new-branch"),
         );
 
         const session = await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: wsId("acme") },
           (db) => getSession(db, wsId("acme"), sessionId!),
         );
@@ -2928,10 +2941,12 @@ describe.skipIf(!dbAvailable)(
 
 describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
     await seedWorkspaces(pool);
   });
 
@@ -2941,13 +2956,14 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
   afterAll(async () => {
     await cleanupWorkspaces(pool);
+    await appPool.end();
     await pool.end();
   });
 
   describe("agents list", () => {
     it("returns every agent in the workspace joined to its most-recent session", async () => {
       const now = new Date();
-      const withSess = await seedNamedAgentWithSession(pool, {
+      const withSess = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         branch: "feat/x",
@@ -2957,7 +2973,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       });
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -2974,7 +2990,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
     it("a sessionless agent has null repo/branch/lastHeartbeatAt", async () => {
       const now = new Date();
-      await seedNamedAgentWithSession(pool, {
+      await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         name: "NoSession-1",
         heartbeatAt: now,
@@ -2982,7 +2998,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       });
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -2996,7 +3012,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
     it("uses the most-recent session when an agent has several", async () => {
       const now = new Date();
-      const seeded = await seedNamedAgentWithSession(pool, {
+      const seeded = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         branch: "old-branch",
@@ -3005,7 +3021,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       });
       // A newer session on a different branch.
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           const s = await createSession(tx, {
@@ -3022,7 +3038,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3033,13 +3049,13 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
     it("is scoped to the requested workspace", async () => {
       const now = new Date();
-      await seedNamedAgentWithSession(pool, {
+      await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("other-ws"),
         name: "Elsewhere-1",
         heartbeatAt: now,
       });
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3051,14 +3067,14 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
   describe("tasks list", () => {
     it("returns a live-owner active claim as status 'active' with endedAt null", async () => {
       const now = new Date();
-      const owner = await seedNamedAgentWithSession(pool, {
+      const owner = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         name: "Owner-1",
         heartbeatAt: secsAgo(now, 8),
       });
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -3073,7 +3089,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3091,14 +3107,14 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
     it("returns a released claim as status 'done' with endedAt = released_at", async () => {
       const now = new Date();
-      const owner = await seedNamedAgentWithSession(pool, {
+      const owner = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         name: "Owner-2",
         heartbeatAt: secsAgo(now, 8),
       });
       const id = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -3112,13 +3128,13 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
           }),
       );
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) => releaseWorkItem(tx, owner.sessionId!, id, now),
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3130,14 +3146,14 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
     it("returns an unreleased claim whose owner is STALE as status 'dropped'", async () => {
       const now = new Date();
-      const owner = await seedNamedAgentWithSession(pool, {
+      const owner = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         name: "StaleOwner",
         heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS + 60),
       });
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -3152,7 +3168,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3170,14 +3186,14 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       // dropped — even though presenceFor would still read the agent as "live"
       // at that same instant. Documents that deliberate one-instant divergence.
       const now = new Date();
-      const owner = await seedNamedAgentWithSession(pool, {
+      const owner = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         name: "BoundaryOwner",
         heartbeatAt: secsAgo(now, STALE_AFTER_SECONDS),
       });
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (tx) =>
           insertWorkItem(tx, {
@@ -3192,7 +3208,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3205,7 +3221,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
   describe("announcements list", () => {
     it("returns announcements newest-first", async () => {
       const now = new Date();
-      const sender = await seedNamedAgentWithSession(pool, {
+      const sender = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         name: "Sender-1",
@@ -3213,7 +3229,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
         heartbeatAt: now,
       });
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           await insertAnnouncement(tx, {
@@ -3234,7 +3250,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3250,14 +3266,14 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
     it("caps the feed at 50, keeping the most recent", async () => {
       const now = new Date();
-      const sender = await seedNamedAgentWithSession(pool, {
+      const sender = await seedNamedAgentWithSession(appPool, {
         workspaceId: wsId("acme"),
         repo: "my-repo",
         name: "Sender-2",
         heartbeatAt: now,
       });
       await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         async (tx) => {
           for (let i = 0; i < 55; i++) {
@@ -3273,7 +3289,7 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
       );
 
       const result = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: wsId("acme") },
         (db) =>
           getWorkspaceLandscape(db, wsId("acme"), now, STALE_AFTER_SECONDS),
@@ -3299,10 +3315,12 @@ describe.skipIf(!dbAvailable)("repo — getWorkspaceLandscape", () => {
 
 describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () => {
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
   });
 
   afterEach(async () => {
@@ -3312,22 +3330,26 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 
   it("inserts a fresh profile row from the supplied headers", async () => {
-    await withContext(pool, { kind: "account", accountId: "prof-new" }, (db) =>
-      upsertAccountProfile(db, {
-        accountId: "prof-new",
-        displayName: "Korso Admin",
-        githubLogin: null,
-        email: null,
-        avatarUrl: null,
-      }),
+    await withContext(
+      appPool,
+      { kind: "account", accountId: "prof-new" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-new",
+          displayName: "Korso Admin",
+          githubLogin: null,
+          email: null,
+          avatarUrl: null,
+        }),
     );
 
     const p = await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-new" },
       (db) => getAccountProfile(db, "prof-new"),
     );
@@ -3340,30 +3362,36 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
 
   it("does NOT clobber a good display_name when a later request omits the header", async () => {
     // First request: the trusted BFF snapshot lands with a real name.
-    await withContext(pool, { kind: "account", accountId: "prof-keep" }, (db) =>
-      upsertAccountProfile(db, {
-        accountId: "prof-keep",
-        displayName: "Korso Admin",
-        githubLogin: null,
-        email: null,
-        avatarUrl: null,
-      }),
+    await withContext(
+      appPool,
+      { kind: "account", accountId: "prof-keep" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-keep",
+          displayName: "Korso Admin",
+          githubLogin: null,
+          email: null,
+          avatarUrl: null,
+        }),
     );
 
     // Second request authenticates the same account but arrives WITHOUT any
     // display headers (all null). The good name must survive.
-    await withContext(pool, { kind: "account", accountId: "prof-keep" }, (db) =>
-      upsertAccountProfile(db, {
-        accountId: "prof-keep",
-        displayName: null,
-        githubLogin: null,
-        email: null,
-        avatarUrl: null,
-      }),
+    await withContext(
+      appPool,
+      { kind: "account", accountId: "prof-keep" },
+      (db) =>
+        upsertAccountProfile(db, {
+          accountId: "prof-keep",
+          displayName: null,
+          githubLogin: null,
+          email: null,
+          avatarUrl: null,
+        }),
     );
 
     const p = await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-keep" },
       (db) => getAccountProfile(db, "prof-keep"),
     );
@@ -3372,7 +3400,7 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
 
   it("still overwrites with a NEW non-null value (updates are not blocked)", async () => {
     await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-update" },
       (db) =>
         upsertAccountProfile(db, {
@@ -3385,7 +3413,7 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
     );
 
     await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-update" },
       (db) =>
         upsertAccountProfile(db, {
@@ -3398,7 +3426,7 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
     );
 
     const p = await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-update" },
       (db) => getAccountProfile(db, "prof-update"),
     );
@@ -3411,7 +3439,7 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
 
   it("preserves avatar_url too when a later request omits it", async () => {
     await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-avatar" },
       (db) =>
         upsertAccountProfile(db, {
@@ -3423,7 +3451,7 @@ describe.skipIf(!dbAvailable)("upsertAccountProfile — display snapshot", () =>
         }),
     );
     await withContext(
-      pool,
+      appPool,
       { kind: "account", accountId: "prof-avatar" },
       (db) =>
         upsertAccountProfile(db, {

@@ -15,6 +15,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "../setup.js";
@@ -95,6 +96,7 @@ describe.skipIf(!dbAvailable)(
   "join – DB tests" + (!dbAvailable ? " (SKIPPED: no DB configured)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let workspaceId: string;
     /** SELF-HOST tenant (no account): scopes by workspaceId, body slug parity. */
     let tenant: TenantContext;
@@ -102,9 +104,11 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      // join() under test runs as the restricted app-role login so RLS is exercised.
+      appPool = createAppPool();
       workspaceId = await seedWorkspace(pool);
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -113,6 +117,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -162,7 +167,7 @@ describe.skipIf(!dbAvailable)(
     it("advertises MIN_CLIENT_VERSION as the minimum when configured", async () => {
       resetContext();
       initContext({
-        pool,
+        pool: appPool,
         config: makeTestConfig({ MIN_CLIENT_VERSION: "0.10.0" }),
       });
       try {
@@ -179,7 +184,7 @@ describe.skipIf(!dbAvailable)(
         expect(result.minimumClientVersion).toBe("0.10.0");
       } finally {
         resetContext();
-        initContext({ pool, config: makeTestConfig() });
+        initContext({ pool: appPool, config: makeTestConfig() });
       }
     });
 

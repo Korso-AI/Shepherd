@@ -21,6 +21,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "../setup.js";
@@ -108,20 +109,25 @@ async function seedSession(
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
+  // Owner pool: fixtures (seedSession), raw SQL inserts, truncates, raw asserts.
   let pool: pg.Pool;
+  // Restricted app-role pool: the code under test (`work` and friends resolve
+  // their pool from the shared context) runs here, so it exercises the policies.
+  let appPool: pg.Pool;
   let workspaceId: string;
   let tenant: TenantContext;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
       ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
     tenant = { workspaceId, via: "team" };
-    initContext({ pool, config: TEST_CONFIG });
+    initContext({ pool: appPool, config: TEST_CONFIG });
   });
 
   afterEach(async () => {
@@ -130,6 +136,7 @@ describe.skipIf(!dbAvailable)("work operation — DB-dependent", () => {
 
   afterAll(async () => {
     resetContext();
+    await appPool.end();
     await pool.end();
   });
 

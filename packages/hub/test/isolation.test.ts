@@ -37,6 +37,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -324,7 +325,11 @@ describe.skipIf(!dbAvailable)(
   "Cross-tenant ISOLATION invariants (DB-gated)" +
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
+    // Owner pool: seed the two-workspace world + raw cross-tenant asserts.
+    // Restricted app-role pool: the server, so every isolation 404 is enforced
+    // by RLS (workspace/account policies), not merely the SQL predicates.
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
     let wsA: string;
     let wsB: string;
@@ -332,7 +337,8 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
-      initContext({ pool, config: makeTestConfig() });
+      appPool = createAppPool();
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -378,6 +384,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -917,6 +924,105 @@ describe.skipIf(!dbAvailable)(
         payload: { name: "Forged" },
       });
       expect(res.statusCode).toBe(401);
+    });
+  },
+);
+
+// ===========================================================================
+// RLS backstop (Task 9): forgotten workspace predicates.
+//
+// Everything above proves isolation AT THE HTTP LAYER, where every query the
+// handlers run still carries an explicit workspace_id predicate. This block
+// proves the layer BELOW: with migration 021's policies enforced against the
+// restricted app role, a query that FORGOT its WHERE clause entirely — the app
+// bug RLS exists to absorb — cannot read or mutate another workspace's rows.
+// Raw SQL on a withContext transaction stands in for that hypothetical buggy
+// repo function; the owner pool (RLS-exempt) seeds and verifies ground truth.
+// ===========================================================================
+
+describe.skipIf(!dbAvailable)(
+  "RLS backstop: forgotten workspace predicates",
+  () => {
+    let pool: pg.Pool;
+    let appPool: pg.Pool;
+    let wsA: string;
+    let wsB: string;
+    let sessionInB: string;
+    // One active claim seeded per workspace (the unscoped-UPDATE bound below).
+    const claimsInA = 1;
+
+    beforeAll(async () => {
+      pool = createTestPool();
+      await runTestMigrations(pool);
+      appPool = createAppPool();
+      // The suite above leaves its re-seeded world behind; start clean.
+      await truncateAll(pool);
+      await truncateTenancy(pool);
+      wsA = await seedWorkspace(pool, "rls-backstop-a");
+      wsB = await seedWorkspace(pool, "rls-backstop-b");
+      await mintSessionWithClaim(pool, wsA, "alice");
+      const b = await mintSessionWithClaim(pool, wsB, "bob");
+      sessionInB = b.sessionId;
+    });
+
+    afterAll(async () => {
+      await truncateAll(pool);
+      await truncateTenancy(pool);
+      await appPool.end();
+      await pool.end();
+    });
+
+    it("an unscoped SELECT in workspace context returns only the context workspace's rows", async () => {
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: wsA },
+        async (db) => {
+          const { rows } = await db.query<{ workspace_id: string }>(
+            `SELECT workspace_id FROM work_items`, // NO WHERE
+          );
+          expect(rows.every((r) => r.workspace_id === wsA)).toBe(true);
+          // Proves the policy FILTERED (wsB's claim exists but is invisible),
+          // not that the table is empty.
+          expect(rows.length).toBeGreaterThan(0);
+        },
+      );
+    });
+
+    it("a cross-workspace write is refused outright", async () => {
+      await expect(
+        withContext(appPool, { kind: "workspace", workspaceId: wsA }, (db) =>
+          db.query(
+            `INSERT INTO announcements (workspace_id, repo, from_session_id, body)
+             VALUES ($1, $2, $3, 'intrusion')`,
+            [wsB, REPO, sessionInB],
+          ),
+        ),
+      ).rejects.toThrow(/row-level security/);
+      // Nothing landed in B (owner pool sees everything).
+      expect(await countAnnouncements(pool, wsB)).toBe(0);
+    });
+
+    // ORDER-DEPENDENT: this block shares one seeded world (beforeAll, no
+    // afterEach), and this test flips wsA's work_item off 'active' — the
+    // unscoped-SELECT test above relies on that row existing, so keep this
+    // test LAST (or re-seed) if the block grows.
+    it("an unscoped UPDATE cannot touch foreign rows", async () => {
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: wsA },
+        async (db) => {
+          const { rowCount } = await db.query(
+            `UPDATE work_items SET status = 'released'`, // NO WHERE
+          );
+          expect(rowCount ?? 0).toBeLessThanOrEqual(claimsInA); // wsB rows untouched
+        },
+      );
+      const { rows } = await pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM work_items
+         WHERE workspace_id = $1 AND status = 'active'`,
+        [wsB],
+      );
+      expect(rows[0]!.n).toBeGreaterThan(0);
     });
   },
 );

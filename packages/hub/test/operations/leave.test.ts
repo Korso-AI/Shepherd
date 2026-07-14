@@ -11,6 +11,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "../setup.js";
@@ -84,17 +85,19 @@ async function seedAgentAndSession(
 
 describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
     const { rows } = await pool.query<{ id: string }>(
       `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
       ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
     tenant = { workspaceId, via: "team" };
-    initContext({ pool, config: TEST_CONFIG });
+    initContext({ pool: appPool, config: TEST_CONFIG });
   });
 
   afterEach(async () => {
@@ -103,6 +106,7 @@ describe.skipIf(!dbAvailable)("leave operation — DB-dependent", () => {
 
   afterAll(async () => {
     resetContext();
+    await appPool.end();
     await pool.end();
   });
 

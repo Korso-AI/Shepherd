@@ -3,8 +3,10 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
+  TEST_DATABASE_URL,
 } from "./setup.js";
 import { runMigrations, assertMigrationsCurrent } from "../src/migrate.js";
 
@@ -580,22 +582,69 @@ describe.skipIf(!dbAvailable)("migrate 015 — account-scoped tokens", () => {
   });
 });
 
+describe.skipIf(!dbAvailable)("migrate 021 — row-level security", () => {
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("records the 021 migration as applied", async () => {
+    const { rows } = await pool.query<{ version: string }>(
+      "SELECT version FROM schema_migrations WHERE version = '021_rls'",
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it("enables + forces RLS on a representative table (agents)", async () => {
+    // The full enabled/forced/policy/grant audit lives in rls.coverage.test.ts;
+    // this is the per-migration smoke that 021 actually ran the RLS DDL.
+    const { rows } = await pool.query<{
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }>(
+      `SELECT relrowsecurity, relforcerowsecurity
+       FROM pg_class WHERE oid = 'agents'::regclass`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.relrowsecurity).toBe(true);
+    expect(rows[0]!.relforcerowsecurity).toBe(true);
+  });
+});
+
 describe.skipIf(!dbAvailable)(
   "assertMigrationsCurrent — split-database boot guard",
   () => {
+    // Owner pool runs the migrations and mutates schema_migrations; the app-role
+    // pool models the SERVING connection in a two-role deployment.
     let pool: pg.Pool;
+    let appPool: pg.Pool;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
     });
 
     afterAll(async () => {
+      await appPool.end();
       await pool.end();
     });
 
     it("passes on the database the migrations ran against", async () => {
       await expect(assertMigrationsCurrent(pool)).resolves.toBeUndefined();
+    });
+
+    it("passes on the restricted app-role serving pool (two-role deployment)", async () => {
+      // In a split-role deployment boot runs assertMigrationsCurrent on the
+      // SERVING pool, which connects as the app role. schema_migrations carries a
+      // SELECT grant (RLS stays OFF on it) precisely so this read succeeds.
+      await expect(assertMigrationsCurrent(appPool)).resolves.toBeUndefined();
     });
 
     it("fails loudly when the serving database is missing a migration", async () => {
@@ -619,6 +668,127 @@ describe.skipIf(!dbAvailable)(
         );
       }
     });
+  },
+);
+
+describe.skipIf(!dbAvailable)(
+  "migrate 021 — app-role provisioning edge cases",
+  () => {
+    // These pins need DATABASES with specific pre-conditions, so each test
+    // provisions (and drops) a throwaway database derived from the per-agent
+    // base test DB name — no collision with sibling agents' runs. The owner
+    // pool is a superuser, so CREATE/DROP DATABASE and CREATE ROLE work.
+    let admin: pg.Pool;
+    let baseDb: string;
+
+    /** Quote an identifier (") — names here include multibyte characters. */
+    const q = (s: string): string => `"${s.replaceAll(`"`, `""`)}"`;
+
+    /** Pool onto `database` reusing the base URL's host/credentials. */
+    function poolFor(database: string): pg.Pool {
+      const url = new URL(TEST_DATABASE_URL!);
+      return new pg.Pool({
+        host: url.hostname,
+        port: url.port ? Number(url.port) : 5432,
+        user: decodeURIComponent(url.username),
+        password: decodeURIComponent(url.password),
+        database,
+      });
+    }
+
+    beforeAll(async () => {
+      admin = createTestPool();
+      const { rows } = await admin.query<{ db: string }>(
+        `SELECT current_database() AS db`,
+      );
+      baseDb = rows[0]!.db;
+    });
+
+    afterAll(async () => admin.end());
+
+    it(
+      "refuses a pre-existing app role with unsafe attributes",
+      { timeout: 30_000 },
+      async () => {
+        // Roles are cluster-level: a LOGIN role squatting on the derived name
+        // must never silently receive the app grants.
+        const db = `${baseDb}_dup`;
+        const role = `${db}_app`;
+        await admin.query(`DROP DATABASE IF EXISTS ${q(db)}`);
+        await admin.query(`DROP ROLE IF EXISTS ${q(role)}`);
+        await admin.query(`CREATE ROLE ${q(role)} LOGIN PASSWORD 'squatter'`);
+        await admin.query(`CREATE DATABASE ${q(db)}`);
+        const target = poolFor(db);
+        try {
+          await expect(runMigrations(target)).rejects.toThrow(
+            /unsafe attributes \(LOGIN\)/,
+          );
+        } finally {
+          await target.end();
+          await admin.query(`DROP DATABASE IF EXISTS ${q(db)}`);
+          await admin.query(`DROP ROLE IF EXISTS ${q(role)}`);
+        }
+      },
+    );
+
+    it(
+      "adopts a pre-existing SAFE (NOLOGIN) app role and grants it",
+      { timeout: 30_000 },
+      async () => {
+        // The legitimate duplicate: a recreated same-name database (the role
+        // survives a DROP DATABASE) or a dump restored beside its old role.
+        const db = `${baseDb}_re`;
+        const role = `${db}_app`;
+        await admin.query(`DROP DATABASE IF EXISTS ${q(db)}`);
+        await admin.query(`DROP ROLE IF EXISTS ${q(role)}`);
+        await admin.query(`CREATE ROLE ${q(role)} NOLOGIN`);
+        await admin.query(`CREATE DATABASE ${q(db)}`);
+        const target = poolFor(db);
+        try {
+          await expect(runMigrations(target)).resolves.not.toThrow();
+          const { rows } = await target.query<{ privilege_type: string }>(
+            `SELECT privilege_type FROM information_schema.role_table_grants
+             WHERE grantee = $1 AND table_name = 'sessions'`,
+            [role],
+          );
+          expect(rows.map((r) => r.privilege_type).sort()).toEqual([
+            "DELETE",
+            "INSERT",
+            "SELECT",
+            "UPDATE",
+          ]);
+        } finally {
+          await target.end();
+          await admin.query(`DROP DATABASE IF EXISTS ${q(db)}`);
+          await admin.query(`DROP ROLE IF EXISTS ${q(role)}`);
+        }
+      },
+    );
+
+    it(
+      "rejects a database whose derived role name exceeds 63 BYTES (not characters)",
+      { timeout: 30_000 },
+      async () => {
+        // Identifiers truncate at 63 BYTES. Pad the base name with 3-byte
+        // katakana so the database name itself fits (<= 63 bytes) and its
+        // CHARACTER count stays far under 63 (a per-character check would
+        // pass), while `<db>_app` overflows in bytes — Postgres would truncate
+        // the role name and the grant block's exact lookup would miss it, so
+        // the migration must refuse up front.
+        const pad = Math.floor((63 - Buffer.byteLength(baseDb)) / 3);
+        expect(pad).toBeGreaterThan(0);
+        const db = baseDb + "ア".repeat(pad);
+        await admin.query(`DROP DATABASE IF EXISTS ${q(db)}`);
+        await admin.query(`CREATE DATABASE ${q(db)}`);
+        const target = poolFor(db);
+        try {
+          await expect(runMigrations(target)).rejects.toThrow(/too long/);
+        } finally {
+          await target.end();
+          await admin.query(`DROP DATABASE IF EXISTS ${q(db)}`);
+        }
+      },
+    );
   },
 );
 

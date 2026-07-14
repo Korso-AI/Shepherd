@@ -23,6 +23,19 @@
 import pg from "pg";
 import { runMigrations } from "../src/migrate.js";
 
+/**
+ * Test-only LOGIN member of the per-database app group role
+ * (`<database>_app`, created by migration 021). The disposable test pool
+ * normally connects as `postgres` (a SUPERUSER, which BYPASSES RLS), so the
+ * policies migration 021 installs would stay dormant. `createAppPool` connects
+ * as this restricted role instead, so every swept suite exercises the policies.
+ *
+ * Test-cluster only: the credentials are fixed and unprivileged (the role is a
+ * plain LOGIN that owns nothing and inherits only the group's granted DML).
+ */
+const APP_LOGIN_ROLE = "shepherd_app_login";
+const APP_LOGIN_PASSWORD = "shepherd_app_test";
+
 /** Connection string for test Postgres, or undefined if none configured. */
 export const TEST_DATABASE_URL: string | undefined =
   process.env["TEST_DATABASE_URL"] ?? process.env["DATABASE_URL"];
@@ -40,7 +53,13 @@ if (!dbAvailable) {
   );
 }
 
-/** Create a pool pointed at the test database. Throws if no URL is available. */
+/**
+ * Create a pool pointed at the test database as its OWNER (the superuser in the
+ * connection URL). Use this for migrations, fixture INSERTs, `truncateAll`/
+ * `truncateTenancy`, and raw-SQL assertions of DB state — a superuser bypasses
+ * RLS, and TRUNCATE requires the owner regardless. Code UNDER TEST should run
+ * through `createAppPool` so it exercises the policies. Throws if no URL.
+ */
 export function createTestPool(): pg.Pool {
   if (!TEST_DATABASE_URL) {
     throw new Error(
@@ -50,9 +69,79 @@ export function createTestPool(): pg.Pool {
   return new pg.Pool({ connectionString: TEST_DATABASE_URL });
 }
 
-/** Run migrations against the test pool (idempotent). */
+/**
+ * Create a pool that connects as the restricted app LOGIN role
+ * (`APP_LOGIN_ROLE`), a member of the per-database `<database>_app` group. This
+ * role is NOT a superuser, so RLS (migration 021) is ENFORCED against it — wire
+ * the code under test (`initContext({ pool })`, direct `resolveTenant`/
+ * `withContext` calls) to this pool so the suite proves the policies. Fixtures,
+ * truncates, and raw asserts stay on `createTestPool` (owner). Throws if no URL.
+ *
+ * Reuses the same TEST_DATABASE_URL with the username/password swapped, so the
+ * connection targets the SAME database (and therefore the same `<database>_app`
+ * group) as the owner pool. Call `runTestMigrations(ownerPool)` first — it
+ * provisions the login role.
+ */
+export function createAppPool(): pg.Pool {
+  if (!TEST_DATABASE_URL) {
+    throw new Error(
+      "Cannot create app pool: neither TEST_DATABASE_URL nor DATABASE_URL is set.",
+    );
+  }
+  const url = new URL(TEST_DATABASE_URL);
+  url.username = APP_LOGIN_ROLE;
+  url.password = APP_LOGIN_PASSWORD;
+  return new pg.Pool({ connectionString: url.toString() });
+}
+
+/**
+ * Idempotently provision the LOGIN member of the per-database app role
+ * (`<database>_app`, created by migration 021) that `createAppPool` connects
+ * as. The login role itself is CLUSTER-global (shared across the per-agent test
+ * databases; it accumulates one group membership per test DB — harmless), so
+ * tolerate concurrent creation/GRANT races from teammate-run suites on sibling
+ * databases: `duplicate_object` on CREATE is swallowed inside the DO block, and
+ * a GRANT that collides on the shared `pg_auth_members` row surfaces as
+ * "tuple concurrently updated" — retry that once.
+ */
+export async function provisionAppRole(ownerPool: pg.Pool): Promise<void> {
+  const sql = `
+    DO $$
+    DECLARE app_role text := current_database() || '_app';
+    BEGIN
+      BEGIN
+        CREATE ROLE ${APP_LOGIN_ROLE} LOGIN PASSWORD '${APP_LOGIN_PASSWORD}';
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END;
+      EXECUTE format('GRANT %I TO ${APP_LOGIN_ROLE}', app_role);
+    END $$;
+  `;
+  try {
+    await ownerPool.query(sql);
+  } catch (err) {
+    // Cross-database concurrent GRANTs touch the same global pg_auth_members
+    // tuple for the shared login role; Postgres reports XX000 "tuple
+    // concurrently updated". Retry once — the second attempt serialises behind
+    // the first now-committed writer.
+    if (
+      err instanceof Error &&
+      /tuple concurrently updated/.test(err.message)
+    ) {
+      await ownerPool.query(sql);
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
+ * Run migrations against the OWNER test pool (idempotent), then provision the
+ * restricted app login role so `createAppPool` can connect. Callers pass the
+ * owner pool from `createTestPool`.
+ */
 export async function runTestMigrations(pool: pg.Pool): Promise<void> {
   await runMigrations(pool);
+  await provisionAppRole(pool);
 }
 
 /**

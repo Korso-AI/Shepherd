@@ -24,6 +24,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -45,11 +46,15 @@ const UNKNOWN_ID = "00000000-0000-0000-0000-000000000000";
 describe.skipIf(!dbAvailable)(
   "resolveSession (session scope, Task 2.1)",
   () => {
+    // Owner pool: fixture seeding (mintSession, createWorkspace, addMembership)
+    // and truncates. Restricted app-role pool: the resolveSession-under-test.
     let pool: pg.Pool;
+    let appPool: pg.Pool;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
     });
 
     afterEach(async () => {
@@ -58,6 +63,7 @@ describe.skipIf(!dbAvailable)(
     });
 
     afterAll(async () => {
+      await appPool.end();
       await pool.end();
     });
 
@@ -93,7 +99,7 @@ describe.skipIf(!dbAvailable)(
       tenant: TenantContext,
       sessionId: string,
     ): Promise<Awaited<ReturnType<typeof resolveSession>>> {
-      return withContext(pool, contextForTenant(tenant), (tx) =>
+      return withContext(appPool, contextForTenant(tenant), (tx) =>
         resolveSession(tx, tenant, sessionId),
       );
     }
@@ -160,7 +166,7 @@ describe.skipIf(!dbAvailable)(
       // caller's account (a stale/swapped variable would pass every
       // behavioral test today, GUCs being inert, and surface only as Phase 2
       // zero-row no-ops).
-      await withContext(pool, contextForTenant(tenant), async (tx) => {
+      await withContext(appPool, contextForTenant(tenant), async (tx) => {
         await resolveSession(tx, tenant, sessionId);
         const { rows } = await tx.query(
           `SELECT current_setting('app.context') AS ctx,
