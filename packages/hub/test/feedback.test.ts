@@ -36,6 +36,7 @@ import type { Config } from "../src/config.js";
 import type { FastifyInstance } from "fastify";
 import { FeedbackResponse } from "@shepherd/shared";
 import { sendFeedbackEmail } from "../src/email.js";
+import { __drainFeedbackEmails } from "../src/operations/feedback.js";
 
 vi.mock("../src/email.js", () => ({
   sendInviteEmail: vi.fn(),
@@ -140,6 +141,11 @@ describe.skipIf(!dbAvailable)(
 
     afterEach(async () => {
       __resetRateLimiter();
+      // Drain any still-running detached notification send BEFORE clearing the
+      // mock: a late send landing after the clear would otherwise count toward
+      // the NEXT test's assertions (its enrichment reads now ride a transaction,
+      // so it can outlive the test that fired it).
+      await __drainFeedbackEmails();
       vi.mocked(sendFeedbackEmail).mockClear();
       await truncateAll(pool);
       await truncateTenancy(pool);

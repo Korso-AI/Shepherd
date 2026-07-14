@@ -52,7 +52,7 @@ import type {
 } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { assertSeatAvailable } from "../entitlements.js";
 import { AuthError, InviteError, NotConfiguredError } from "../errors.js";
 import { sendInviteEmail } from "../email.js";
@@ -70,6 +70,7 @@ import {
   requireAccountId,
   requireAdmin,
   requireWorkspaceId,
+  contextForTenant,
   type TenantContext,
 } from "../tenant.js";
 
@@ -221,14 +222,16 @@ export async function createInvite(
   const expiresInDays = input.expiresInDays ?? DEFAULT_EXPIRES_IN_DAYS;
   const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
 
-  const invite = await createInviteRow(pool, {
-    workspaceId,
-    code: generateCode(),
-    createdBy,
-    roleGranted: DEFAULT_ROLE,
-    maxUses: input.maxUses ?? DEFAULT_MAX_USES,
-    expiresAt,
-  });
+  const invite = await withContext(pool, contextForTenant(tenant), (db) =>
+    createInviteRow(db, {
+      workspaceId,
+      code: generateCode(),
+      createdBy,
+      roleGranted: DEFAULT_ROLE,
+      maxUses: input.maxUses ?? DEFAULT_MAX_USES,
+      expiresAt,
+    }),
+  );
 
   return {
     code: invite.code,
@@ -267,24 +270,31 @@ export async function inviteByEmail(
     );
   }
 
-  const workspace = await findWorkspaceById(pool, workspaceId);
-  if (workspace === null) {
-    throw new AuthError(404, "workspace not found");
-  }
+  const { workspace, invite } = await withContext(
+    pool,
+    contextForTenant(tenant),
+    async (tx) => {
+      const workspace = await findWorkspaceById(tx, workspaceId);
+      if (workspace === null) {
+        throw new AuthError(404, "workspace not found");
+      }
 
-  const expiresAt = new Date(
-    Date.now() + DEFAULT_EXPIRES_IN_DAYS * 24 * 60 * 60 * 1000,
+      const expiresAt = new Date(
+        Date.now() + DEFAULT_EXPIRES_IN_DAYS * 24 * 60 * 60 * 1000,
+      );
+      const invite = await createInviteRow(tx, {
+        workspaceId,
+        code: generateCode(),
+        createdBy,
+        roleGranted: DEFAULT_ROLE,
+        maxUses: EMAIL_INVITE_MAX_USES,
+        expiresAt,
+        // Recorded so the Config UI can list who was invited and hasn't joined yet.
+        email,
+      });
+      return { workspace, invite };
+    },
   );
-  const invite = await createInviteRow(pool, {
-    workspaceId,
-    code: generateCode(),
-    createdBy,
-    roleGranted: DEFAULT_ROLE,
-    maxUses: EMAIL_INVITE_MAX_USES,
-    expiresAt,
-    // Recorded so the Config UI can list who was invited and hasn't joined yet.
-    email,
-  });
 
   const joinLink = `${config.PUBLIC_WEB_URL}/shepherd/join/${encodeURIComponent(invite.code)}`;
   await sendInviteEmail(
@@ -313,7 +323,9 @@ export async function listEmailInvites(
   const workspaceId = requireWorkspaceId(tenant);
   requireAdmin(tenant);
 
-  const rows = await listPendingEmailInvites(pool, workspaceId);
+  const rows = await withContext(pool, contextForTenant(tenant), (db) =>
+    listPendingEmailInvites(db, workspaceId),
+  );
   return {
     invites: rows.map((r) => ({
       id: r.id,
@@ -340,7 +352,9 @@ export async function revokeInvite(
   const workspaceId = requireWorkspaceId(tenant);
   requireAdmin(tenant);
 
-  const revoked = await revokeInviteByCode(pool, workspaceId, code);
+  const revoked = await withContext(pool, contextForTenant(tenant), (db) =>
+    revokeInviteByCode(db, workspaceId, code),
+  );
   if (!revoked) {
     throw new AuthError(404, "invite not found");
   }
@@ -382,7 +396,9 @@ export async function redeemInvite(
   // 4. Resolve the code. findInviteByCode already excludes revoked invites (reads
   //    as null). Expiry/use-count are NOT checked here — the atomic claim in
   //    incrementInviteUse enforces them under the row lock.
-  const invite = await findInviteByCode(pool, code);
+  const invite = await withContext(pool, { kind: "account", accountId }, (db) =>
+    findInviteByCode(db, code),
+  );
   if (invite === null) {
     recordRedeemFailure(accountId);
     throw new InviteError("invite invalid or no longer redeemable");
@@ -391,36 +407,47 @@ export async function redeemInvite(
   const workspaceId = invite.workspaceId;
 
   // 5. Already a member → no-op success. Do NOT burn a use (or re-grant the role):
-  //    the user simply "lands in" the workspace at their CURRENT role.
-  const existing = await findMembership(pool, accountId, workspaceId);
+  //    the user simply "lands in" the workspace at their CURRENT role. The
+  //    caller's OWN membership row is visible in plain (unfocused) account context.
+  const existing = await withContext(
+    pool,
+    { kind: "account", accountId },
+    (db) => findMembership(db, accountId, workspaceId),
+  );
   if (existing !== null) {
     clearRedeemFailures(accountId);
     return await buildRedeemResponse(workspaceId, existing.role, accountId);
   }
 
-  // 6. Fresh join: claim a use AND add the membership in ONE transaction. The
-  //    claim is the atomic guard — if it returns null (revoked/expired/exhausted,
-  //    incl. a race to exhaustion between step 4 and here) we roll back by throwing
-  //    so no membership is added.
-  await withTransaction(pool, async (tx) => {
-    // Seat cap FIRST, before the use-claim, so a blocked redeem burns no
-    // invite use. Takes the workspace-level advisory lock that serializes
-    // concurrent redeems (even on different codes); no-ops entirely unless
-    // this deployment configured ENTITLEMENTS_DEFAULT_LIMITS. Its
-    // LimitExceededError (402) is not an InviteError, so the catch below
-    // rethrows it untouched and no redeem failure is recorded.
-    await assertSeatAvailable(tx, config, tenant, workspaceId);
+  // 6. Fresh join: claim a use AND add the membership in ONE transaction, FOCUSED
+  //    on the invite's workspace so the seat check can count that workspace's
+  //    members and the membership INSERT policy is satisfied. The claim is the
+  //    atomic guard — if it returns null (revoked/expired/exhausted, incl. a race
+  //    to exhaustion between step 4 and here) we roll back by throwing so no
+  //    membership is added.
+  await withContext(
+    pool,
+    { kind: "account", accountId, workspaceId },
+    async (tx) => {
+      // Seat cap FIRST, before the use-claim, so a blocked redeem burns no
+      // invite use. Takes the workspace-level advisory lock that serializes
+      // concurrent redeems (even on different codes); no-ops entirely unless
+      // this deployment configured ENTITLEMENTS_DEFAULT_LIMITS. Its
+      // LimitExceededError (402) is not an InviteError, so the catch below
+      // rethrows it untouched and no redeem failure is recorded.
+      await assertSeatAvailable(tx, config, tenant, workspaceId);
 
-    const claimed = await incrementInviteUse(tx, code);
-    if (claimed === null) {
-      throw new InviteError("invite invalid or no longer redeemable");
-    }
-    await addMembership(tx, {
-      workspaceId,
-      accountId,
-      role: invite.roleGranted,
-    });
-  }).catch((err) => {
+      const claimed = await incrementInviteUse(tx, code);
+      if (claimed === null) {
+        throw new InviteError("invite invalid or no longer redeemable");
+      }
+      await addMembership(tx, {
+        workspaceId,
+        accountId,
+        role: invite.roleGranted,
+      });
+    },
+  ).catch((err) => {
     if (err instanceof InviteError) {
       recordRedeemFailure(accountId);
     }
@@ -438,7 +465,13 @@ async function buildRedeemResponse(
   accountId: string,
 ): Promise<RedeemInviteResponseT> {
   const { pool } = getContext();
-  const ws = await findWorkspaceById(pool, workspaceId);
+  // The caller is now a member of this workspace; read it in account context
+  // FOCUSED on it (the same focus the join used).
+  const ws = await withContext(
+    pool,
+    { kind: "account", accountId, workspaceId },
+    (db) => findWorkspaceById(db, workspaceId),
+  );
   if (ws === null) {
     // The invite referenced a workspace that no longer exists — treat as invalid.
     throw new InviteError("invite invalid or no longer redeemable");

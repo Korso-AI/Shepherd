@@ -36,6 +36,7 @@ import type {
 } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
+import { withContext } from "../scopedDb.js";
 import { AuthError } from "../errors.js";
 import {
   insertApiToken,
@@ -47,6 +48,7 @@ import {
   hashToken,
   requireAccountId,
   requireWorkspaceId,
+  contextForTenant,
   NO_ROUTE_WORKSPACE,
   type TenantContext,
 } from "../tenant.js";
@@ -87,12 +89,14 @@ export async function mintToken(
       : requireWorkspaceId(tenant);
 
   const rawToken = generateRawToken();
-  const summary = await insertApiToken(pool, {
-    workspaceId,
-    accountId,
-    tokenHash: hashToken(rawToken),
-    name: input.name ?? null,
-  });
+  const summary = await withContext(pool, contextForTenant(tenant), (db) =>
+    insertApiToken(db, {
+      workspaceId,
+      accountId,
+      tokenHash: hashToken(rawToken),
+      name: input.name ?? null,
+    }),
+  );
 
   // The raw token is surfaced here and ONLY here — never persisted or logged.
   return { token: rawToken, id: summary.id };
@@ -109,10 +113,15 @@ export async function listTokens(
   const { pool } = getContext();
   if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
     const accountId = requireAccountId(tenant);
-    const tokens = await listApiTokensForAccount(pool, accountId);
+    const tokens = await withContext(pool, contextForTenant(tenant), (db) =>
+      listApiTokensForAccount(db, accountId),
+    );
     return { tokens };
   }
-  const tokens = await listApiTokens(pool, requireWorkspaceId(tenant));
+  const workspaceId = requireWorkspaceId(tenant);
+  const tokens = await withContext(pool, contextForTenant(tenant), (db) =>
+    listApiTokens(db, workspaceId),
+  );
   return { tokens };
 }
 
@@ -130,7 +139,9 @@ export async function revokeToken(
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
 
-  const revoked = await revokeOwnApiToken(pool, accountId, tokenId);
+  const revoked = await withContext(pool, contextForTenant(tenant), (db) =>
+    revokeOwnApiToken(db, accountId, tokenId),
+  );
   if (!revoked) {
     throw new AuthError(404, "token not found");
   }

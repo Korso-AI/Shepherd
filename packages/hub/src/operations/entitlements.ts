@@ -23,9 +23,14 @@ import type {
   WorkspaceEntitlementsT,
 } from "@shepherd/shared";
 import { getContext } from "../context.js";
+import { withContext, type ScopedDb } from "../scopedDb.js";
 import { effectiveLimits, enforcementEnabled } from "../entitlements.js";
 import { AuthError } from "../errors.js";
-import { requireInternal, type TenantContext } from "../tenant.js";
+import {
+  contextForTenant,
+  requireInternal,
+  type TenantContext,
+} from "../tenant.js";
 import {
   countMembers,
   deleteWorkspaceEntitlements,
@@ -48,9 +53,11 @@ function toWire(row: WorkspaceEntitlementsRow): WorkspaceEntitlementsT {
 }
 
 /** 404 unless `workspaceId` names a real workspace. */
-async function assertWorkspaceExists(workspaceId: string): Promise<void> {
-  const { pool } = getContext();
-  const ws = await findWorkspaceById(pool, workspaceId);
+async function assertWorkspaceExists(
+  db: ScopedDb,
+  workspaceId: string,
+): Promise<void> {
+  const ws = await findWorkspaceById(db, workspaceId);
   if (ws === null) {
     throw new AuthError(404, "workspace not found");
   }
@@ -64,14 +71,16 @@ export async function putEntitlements(
   requireInternal(tenant);
   const { pool } = getContext();
 
-  await assertWorkspaceExists(workspaceId);
-  const row = await upsertWorkspaceEntitlements(pool, workspaceId, {
-    seatsLimit: body.seatsLimit,
-    reposLimit: body.reposLimit,
-    retentionDays: body.retentionDays,
-    expiresAt: body.expiresAt === null ? null : new Date(body.expiresAt),
+  return withContext(pool, contextForTenant(tenant, workspaceId), async (tx) => {
+    await assertWorkspaceExists(tx, workspaceId);
+    const row = await upsertWorkspaceEntitlements(tx, workspaceId, {
+      seatsLimit: body.seatsLimit,
+      reposLimit: body.reposLimit,
+      retentionDays: body.retentionDays,
+      expiresAt: body.expiresAt === null ? null : new Date(body.expiresAt),
+    });
+    return toWire(row);
   });
-  return toWire(row);
 }
 
 export async function getEntitlementsStatus(
@@ -81,25 +90,27 @@ export async function getEntitlementsStatus(
   requireInternal(tenant);
   const { pool, config } = getContext();
 
-  await assertWorkspaceExists(workspaceId);
-  const record = await getWorkspaceEntitlements(pool, workspaceId);
+  return withContext(pool, contextForTenant(tenant, workspaceId), async (tx) => {
+    await assertWorkspaceExists(tx, workspaceId);
+    const record = await getWorkspaceEntitlements(tx, workspaceId);
 
-  // With enforcement off there are no limits of any kind — report all-null
-  // rather than pretending a stored record binds anything.
-  const effective = enforcementEnabled(config)
-    ? effectiveLimits(record, config.ENTITLEMENTS_DEFAULT_LIMITS!, new Date())
-    : { seatsLimit: null, reposLimit: null, retentionDays: null };
+    // With enforcement off there are no limits of any kind — report all-null
+    // rather than pretending a stored record binds anything.
+    const effective = enforcementEnabled(config)
+      ? effectiveLimits(record, config.ENTITLEMENTS_DEFAULT_LIMITS!, new Date())
+      : { seatsLimit: null, reposLimit: null, retentionDays: null };
 
-  const [seatsUsed, repos] = await Promise.all([
-    countMembers(pool, workspaceId),
-    listWorkspaceRepos(pool, workspaceId),
-  ]);
+    const [seatsUsed, repos] = await Promise.all([
+      countMembers(tx, workspaceId),
+      listWorkspaceRepos(tx, workspaceId),
+    ]);
 
-  return {
-    record: record === null ? null : toWire(record),
-    effective,
-    usage: { seatsUsed, reposUsed: repos.length },
-  };
+    return {
+      record: record === null ? null : toWire(record),
+      effective,
+      usage: { seatsUsed, reposUsed: repos.length },
+    };
+  });
 }
 
 export async function deleteEntitlements(
@@ -109,6 +120,10 @@ export async function deleteEntitlements(
   requireInternal(tenant);
   const { pool } = getContext();
 
-  const deleted = await deleteWorkspaceEntitlements(pool, workspaceId);
+  const deleted = await withContext(
+    pool,
+    contextForTenant(tenant, workspaceId),
+    (tx) => deleteWorkspaceEntitlements(tx, workspaceId),
+  );
   return { deleted };
 }

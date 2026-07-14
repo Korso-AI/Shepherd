@@ -11,6 +11,7 @@ import {
 } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
+import { withContext } from "../scopedDb.js";
 import { getShepherdAnalytics, type ShepherdAnalytics } from "../repo.js";
 import { requireOperator, type TenantContext } from "../tenant.js";
 
@@ -48,11 +49,13 @@ export async function platformAnalytics(
   }
 
   const { pool, config } = getContext();
-  const rollup = await getShepherdAnalytics(pool, {
-    range,
-    now: new Date(),
-    liveWindowSeconds: config.STALE_AFTER_SECONDS,
-  });
+  const rollup = await withContext(pool, { kind: "operator" }, (db) =>
+    getShepherdAnalytics(db, {
+      range,
+      now: new Date(),
+      liveWindowSeconds: config.STALE_AFTER_SECONDS,
+    }),
+  );
   // Parse against the canonical wire contract so any drift between the repo
   // rollup and @shepherd/shared's schema fails loudly here, not in a consumer.
   const data = ShepherdAnalyticsResponse.parse(rollup);

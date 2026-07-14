@@ -2547,7 +2547,7 @@ export async function deleteWorkspaceEntitlements(
  * Returns the new row's uuid.
  */
 export async function insertFeedback(
-  pool: pg.Pool,
+  db: Queryable,
   params: {
     workspaceId: string | null;
     accountId: string | null;
@@ -2560,7 +2560,7 @@ export async function insertFeedback(
   },
 ): Promise<string> {
   const { workspaceId, accountId, type, body, context } = params;
-  const { rows } = await pool.query<{ id: string }>(
+  const { rows } = await db.query<{ id: string }>(
     `INSERT INTO feedback (workspace_id, account_id, type, body, context)
      VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,

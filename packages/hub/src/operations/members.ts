@@ -39,7 +39,7 @@ import type {
 } from "@shepherd/shared";
 
 import { getContext } from "../context.js";
-import { withTransaction } from "../db.js";
+import { withContext } from "../scopedDb.js";
 import { AuthError, ConflictError } from "../errors.js";
 import {
   listMembers,
@@ -55,6 +55,7 @@ import {
   requireAccountId,
   requireAdmin,
   requireWorkspaceId,
+  contextForTenant,
   type TenantContext,
 } from "../tenant.js";
 
@@ -90,7 +91,9 @@ export async function listWorkspaceMembers(
 ): Promise<ListMembersResponseT> {
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
-  const members = await listMembers(pool, workspaceId);
+  const members = await withContext(pool, contextForTenant(tenant), (db) =>
+    listMembers(db, workspaceId),
+  );
   return { members };
 }
 
@@ -112,45 +115,52 @@ export async function removeMember(
   // accountId is always present here — needed for the owner comparisons below.
   const callerAccountId = requireAccountId(tenant);
 
-  const target = await findMembership(pool, targetAccountId, workspaceId);
-  if (target === null) {
-    // Not a member of THIS workspace — generic 404 (no existence leak).
-    throw new AuthError(404, "member not found");
-  }
+  const tokensRevoked = await withContext(
+    pool,
+    contextForTenant(tenant),
+    async (tx) => {
+      const target = await findMembership(tx, targetAccountId, workspaceId);
+      if (target === null) {
+        // Not a member of THIS workspace — generic 404 (no existence leak).
+        throw new AuthError(404, "member not found");
+      }
 
-  const ws = await findWorkspaceById(pool, workspaceId);
-  if (ws === null) {
-    throw new AuthError(404, "workspace not found");
-  }
-  const callerIsOwner = ws.createdBy === callerAccountId;
+      const ws = await findWorkspaceById(tx, workspaceId);
+      if (ws === null) {
+        throw new AuthError(404, "workspace not found");
+      }
+      const callerIsOwner = ws.createdBy === callerAccountId;
 
-  // The OWNER can never be removed by anyone — the power structure is theirs to
-  // hand off. They must transfer ownership first, then be removed / leave.
-  if (targetAccountId === ws.createdBy) {
-    throw new ConflictError(
-      "The workspace owner cannot be removed; transfer ownership first.",
-    );
-  }
+      // The OWNER can never be removed by anyone — the power structure is theirs
+      // to hand off. They must transfer ownership first, then be removed / leave.
+      if (targetAccountId === ws.createdBy) {
+        throw new ConflictError(
+          "The workspace owner cannot be removed; transfer ownership first.",
+        );
+      }
 
-  // Removing a fellow ADMIN is owner-only: a plain admin managing the roster may
-  // remove members, but not other admins — otherwise a promoted admin could
-  // still dismantle the admin group they can't demote.
-  if (target.role === "admin" && !callerIsOwner) {
-    throw new AuthError(403, "removing an admin requires the workspace owner");
-  }
+      // Removing a fellow ADMIN is owner-only: a plain admin managing the roster
+      // may remove members, but not other admins — otherwise a promoted admin
+      // could still dismantle the admin group they can't demote.
+      if (target.role === "admin" && !callerIsOwner) {
+        throw new AuthError(
+          403,
+          "removing an admin requires the workspace owner",
+        );
+      }
 
-  // Last-admin guard: refuse to strip the workspace of its final admin.
-  if (target.role === "admin" && (await countAdmins(pool, workspaceId)) <= 1) {
-    throw new ConflictError(
-      "Cannot remove the last admin; promote or transfer another admin first.",
-    );
-  }
+      // Last-admin guard: refuse to strip the workspace of its final admin.
+      if (target.role === "admin" && (await countAdmins(tx, workspaceId)) <= 1) {
+        throw new ConflictError(
+          "Cannot remove the last admin; promote or transfer another admin first.",
+        );
+      }
 
-  const tokensRevoked = await withTransaction(pool, async (tx) => {
-    await removeMembership(tx, workspaceId, targetAccountId);
-    // A removed member's agent tokens must not outlive their membership.
-    return revokeApiTokensForMember(tx, workspaceId, targetAccountId);
-  });
+      await removeMembership(tx, workspaceId, targetAccountId);
+      // A removed member's agent tokens must not outlive their membership.
+      return revokeApiTokensForMember(tx, workspaceId, targetAccountId);
+    },
+  );
 
   return { removed: true, tokensRevoked };
 }
@@ -167,24 +177,28 @@ export async function leaveWorkspace(
   const workspaceId = requireWorkspaceId(tenant);
   const accountId = requireAccountId(tenant);
 
-  // Defensive: resolveTenant already validated membership of a `:id` route, so
-  // this should always resolve — but pin it rather than trust the upstream.
-  const own = await findMembership(pool, accountId, workspaceId);
-  if (own === null) {
-    throw new AuthError(404, "not a member of the requested workspace");
-  }
+  const tokensRevoked = await withContext(
+    pool,
+    contextForTenant(tenant),
+    async (tx) => {
+      // Defensive: resolveTenant already validated membership of a `:id` route,
+      // so this should always resolve — but pin it rather than trust the upstream.
+      const own = await findMembership(tx, accountId, workspaceId);
+      if (own === null) {
+        throw new AuthError(404, "not a member of the requested workspace");
+      }
 
-  // Last-admin guard: the final admin must promote/transfer before leaving.
-  if (own.role === "admin" && (await countAdmins(pool, workspaceId)) <= 1) {
-    throw new ConflictError(
-      "You are the last admin; promote or transfer admin before leaving.",
-    );
-  }
+      // Last-admin guard: the final admin must promote/transfer before leaving.
+      if (own.role === "admin" && (await countAdmins(tx, workspaceId)) <= 1) {
+        throw new ConflictError(
+          "You are the last admin; promote or transfer admin before leaving.",
+        );
+      }
 
-  const tokensRevoked = await withTransaction(pool, async (tx) => {
-    await removeMembership(tx, workspaceId, accountId);
-    return revokeApiTokensForMember(tx, workspaceId, accountId);
-  });
+      await removeMembership(tx, workspaceId, accountId);
+      return revokeApiTokensForMember(tx, workspaceId, accountId);
+    },
+  );
 
   return { left: true, tokensRevoked };
 }
@@ -206,33 +220,36 @@ export async function setMemberRole(
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
   const callerAccountId = requireAccountId(tenant);
-  await requireOwnerAccount(pool, workspaceId, callerAccountId);
 
-  if (targetAccountId === callerAccountId) {
-    // The owner is always an admin; there is no valid self role-change.
-    throw new ConflictError("The owner's role cannot be changed.");
-  }
+  return withContext(pool, contextForTenant(tenant), async (tx) => {
+    await requireOwnerAccount(tx, workspaceId, callerAccountId);
 
-  const target = await findMembership(pool, targetAccountId, workspaceId);
-  if (target === null) {
-    throw new AuthError(404, "member not found");
-  }
+    if (targetAccountId === callerAccountId) {
+      // The owner is always an admin; there is no valid self role-change.
+      throw new ConflictError("The owner's role cannot be changed.");
+    }
 
-  if (target.role === role) {
-    // Already at the requested role — nothing to do.
+    const target = await findMembership(tx, targetAccountId, workspaceId);
+    if (target === null) {
+      throw new AuthError(404, "member not found");
+    }
+
+    if (target.role === role) {
+      // Already at the requested role — nothing to do.
+      return { ok: true, role };
+    }
+
+    // Demotion last-admin guard (defensive: with the owner always an admin, and
+    // the owner unable to demote themselves, the workspace always retains ≥1 admin).
+    if (role === "member" && (await countAdmins(tx, workspaceId)) <= 1) {
+      throw new ConflictError(
+        "Cannot demote the last admin; promote or transfer another admin first.",
+      );
+    }
+
+    await setRole(tx, workspaceId, targetAccountId, role);
     return { ok: true, role };
-  }
-
-  // Demotion last-admin guard (defensive: with the owner always an admin, and the
-  // owner unable to demote themselves, the workspace always retains ≥1 admin).
-  if (role === "member" && (await countAdmins(pool, workspaceId)) <= 1) {
-    throw new ConflictError(
-      "Cannot demote the last admin; promote or transfer another admin first.",
-    );
-  }
-
-  await setRole(pool, workspaceId, targetAccountId, role);
-  return { ok: true, role };
+  });
 }
 
 /**
@@ -249,18 +266,19 @@ export async function transferOwnership(
   const { pool } = getContext();
   const workspaceId = requireWorkspaceId(tenant);
   const callerAccountId = requireAccountId(tenant);
-  await requireOwnerAccount(pool, workspaceId, callerAccountId);
 
-  if (targetAccountId === callerAccountId) {
-    throw new ConflictError("You are already the owner of this workspace.");
-  }
+  await withContext(pool, contextForTenant(tenant), async (tx) => {
+    await requireOwnerAccount(tx, workspaceId, callerAccountId);
 
-  const target = await findMembership(pool, targetAccountId, workspaceId);
-  if (target === null) {
-    throw new AuthError(404, "member not found");
-  }
+    if (targetAccountId === callerAccountId) {
+      throw new ConflictError("You are already the owner of this workspace.");
+    }
 
-  await withTransaction(pool, async (tx) => {
+    const target = await findMembership(tx, targetAccountId, workspaceId);
+    if (target === null) {
+      throw new AuthError(404, "member not found");
+    }
+
     await setWorkspaceOwner(tx, workspaceId, targetAccountId);
     // The new owner must be an admin — promote if they were a member.
     if (target.role !== "admin") {
