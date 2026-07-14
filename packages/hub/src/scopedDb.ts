@@ -72,7 +72,12 @@ function contextIds(ctx: DbContext): {
     case "workspace":
       return {
         workspaceId: requireId(ctx.workspaceId, "workspace", "workspaceId"),
-        accountId: ctx.accountId ?? "",
+        // Optional ids get the same loudness when PRESENT: a supplied-but-empty
+        // accountId is a threaded sentinel, not a deliberate omission.
+        accountId:
+          ctx.accountId !== undefined
+            ? requireId(ctx.accountId, "workspace", "accountId")
+            : "",
       };
     case "account":
       return {
@@ -83,7 +88,13 @@ function contextIds(ctx: DbContext): {
         accountId: requireId(ctx.accountId, "account", "accountId"),
       };
     case "auth":
-      return { workspaceId: "", accountId: ctx.accountId ?? "" };
+      return {
+        workspaceId: "",
+        accountId:
+          ctx.accountId !== undefined
+            ? requireId(ctx.accountId, "auth", "accountId")
+            : "",
+      };
     case "internal":
       return {
         workspaceId: requireId(ctx.workspaceId, "internal", "workspaceId"),

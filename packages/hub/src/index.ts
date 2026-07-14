@@ -17,7 +17,11 @@
 import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { initContext } from "./context.js";
-import { runMigrations, assertMigrationsCurrent } from "./migrate.js";
+import {
+  runMigrations,
+  assertMigrationsCurrent,
+  formatBootError,
+} from "./migrate.js";
 import { seedSelfHostWorkspace } from "./boot.js";
 import { withContext } from "./scopedDb.js";
 import { buildServer } from "./server.js";
@@ -70,6 +74,9 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  console.error("Fatal startup error:", err);
+  // formatBootError, not the raw object: an invalid connection string's parse
+  // error keeps the full URL (password included) in an own property, which
+  // console.error(err) would print into persisted logs.
+  console.error("Fatal startup error:", formatBootError(err));
   process.exit(1);
 });

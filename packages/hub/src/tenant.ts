@@ -552,6 +552,19 @@ const lastTokenTouch = new Map<string, number>();
 const lastProfileUpsert = new Map<string, number>();
 
 /**
+ * Memoized ALLOWED_WORKSPACE slug→id resolution for the self-host TEAM_TOKEN
+ * path. The workspace is seeded at boot and a slug→id mapping never changes for
+ * the life of the process, so re-reading it on EVERY authenticated self-host
+ * request (work/sync/heartbeat) would burn a whole extra transaction per
+ * request to re-learn a constant. Only a successful resolution is cached — a
+ * not-yet-provisioned workspace keeps failing 401 per request rather than
+ * caching the miss — and the slug is stored alongside the id so a config
+ * change (tests re-init with a different ALLOWED_WORKSPACE) can never serve a
+ * stale id.
+ */
+let selfHostWorkspace: { slug: string; id: string } | undefined;
+
+/**
  * Record a write for `key` and report whether it should be SKIPPED because the
  * previous write for that key falls inside the throttle window. The first call
  * for a key (and the first after the window lapses) always returns false (write),
@@ -571,16 +584,17 @@ function throttleWrite(
 }
 
 /**
- * Test-only: clear all in-memory per-credential state — the rate-limit buckets
- * AND the hot-path write throttles — so each test starts fresh (e.g. a test
- * that asserts last_used_at moves, or that the profile is upserted, on the very
- * first request after a reset).
+ * Test-only: clear all in-memory resolver state — the rate-limit buckets, the
+ * hot-path write throttles, AND the memoized self-host workspace id — so each
+ * test starts fresh (e.g. a test that asserts last_used_at moves, or that
+ * re-seeds the team workspace with a new id after a truncate).
  */
 export function __resetRateLimiter(): void {
   buckets.clear();
   preauthFailures.clear();
   lastTokenTouch.clear();
   lastProfileUpsert.clear();
+  selfHostWorkspace = undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -852,19 +866,24 @@ async function resolveCredentials(
   //    never matches. Scope is the single ALLOWED_WORKSPACE, looked up by slug.
   if (timingSafeCompare(bearer, config.TEAM_TOKEN)) {
     const slug = config.ALLOWED_WORKSPACE;
-    const ws =
-      slug !== undefined
-        ? await withContext(pool, { kind: "auth" }, (db) =>
-            findWorkspaceBySlug(db, slug),
-          )
-        : null;
-    if (ws === null) {
+    if (slug !== undefined && selfHostWorkspace?.slug !== slug) {
+      // First resolution (or the configured slug changed): one transaction to
+      // learn the boot-seeded workspace id, memoized for every later request.
+      const ws = await withContext(pool, { kind: "auth" }, (db) =>
+        findWorkspaceBySlug(db, slug),
+      );
+      if (ws !== null) {
+        selfHostWorkspace = { slug, id: ws.id };
+      }
+    }
+    const cached = selfHostWorkspace;
+    if (slug === undefined || cached === undefined || cached.slug !== slug) {
       // The team token is valid but its workspace was never seeded (boot seeds
       // it on startup). Treat as a server-misconfiguration auth failure.
       throw new AuthError(401, "self-host workspace not provisioned");
     }
     // Full access, no per-account identity.
-    return { workspaceId: ws.id, via: "team" };
+    return { workspaceId: cached.id, via: "team" };
   }
 
   // --- 4. Nothing matched -------------------------------------------------

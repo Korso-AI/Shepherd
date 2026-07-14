@@ -92,6 +92,10 @@ describe.skipIf(!dbAvailable)("withContext", () => {
       { kind: "account", accountId: "" },
       { kind: "account", accountId: "acct-1", workspaceId: "" },
       { kind: "internal", workspaceId: "" },
+      // OPTIONAL ids are validated too when present: supplied-but-empty is a
+      // threaded sentinel, not a deliberate omission.
+      { kind: "workspace", workspaceId: "ws-1", accountId: "" },
+      { kind: "auth", accountId: "" },
     ] satisfies DbContext[]) {
       await expect(
         withContext(pool, ctx, async () => {

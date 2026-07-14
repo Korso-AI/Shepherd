@@ -142,30 +142,26 @@ async function seedAgentAndSession(
   const model = opts.model ?? "claude-3";
   const name = `agent-${suffix}`;
 
-  return withContext(
-    pool,
-    { kind: "workspace", workspaceId: workspaceId },
-    async (tx) => {
-      const agent = await createAgent(tx, {
-        workspaceId,
-        name,
-        human,
-        program,
-        model,
-      });
-      const session = await createSession(tx, {
-        workspaceId,
-        agentId: agent.id,
-        repo,
-        branch,
-      });
-      return {
-        agentId: agent.id,
-        agentName: agent.name,
-        sessionId: session.id,
-      };
-    },
-  );
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
+    const agent = await createAgent(tx, {
+      workspaceId,
+      name,
+      human,
+      program,
+      model,
+    });
+    const session = await createSession(tx, {
+      workspaceId,
+      agentId: agent.id,
+      repo,
+      branch,
+    });
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      sessionId: session.id,
+    };
+  });
 }
 
 /**
@@ -195,34 +191,30 @@ async function seedNamedAgentWithSession(
   const model = opts.model === undefined ? "claude-3" : opts.model;
   const withSession = opts.withSession ?? true;
 
-  return withContext(
-    pool,
-    { kind: "workspace", workspaceId: workspaceId },
-    async (tx) => {
-      const agent = await createAgent(tx, {
+  return withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
+    const agent = await createAgent(tx, {
+      workspaceId,
+      name: opts.name,
+      human,
+      program,
+      model: model ?? undefined,
+    });
+    let sessionId: string | null = null;
+    if (withSession) {
+      const session = await createSession(tx, {
         workspaceId,
-        name: opts.name,
-        human,
-        program,
-        model: model ?? undefined,
+        agentId: agent.id,
+        repo,
+        branch,
       });
-      let sessionId: string | null = null;
-      if (withSession) {
-        const session = await createSession(tx, {
-          workspaceId,
-          agentId: agent.id,
-          repo,
-          branch,
-        });
-        await tx.query(
-          `UPDATE sessions SET last_heartbeat_at = $1 WHERE id = $2`,
-          [opts.heartbeatAt, session.id],
-        );
-        sessionId = session.id;
-      }
-      return { agentId: agent.id, agentName: agent.name, sessionId };
-    },
-  );
+      await tx.query(
+        `UPDATE sessions SET last_heartbeat_at = $1 WHERE id = $2`,
+        [opts.heartbeatAt, session.id],
+      );
+      sessionId = session.id;
+    }
+    return { agentId: agent.id, agentName: agent.name, sessionId };
+  });
 }
 
 // ---------------------------------------------------------------------------

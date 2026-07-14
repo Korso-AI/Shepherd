@@ -115,12 +115,15 @@ describe.skipIf(!dbAvailable)(
             createdBy: "acct-a",
           }),
       );
-      await withContext(pool, { kind: "account", accountId: "acct-a" }, (db) =>
-        addMembership(db, {
-          workspaceId: w.id,
-          accountId: "acct-a",
-          role: "member",
-        }),
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
       );
       const sessionId = await mintSession(w.id, "alice");
 
@@ -128,6 +131,44 @@ describe.skipIf(!dbAvailable)(
       expect(session.id).toBe(sessionId);
       expect(session.workspaceId).toBe(w.id);
       expect(session.agentName).toBe("agent-alice");
+    });
+
+    it("adoption re-points the LIVE transaction to the session's workspace triple", async () => {
+      const w = await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a" },
+        (db) =>
+          createWorkspace(db, { slug: "w", name: "W", createdBy: "acct-a" }),
+      );
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
+      );
+      const sessionId = await mintSession(w.id, "alice");
+      const tenant = accountTenant("acct-a");
+
+      // Probe the GUCs ON THE SAME TRANSACTION resolveSession ran in: the
+      // operation's writes execute right here, so THIS triple — not the
+      // primitive's unit-tested mapping — is what the Phase 2 policies will
+      // see. Pins that adoption lands the SESSION's workspace id plus the
+      // caller's account (a stale/swapped variable would pass every
+      // behavioral test today, GUCs being inert, and surface only as Phase 2
+      // zero-row no-ops).
+      await withContext(pool, contextForTenant(tenant), async (tx) => {
+        await resolveSession(tx, tenant, sessionId);
+        const { rows } = await tx.query(
+          `SELECT current_setting('app.context') AS ctx,
+                  current_setting('app.workspace_id') AS ws,
+                  current_setting('app.account_id') AS acct`,
+        );
+        expect(rows[0]).toEqual({ ctx: "workspace", ws: w.id, acct: "acct-a" });
+      });
     });
 
     it("account-scoped NON-member → 404, SAME error as unknown (no existence disclosure)", async () => {
@@ -142,12 +183,15 @@ describe.skipIf(!dbAvailable)(
             createdBy: "acct-a",
           }),
       );
-      await withContext(pool, { kind: "account", accountId: "acct-a" }, (db) =>
-        addMembership(db, {
-          workspaceId: w.id,
-          accountId: "acct-a",
-          role: "member",
-        }),
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
       );
       const x = await withContext(
         pool,
@@ -159,12 +203,15 @@ describe.skipIf(!dbAvailable)(
             createdBy: "acct-b",
           }),
       );
-      await withContext(pool, { kind: "account", accountId: "acct-b" }, (db) =>
-        addMembership(db, {
-          workspaceId: x.id,
-          accountId: "acct-b",
-          role: "admin",
-        }),
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-b", workspaceId: x.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: x.id,
+            accountId: "acct-b",
+            role: "admin",
+          }),
       );
       const sessionIdX = await mintSession(x.id, "bob");
 
@@ -251,12 +298,15 @@ describe.skipIf(!dbAvailable)(
             createdBy: "acct-a",
           }),
       );
-      await withContext(pool, { kind: "account", accountId: "acct-a" }, (db) =>
-        addMembership(db, {
-          workspaceId: w.id,
-          accountId: "acct-a",
-          role: "member",
-        }),
+      await withContext(
+        pool,
+        { kind: "account", accountId: "acct-a", workspaceId: w.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: w.id,
+            accountId: "acct-a",
+            role: "member",
+          }),
       );
 
       await expect(

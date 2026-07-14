@@ -50,6 +50,12 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Typecheck the hub TESTS too (they are outside the build's tsc graph):
+      # without this step a PR that breaks a test-only call site keeps CI green.
+      # Mirrors the `typecheck:test` leg of the root `npm run check` gate.
+      - name: Typecheck tests
+        run: npm run typecheck:test
+
       - name: Test
         run: npm test
         env:

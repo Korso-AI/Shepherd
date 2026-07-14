@@ -170,6 +170,26 @@ export async function assertMigrationsCurrent(pool: pg.Pool): Promise<void> {
   }
 }
 
+/**
+ * Format a boot-path fatal error as message + stack + cause chain, WITHOUT the
+ * error's other own properties. Boot errors can carry raw credentials: a
+ * WHATWG-invalid connection string makes pg-connection-string throw
+ * ERR_INVALID_URL, which keeps the complete input — password included — in the
+ * error's `input` property, and `console.error(err)` prints own properties
+ * into persisted logs. Stacks and messages don't embed the URL, so printing
+ * only those (walking `cause` so the underlying driver error stays visible)
+ * keeps the owner credential out of the logs.
+ */
+export function formatBootError(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const stack = err.stack ?? `${err.name}: ${err.message}`;
+  return err.cause === undefined
+    ? stack
+    : `${stack}\ncaused by: ${formatBootError(err.cause)}`;
+}
+
 // ---------------------------------------------------------------------------
 // CLI entry-point: `tsx packages/hub/src/migrate.ts`
 // ---------------------------------------------------------------------------
@@ -191,8 +211,10 @@ if (isMain) {
       console.log("[migrate] done");
       return pool.end();
     })
-    .catch((err) => {
-      console.error("[migrate] failed:", err);
+    .catch((err: unknown) => {
+      // formatBootError, not the raw object: see its doc — the raw error can
+      // carry the full connection string.
+      console.error("[migrate] failed:", formatBootError(err));
       process.exit(1);
     });
 }

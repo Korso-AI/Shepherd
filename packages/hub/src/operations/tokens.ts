@@ -131,6 +131,13 @@ export async function listTokens(
  * unknown id — affects zero rows and surfaces as 404 (never reveal another
  * account's token, or that the id exists). Works for both account-scoped and
  * workspace-narrowed tokens: ownership keys on account_id, not the workspace.
+ *
+ * Context is PINNED to `account` (not contextForTenant): revocation is
+ * account-scoped by design — through the `/workspaces/:id/tokens/:tokenId`
+ * route it still revokes the caller's account-scoped (`workspace_id IS NULL`)
+ * and other-workspace tokens, which a workspace-context policy arm on
+ * api_tokens would turn into 0-row updates → spurious 404s. Same sanctioned
+ * account-surface pinning contextForTenant's doc records.
  */
 export async function revokeToken(
   tokenId: string,
@@ -139,8 +146,10 @@ export async function revokeToken(
   const { pool } = getContext();
   const accountId = requireAccountId(tenant);
 
-  const revoked = await withContext(pool, contextForTenant(tenant), (db) =>
-    revokeOwnApiToken(db, accountId, tokenId),
+  const revoked = await withContext(
+    pool,
+    { kind: "account", accountId },
+    (db) => revokeOwnApiToken(db, accountId, tokenId),
   );
   if (!revoked) {
     throw new AuthError(404, "token not found");

@@ -82,6 +82,23 @@ async function createSession(
   );
 }
 
+/**
+ * A session's pending announcements, via the same two-transaction read every
+ * assertion here needs (same helper as workspaceAnnounce.test.ts). Each read
+ * keeps its own withContext on purpose — one transaction per call, like the
+ * operations themselves.
+ */
+async function pendingFor(pool: pg.Pool, sessionId: string) {
+  const session = await withContext(
+    pool,
+    { kind: "workspace", workspaceId },
+    (db) => getSession(db, workspaceId, sessionId),
+  );
+  return withContext(pool, { kind: "workspace", workspaceId }, (tx) =>
+    fetchPendingAnnouncements(tx, session),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // DB-gated suite
 // ---------------------------------------------------------------------------
@@ -176,32 +193,14 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Fetch pending for receiver1
-      const r1Session = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, receiver1.sessionId),
-      );
-      const pending1 = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, r1Session),
-      );
+      const pending1 = await pendingFor(pool, receiver1.sessionId);
       expect(pending1).toHaveLength(1);
       expect(pending1[0]!.id).toBe(result.announcementId);
       expect(pending1[0]!.body).toBe("Broadcast message");
       expect(pending1[0]!.targetAgentName).toBeNull();
 
       // Fetch pending for receiver2
-      const r2Session = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, receiver2.sessionId),
-      );
-      const pending2 = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, r2Session),
-      );
+      const pending2 = await pendingFor(pool, receiver2.sessionId);
       expect(pending2).toHaveLength(1);
       expect(pending2[0]!.id).toBe(result.announcementId);
     });
@@ -246,31 +245,13 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Target sees the announcement
-      const targetSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, target.sessionId),
-      );
-      const targetPending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, targetSession),
-      );
+      const targetPending = await pendingFor(pool, target.sessionId);
       expect(targetPending).toHaveLength(1);
       expect(targetPending[0]!.id).toBe(result.announcementId);
       expect(targetPending[0]!.targetAgentName).toBe(target.agentName);
 
       // Bystander does NOT see the announcement
-      const bystanderSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, bystander.sessionId),
-      );
-      const bystanderPending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, bystanderSession),
-      );
+      const bystanderPending = await pendingFor(pool, bystander.sessionId);
       expect(bystanderPending).toHaveLength(0);
     });
 
@@ -366,16 +347,7 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Sender's pending should be empty (from_session_id filter)
-      const senderSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, sender.sessionId),
-      );
-      const senderPending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, senderSession),
-      );
+      const senderPending = await pendingFor(pool, sender.sessionId);
       expect(senderPending).toHaveLength(0);
     });
 
@@ -397,16 +369,7 @@ describe.skipIf(!dbAvailable)(
 
       const now = new Date();
 
-      const senderSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, sender.sessionId),
-      );
-      const senderPending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, senderSession),
-      );
+      const senderPending = await pendingFor(pool, sender.sessionId);
       // from_session_id filter removes it
       expect(senderPending).toHaveLength(0);
     });
@@ -511,16 +474,7 @@ describe.skipIf(!dbAvailable)(
         tenant,
       );
 
-      const bystanderSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, bystander.sessionId),
-      );
-      const pending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, bystanderSession),
-      );
+      const pending = await pendingFor(pool, bystander.sessionId);
       expect(pending).toHaveLength(0);
     });
 
@@ -715,16 +669,7 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.to_admin).toBe(false);
       expect(rows[0]!.target_account_id).toBeNull();
 
-      const receiverSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, receiver.sessionId),
-      );
-      const pending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, receiverSession),
-      );
+      const pending = await pendingFor(pool, receiver.sessionId);
       expect(pending).toHaveLength(1);
       expect(pending[0]!.body).toBe("via unified target");
     });
@@ -800,16 +745,7 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.target_label).toBe("Alice Chen");
 
       // Leak guard: a member-directed message reaches NO agent.
-      const bystanderSession = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => getSession(db, workspaceId, bystander.sessionId),
-      );
-      const pending = await withContext(
-        pool,
-        { kind: "workspace", workspaceId },
-        (db) => fetchPendingAnnouncements(db, bystanderSession),
-      );
+      const pending = await pendingFor(pool, bystander.sessionId);
       expect(pending).toHaveLength(0);
 
       // The dashboard feed shows WHO it's for.

@@ -217,6 +217,23 @@ export async function join(
     ...(tenant.accountId !== undefined ? { accountId: tenant.accountId } : {}),
   };
   return withContext(pool, mainContext, async (tx) => {
+    // Account-scoped path: re-verify LIVE membership inside the WRITING
+    // transaction. The slug→workspace validation above ran in its own
+    // transaction, so a revocation committing in the gap would otherwise still
+    // land this join — and once the Phase 2 policies exist, it is this
+    // transaction's workspace-context GUC (not live membership) that they
+    // trust. Same 404 as the resolution above (no existence disclosure).
+    if (tenant.workspaceId === NO_ROUTE_WORKSPACE) {
+      const membership = await findMembership(
+        tx,
+        requireAccountId(tenant),
+        workspaceId,
+      );
+      if (membership === null) {
+        throw new AuthError(404, "workspace not found");
+      }
+    }
+
     // Canonicalize repo HERE, at the single ingestion point — repo is the
     // coordination boundary and the hub owns it. Every downstream row
     // (work_items, announcements, change_records) derives its repo from this

@@ -32,6 +32,10 @@ export function createPool(connString?: string): pg.Pool {
  * pg_advisory_xact_lock for serialisation, not on the isolation level.
  *
  * Rolls back automatically on any thrown error; always releases the client.
+ * If the ROLLBACK itself fails (dropped connection), the ORIGINAL error still
+ * propagates — never the rollback's — and the client is EVICTED from the pool
+ * (release(err)) rather than recycled, so no later checkout can inherit a
+ * connection stuck in an aborted transaction.
  */
 export async function withTransaction<T>(
   pool: pg.Pool,
@@ -42,11 +46,19 @@ export async function withTransaction<T>(
     await client.query("BEGIN");
     const result = await fn(client);
     await client.query("COMMIT");
+    client.release();
     return result;
   } catch (err) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+      client.release();
+    } catch (rollbackErr) {
+      client.release(
+        rollbackErr instanceof Error
+          ? rollbackErr
+          : new Error("rollback failed"),
+      );
+    }
     throw err;
-  } finally {
-    client.release();
   }
 }
