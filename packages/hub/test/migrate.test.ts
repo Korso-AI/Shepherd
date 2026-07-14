@@ -3,6 +3,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
@@ -580,22 +581,69 @@ describe.skipIf(!dbAvailable)("migrate 015 — account-scoped tokens", () => {
   });
 });
 
+describe.skipIf(!dbAvailable)("migrate 021 — row-level security", () => {
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    pool = createTestPool();
+    await runTestMigrations(pool);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("records the 021 migration as applied", async () => {
+    const { rows } = await pool.query<{ version: string }>(
+      "SELECT version FROM schema_migrations WHERE version = '021_rls'",
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it("enables + forces RLS on a representative table (agents)", async () => {
+    // The full enabled/forced/policy/grant audit lives in rls.coverage.test.ts;
+    // this is the per-migration smoke that 021 actually ran the RLS DDL.
+    const { rows } = await pool.query<{
+      relrowsecurity: boolean;
+      relforcerowsecurity: boolean;
+    }>(
+      `SELECT relrowsecurity, relforcerowsecurity
+       FROM pg_class WHERE oid = 'agents'::regclass`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.relrowsecurity).toBe(true);
+    expect(rows[0]!.relforcerowsecurity).toBe(true);
+  });
+});
+
 describe.skipIf(!dbAvailable)(
   "assertMigrationsCurrent — split-database boot guard",
   () => {
+    // Owner pool runs the migrations and mutates schema_migrations; the app-role
+    // pool models the SERVING connection in a two-role deployment.
     let pool: pg.Pool;
+    let appPool: pg.Pool;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
     });
 
     afterAll(async () => {
+      await appPool.end();
       await pool.end();
     });
 
     it("passes on the database the migrations ran against", async () => {
       await expect(assertMigrationsCurrent(pool)).resolves.toBeUndefined();
+    });
+
+    it("passes on the restricted app-role serving pool (two-role deployment)", async () => {
+      // In a split-role deployment boot runs assertMigrationsCurrent on the
+      // SERVING pool, which connects as the app role. schema_migrations carries a
+      // SELECT grant (RLS stays OFF on it) precisely so this read succeeds.
+      await expect(assertMigrationsCurrent(appPool)).resolves.toBeUndefined();
     });
 
     it("fails loudly when the serving database is missing a migration", async () => {

@@ -1,11 +1,10 @@
 /**
  * The ONE door to the database for request-serving code.
  *
- * `withContext` opens a transaction and sets three TRANSACTION-LOCAL GUCs —
- * `app.context`, `app.workspace_id`, `app.account_id` — that the row-security
- * policies (the Phase 2 policy migration, 021) read via the `app_context()` /
- * `app_workspace_id()` / `app_account_id()` SQL helpers. Until that migration
- * exists the GUCs are inert, so this module deploys as a pure refactor.
+ * `withContext` opens a transaction and sets four TRANSACTION-LOCAL GUCs —
+ * `app.context`, `app.workspace_id`, `app.account_id`, `app.invite_code` — that
+ * the row-security policies (migration 021) read via the `app_context()` /
+ * `app_workspace_id()` / `app_account_id()` / `app_invite_code()` SQL helpers.
  *
  * `ScopedDb` is a BRANDED query handle: repo.ts functions accept only it, and
  * only this module mints one — so a query that skipped context-setting is a
@@ -24,7 +23,10 @@
  *                  workspace (`workspaceId`) after validating a capability
  *                  (an invite code, the caller's own membership) to unlock
  *                  that workspace's membership/entitlement reads WITHOUT
- *                  granting full workspace powers.
+ *                  granting full workspace powers. May also carry `inviteCode`:
+ *                  the account-context invite arms match `code = app_invite_code()`,
+ *                  so a redeemer reads/uses ONLY the specific invite it holds,
+ *                  never enumerating (invites carry an email — see 021).
  *  - auth        — resolveTenant's pre-tenant lookups (chicken-and-egg), plus
  *                  ONE sanctioned post-auth use: createWorkspace's global
  *                  slug-uniqueness probe (see workspaces.ts — account context
@@ -39,7 +41,12 @@ import { withTransaction } from "./db.js";
 
 export type DbContext =
   | { kind: "workspace"; workspaceId: string; accountId?: string }
-  | { kind: "account"; accountId: string; workspaceId?: string }
+  | {
+      kind: "account";
+      accountId: string;
+      workspaceId?: string;
+      inviteCode?: string;
+    }
   | { kind: "auth"; accountId?: string }
   | { kind: "internal"; workspaceId: string }
   | { kind: "operator" }
@@ -67,6 +74,7 @@ export type ScopedDb = Pick<pg.PoolClient, "query"> & {
 function contextIds(ctx: DbContext): {
   workspaceId: string;
   accountId: string;
+  inviteCode: string;
 } {
   switch (ctx.kind) {
     case "workspace":
@@ -78,6 +86,7 @@ function contextIds(ctx: DbContext): {
           ctx.accountId !== undefined
             ? requireId(ctx.accountId, "workspace", "accountId")
             : "",
+        inviteCode: "",
       };
     case "account":
       return {
@@ -86,6 +95,13 @@ function contextIds(ctx: DbContext): {
             ? requireId(ctx.workspaceId, "account", "workspaceId (focus)")
             : "",
         accountId: requireId(ctx.accountId, "account", "accountId"),
+        // The invite code is a capability: a supplied-but-empty one is a
+        // threaded sentinel that would fail closed to zero rows under the
+        // code-scoped policy arms, so reject it loudly like the other ids.
+        inviteCode:
+          ctx.inviteCode !== undefined
+            ? requireId(ctx.inviteCode, "account", "inviteCode")
+            : "",
       };
     case "auth":
       return {
@@ -94,15 +110,17 @@ function contextIds(ctx: DbContext): {
           ctx.accountId !== undefined
             ? requireId(ctx.accountId, "auth", "accountId")
             : "",
+        inviteCode: "",
       };
     case "internal":
       return {
         workspaceId: requireId(ctx.workspaceId, "internal", "workspaceId"),
         accountId: "",
+        inviteCode: "",
       };
     case "operator":
     case "maintenance":
-      return { workspaceId: "", accountId: "" };
+      return { workspaceId: "", accountId: "", inviteCode: "" };
     default: {
       const exhausted: never = ctx;
       throw new Error(`unknown DbContext: ${JSON.stringify(exhausted)}`);
@@ -118,10 +136,15 @@ function requireId(value: string, kind: string, field: string): string {
 }
 
 /**
- * Set the three context GUCs on the CURRENT transaction (is_local = true, so
+ * Set the four context GUCs on the CURRENT transaction (is_local = true, so
  * they vanish at COMMIT/ROLLBACK and can never leak across pooled
  * connections). Absent ids are set to '' — the SQL helpers NULLIF that back
  * to NULL, and `col = NULL` is never true, so an id-less context fails closed.
+ *
+ * ALL FOUR are set on EVERY call, including `app.invite_code`: a re-scope
+ * (setDbContext on a live transaction) must OVERWRITE the invite code, never
+ * inherit it, so a widening from a code-bearing account context can never carry
+ * a stale capability into the wider scope.
  *
  * Re-pointing a live transaction's context is an ESCALATION primitive: a call
  * site must hold a proof (the validated row) that justifies the new scope, and
@@ -136,8 +159,9 @@ export async function setDbContext(
   await db.query(
     `SELECT set_config('app.context', $1, true),
             set_config('app.workspace_id', $2, true),
-            set_config('app.account_id', $3, true)`,
-    [ctx.kind, ids.workspaceId, ids.accountId],
+            set_config('app.account_id', $3, true),
+            set_config('app.invite_code', $4, true)`,
+    [ctx.kind, ids.workspaceId, ids.accountId, ids.inviteCode],
   );
 }
 
