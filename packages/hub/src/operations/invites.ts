@@ -396,8 +396,10 @@ export async function redeemInvite(
   // 4. Resolve the code. findInviteByCode already excludes revoked invites (reads
   //    as null). Expiry/use-count are NOT checked here — the atomic claim in
   //    incrementInviteUse enforces them under the row lock.
-  const invite = await withContext(pool, { kind: "account", accountId }, (db) =>
-    findInviteByCode(db, code),
+  const invite = await withContext(
+    pool,
+    { kind: "account", accountId, inviteCode: code },
+    (db) => findInviteByCode(db, code),
   );
   if (invite === null) {
     recordRedeemFailure(accountId);
@@ -427,7 +429,7 @@ export async function redeemInvite(
   //    membership is added.
   await withContext(
     pool,
-    { kind: "account", accountId, workspaceId },
+    { kind: "account", accountId, workspaceId, inviteCode: code },
     async (tx) => {
       // Seat cap FIRST, before the use-claim, so a blocked redeem burns no
       // invite use. Takes the workspace-level advisory lock that serializes
