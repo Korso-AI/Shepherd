@@ -25,6 +25,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -129,12 +130,14 @@ describe.skipIf(!dbAvailable)(
   "POST /feedback (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
-      initContext({ pool, config: makeTestConfig() });
+      appPool = createAppPool();
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -154,6 +157,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -349,7 +353,7 @@ describe.skipIf(!dbAvailable)(
     it("does not email when Resend is unconfigured", async () => {
       resetContext();
       initContext({
-        pool,
+        pool: appPool,
         config: makeTestConfig({
           RESEND_API_KEY: undefined,
           INVITE_EMAIL_FROM: undefined,
@@ -366,7 +370,7 @@ describe.skipIf(!dbAvailable)(
         expect(sendFeedbackEmail).not.toHaveBeenCalled();
       } finally {
         resetContext();
-        initContext({ pool, config: makeTestConfig() });
+        initContext({ pool: appPool, config: makeTestConfig() });
       }
     });
 

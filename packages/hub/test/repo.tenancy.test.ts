@@ -24,6 +24,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -59,11 +60,16 @@ import { hashToken } from "../src/tenant.js";
 import { withContext, setDbContext } from "../src/scopedDb.js";
 
 describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
+  // Owner pool: account_profiles seeding, raw revoked_at asserts, truncates.
+  // Restricted app-role pool: every repo function under test (all withContext
+  // calls) runs here so the CRUD scoping is enforced by RLS, not just SQL.
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
   });
 
   // Truncate AFTER each test (the established convention — see tenant.test.ts):
@@ -77,6 +83,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 
@@ -87,7 +94,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
   describe("createWorkspace / addMembership / listWorkspacesForAccount", () => {
     it("creates a workspace and returns its row", async () => {
       const ws = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, {
@@ -104,42 +111,51 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("lists only the workspaces the account is a member of, with its role", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       // acct-1 is admin of A, member of B; acct-2 admin of B only.
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            role: "admin",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        addMembership(db, {
-          workspaceId: b.id,
-          accountId: "acct-2",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: b.id,
+            accountId: "acct-2",
+            role: "admin",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        addMembership(db, {
-          workspaceId: b.id,
-          accountId: "acct-1",
-          role: "member",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: b.id,
+            accountId: "acct-1",
+            role: "member",
+          }),
       );
 
       const mine = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) => listWorkspacesForAccount(db, "acct-1"),
       );
@@ -162,28 +178,34 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("addMembership is idempotent on (workspace_id, account_id) — re-add updates role", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          role: "member",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            role: "member",
+          }),
       );
       // Re-adding the same pair must not throw on the unique/PK constraint.
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            role: "admin",
+          }),
       );
       const mine = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) => listWorkspacesForAccount(db, "acct-1"),
       );
@@ -192,32 +214,41 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("countWorkspacesCreatedBy counts only workspaces this account created", async () => {
-      await withContext(pool, { kind: "account", accountId: "acct-1" }, (db) =>
-        createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+      await withContext(
+        appPool,
+        { kind: "account", accountId: "acct-1" },
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
-      await withContext(pool, { kind: "account", accountId: "acct-1" }, (db) =>
-        createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-1" }),
+      await withContext(
+        appPool,
+        { kind: "account", accountId: "acct-1" },
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-1" }),
       );
-      await withContext(pool, { kind: "account", accountId: "acct-2" }, (db) =>
-        createWorkspace(db, { slug: "c", name: "C", createdBy: "acct-2" }),
+      await withContext(
+        appPool,
+        { kind: "account", accountId: "acct-2" },
+        (db) =>
+          createWorkspace(db, { slug: "c", name: "C", createdBy: "acct-2" }),
       );
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "account", accountId: "acct-1" },
           (db) => countWorkspacesCreatedBy(db, "acct-1"),
         ),
       ).toBe(2);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "account", accountId: "acct-2" },
           (db) => countWorkspacesCreatedBy(db, "acct-2"),
         ),
       ).toBe(1);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "account", accountId: "nobody" },
           (db) => countWorkspacesCreatedBy(db, "nobody"),
         ),
@@ -232,14 +263,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
   describe("api tokens", () => {
     it("inserts a token storing only its hash, and lists it WITHOUT the hash", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const hash = hashToken("shp_secret");
       const summary = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           insertApiToken(db, {
@@ -254,7 +285,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(summary.revokedAt).toBeNull();
 
       const listed = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => listApiTokens(db, a.id),
       );
@@ -276,7 +307,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // and round-trip through findApiTokenByHash with a null workspace_id.
       const hash = hashToken("shp_account_scoped");
       const summary = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           insertApiToken(db, {
@@ -289,7 +320,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(summary.id).toMatch(/[0-9a-f-]{36}/);
       expect(summary.revokedAt).toBeNull();
 
-      const found = await withContext(pool, { kind: "auth" }, (db) =>
+      const found = await withContext(appPool, { kind: "auth" }, (db) =>
         findApiTokenByHash(db, hash),
       );
       expect(found).not.toBeNull();
@@ -300,14 +331,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("still persists a WORKSPACE-LOCKED token and reads back the concrete workspace_id (legacy path)", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const hash = hashToken("shp_workspace_locked");
       const summary = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           insertApiToken(db, {
@@ -318,7 +349,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
           }),
       );
 
-      const found = await withContext(pool, { kind: "auth" }, (db) =>
+      const found = await withContext(appPool, { kind: "auth" }, (db) =>
         findApiTokenByHash(db, hash),
       );
       expect(found).not.toBeNull();
@@ -329,35 +360,41 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("listApiTokens is scoped to the workspace (no cross-tenant leak)", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        insertApiToken(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          tokenHash: hashToken("t-a"),
-          name: "a",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          insertApiToken(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            tokenHash: hashToken("t-a"),
+            name: "a",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        insertApiToken(db, {
-          workspaceId: b.id,
-          accountId: "acct-2",
-          tokenHash: hashToken("t-b"),
-          name: "b",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          insertApiToken(db, {
+            workspaceId: b.id,
+            accountId: "acct-2",
+            tokenHash: hashToken("t-b"),
+            name: "b",
+          }),
       );
       const listedA = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => listApiTokens(db, a.id),
       );
@@ -367,19 +404,19 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("revokeApiToken is workspace-scoped: cannot revoke another tenant's token", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       const tokB = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) =>
           insertApiToken(db, {
@@ -392,13 +429,13 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       // Workspace A tries to revoke B's token → no row affected, token stays live.
       const revokedCross = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => revokeApiToken(db, a.id, tokB.id),
       );
       expect(revokedCross).toBe(false);
       const stillLive = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) => listApiTokens(db, b.id),
       );
@@ -406,7 +443,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       // The owning workspace can revoke it.
       const revokedOwn = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) => revokeApiToken(db, b.id, tokB.id),
       );
@@ -414,7 +451,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // listApiTokens hides revoked tokens (P3.3), so the revoked token drops out
       // of the active listing; confirm via a direct read that revoked_at was set.
       const afterRevoke = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) => listApiTokens(db, b.id),
       );
@@ -428,14 +465,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("revokeOwnApiToken is account-scoped: a member cannot revoke another member's token in the SAME workspace", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       // Two members of the SAME workspace, each with a token.
       const tokAlice = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           insertApiToken(db, {
@@ -446,7 +483,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
           }),
       );
       const tokBob = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           insertApiToken(db, {
@@ -459,7 +496,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       // Alice tries to revoke Bob's token → account_id guard rejects (no row).
       const cross = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-alice" },
         (db) => revokeOwnApiToken(db, "acct-alice", tokBob.id),
       );
@@ -467,7 +504,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const byName1 = Object.fromEntries(
         (
           await withContext(
-            pool,
+            appPool,
             { kind: "workspace", workspaceId: a.id },
             (db) => listApiTokens(db, a.id),
           )
@@ -477,7 +514,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       // Alice CAN revoke her own token.
       const own = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-alice" },
         (db) => revokeOwnApiToken(db, "acct-alice", tokAlice.id),
       );
@@ -486,7 +523,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const byName2 = Object.fromEntries(
         (
           await withContext(
-            pool,
+            appPool,
             { kind: "workspace", workspaceId: a.id },
             (db) => listApiTokens(db, a.id),
           )
@@ -502,7 +539,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       // Idempotent: a second revoke of the already-revoked token affects no row.
       const again = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-alice" },
         (db) => revokeOwnApiToken(db, "acct-alice", tokAlice.id),
       );
@@ -514,7 +551,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // ownership must key on account_id alone — a workspace predicate would make it
       // unrevocable. Confirm the owner can revoke it and a different account cannot.
       const tok = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-alice" },
         (db) =>
           insertApiToken(db, {
@@ -526,14 +563,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       );
 
       const byOther = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-bob" },
         (db) => revokeOwnApiToken(db, "acct-bob", tok.id),
       );
       expect(byOther).toBe(false);
 
       const byOwner = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-alice" },
         (db) => revokeOwnApiToken(db, "acct-alice", tok.id),
       );
@@ -548,45 +585,54 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("revokeApiTokensForMember revokes that member's live tokens in the workspace and returns the count", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        insertApiToken(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          tokenHash: hashToken("t1"),
-          name: "t1",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          insertApiToken(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            tokenHash: hashToken("t1"),
+            name: "t1",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        insertApiToken(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          tokenHash: hashToken("t2"),
-          name: "t2",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          insertApiToken(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            tokenHash: hashToken("t2"),
+            name: "t2",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        insertApiToken(db, {
-          workspaceId: a.id,
-          accountId: "acct-2",
-          tokenHash: hashToken("t3"),
-          name: "t3",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          insertApiToken(db, {
+            workspaceId: a.id,
+            accountId: "acct-2",
+            tokenHash: hashToken("t3"),
+            name: "t3",
+          }),
       );
 
       const count = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => revokeApiTokensForMember(db, a.id, "acct-1"),
       );
       expect(count).toBe(2);
       // Revoked tokens (t1, t2) drop out of the active listing (P3.3); t3 (acct-2) stays.
       const listed = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => listApiTokens(db, a.id),
       );
@@ -612,13 +658,13 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
   describe("invites", () => {
     it("creates an invite and finds it by code", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           createInvite(db, {
@@ -636,7 +682,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(inv.useCount).toBe(0);
 
       const found = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => findInviteByCode(db, "CODE-1"),
       );
@@ -644,7 +690,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(found!.workspaceId).toBe(a.id);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: a.id },
           (db) => findInviteByCode(db, "nope"),
         ),
@@ -653,13 +699,13 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("incrementInviteUse refuses once max_uses is reached (atomic guard)", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           createInvite(db, {
@@ -673,7 +719,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       );
 
       const first = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => incrementInviteUse(db, inv.code),
       );
@@ -681,7 +727,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(first!.useCount).toBe(1);
 
       const second = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => incrementInviteUse(db, inv.code),
       );
@@ -690,13 +736,13 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
       // Third must fail (max reached) — returns null, count unchanged.
       const third = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => incrementInviteUse(db, inv.code),
       );
       expect(third).toBeNull();
       const after = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => findInviteByCode(db, inv.code),
       );
@@ -705,14 +751,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("incrementInviteUse refuses an EXPIRED invite atomically (use_count unchanged)", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       // expires_at in the past — the atomic guard must refuse the claim.
       const inv = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           createInvite(db, {
@@ -727,7 +773,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       expect(inv.expiresAt).not.toBeNull();
 
       const claim = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => incrementInviteUse(db, inv.code),
       );
@@ -742,13 +788,13 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("incrementInviteUse claims a not-yet-expired invite (expires_at in the future)", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           createInvite(db, {
@@ -761,7 +807,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
           }),
       );
       const claim = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => incrementInviteUse(db, inv.code),
       );
@@ -771,19 +817,19 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("revokeInvite is workspace-scoped: cannot revoke another tenant's invite", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       const invB = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) =>
           createInvite(db, {
@@ -797,14 +843,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       );
 
       const cross = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => revokeInvite(db, a.id, invB.id),
       );
       expect(cross).toBe(false);
 
       const own = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) => revokeInvite(db, b.id, invB.id),
       );
@@ -813,32 +859,35 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("revokeInviteByCode is workspace-scoped: another tenant's code matches zero rows", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        createInvite(db, {
-          workspaceId: b.id,
-          code: "BYCODE-B",
-          createdBy: "acct-2",
-          roleGranted: "member",
-          maxUses: 5,
-          expiresAt: null,
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          createInvite(db, {
+            workspaceId: b.id,
+            code: "BYCODE-B",
+            createdBy: "acct-2",
+            roleGranted: "member",
+            maxUses: 5,
+            expiresAt: null,
+          }),
       );
 
       // A's workspace cannot revoke B's code.
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: a.id },
           (db) => revokeInviteByCode(db, a.id, "BYCODE-B"),
         ),
@@ -846,7 +895,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // The code is still live in B.
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => findInviteByCode(db, "BYCODE-B"),
         ),
@@ -855,21 +904,21 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // B's workspace revokes it; a second call is idempotent (zero rows → false).
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => revokeInviteByCode(db, b.id, "BYCODE-B"),
         ),
       ).toBe(true);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => revokeInviteByCode(db, b.id, "BYCODE-B"),
         ),
       ).toBe(false);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => findInviteByCode(db, "BYCODE-B"),
         ),
@@ -878,13 +927,13 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("a revoked invite is treated as not found by findInviteByCode", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) =>
           createInvite(db, {
@@ -896,12 +945,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
             expiresAt: null,
           }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        revokeInvite(db, a.id, inv.id),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) => revokeInvite(db, a.id, inv.id),
       );
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: a.id },
           (db) => findInviteByCode(db, "CODE-R"),
         ),
@@ -926,41 +977,50 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("listMembers joins account_profiles for display identity and is workspace-scoped", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            role: "admin",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-2",
-          role: "member",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-2",
+            role: "member",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        addMembership(db, {
-          workspaceId: b.id,
-          accountId: "acct-2",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: b.id,
+            accountId: "acct-2",
+            role: "admin",
+          }),
       );
 
       const members = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => listMembers(db, a.id),
       );
@@ -977,48 +1037,57 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("countAdmins counts admins in the workspace only", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-1",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-1",
+            role: "admin",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-2",
-          role: "member",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-2",
+            role: "member",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        addMembership(db, {
-          workspaceId: b.id,
-          accountId: "acct-2",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: b.id,
+            accountId: "acct-2",
+            role: "admin",
+          }),
       );
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: a.id },
           (db) => countAdmins(db, a.id),
         ),
       ).toBe(1);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => countAdmins(db, b.id),
         ),
@@ -1027,31 +1096,36 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("setRole promotes/demotes within the workspace (scoped)", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        addMembership(db, {
-          workspaceId: a.id,
-          accountId: "acct-2",
-          role: "member",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: a.id,
+            accountId: "acct-2",
+            role: "member",
+          }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
-        setRole(db, a.id, "acct-2", "admin"),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: a.id },
+        (db) => setRole(db, a.id, "acct-2", "admin"),
       );
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: a.id },
           (db) => countAdmins(db, a.id),
         ),
       ).toBe(1);
       const found = (
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: a.id },
           (db) => listMembers(db, a.id),
         )
@@ -1061,49 +1135,52 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
 
     it("removeMembership is workspace-scoped: cannot remove from another tenant", async () => {
       const a = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) =>
           createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-2" },
         (db) =>
           createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
-      await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
-        addMembership(db, {
-          workspaceId: b.id,
-          accountId: "acct-2",
-          role: "admin",
-        }),
+      await withContext(
+        appPool,
+        { kind: "workspace", workspaceId: b.id },
+        (db) =>
+          addMembership(db, {
+            workspaceId: b.id,
+            accountId: "acct-2",
+            role: "admin",
+          }),
       );
 
       // Workspace A tries to remove acct-2 (a B member) → no row affected.
       const cross = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: a.id },
         (db) => removeMembership(db, a.id, "acct-2"),
       );
       expect(cross).toBe(false);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => countAdmins(db, b.id),
         ),
       ).toBe(1);
 
       const own = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId: b.id },
         (db) => removeMembership(db, b.id, "acct-2"),
       );
       expect(own).toBe(true);
       expect(
         await withContext(
-          pool,
+          appPool,
           { kind: "workspace", workspaceId: b.id },
           (db) => countAdmins(db, b.id),
         ),
@@ -1129,7 +1206,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       human: string,
     ): Promise<string> {
       return withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId },
         async (db) => {
           const agent = await createAgent(db, {
@@ -1156,7 +1233,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       // whose planned Phase 2 sessions/agents policy exposes rows only through
       // a live membership — an unmembered account would see nothing.
       const ws = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         async (db) => {
           const created = await createWorkspace(db, {
@@ -1180,7 +1257,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const sessionId = await mintSession(ws.id, "alice");
 
       const session = await withContext(
-        pool,
+        appPool,
         { kind: "account", accountId: "acct-1" },
         (db) => getSessionById(db, sessionId),
       );
@@ -1196,7 +1273,7 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     it("returns null for an unknown session id (never throws)", async () => {
       const missing = "00000000-0000-0000-0000-000000000000";
       expect(
-        await withContext(pool, { kind: "auth" }, (db) =>
+        await withContext(appPool, { kind: "auth" }, (db) =>
           getSessionById(db, missing),
         ),
       ).toBeNull();

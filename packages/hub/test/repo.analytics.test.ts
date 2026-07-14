@@ -18,6 +18,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -46,6 +47,7 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
 
     // ---- seed helpers (explicit timestamps for deterministic windows) ----
 
@@ -156,6 +158,9 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      // getShepherdAnalytics under test runs as the restricted app-role login so
+      // the operator-context read policies are exercised.
+      appPool = createAppPool();
     });
 
     beforeEach(async () => {
@@ -168,6 +173,7 @@ describe.skipIf(!dbAvailable)(
     });
 
     afterAll(async () => {
+      await appPool.end();
       await pool.end();
     });
 
@@ -183,7 +189,7 @@ describe.skipIf(!dbAvailable)(
         { range: "90d" as const, bucket: "day", seconds: (90 * DAY) / SECOND },
       ];
       for (const c of cases) {
-        const res = await withContext(pool, { kind: "operator" }, (db) =>
+        const res = await withContext(appPool, { kind: "operator" }, (db) =>
           getShepherdAnalytics(db, {
             range: c.range,
             now: NOW,
@@ -201,7 +207,7 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("uses hourly buckets for 24h and daily buckets otherwise, both windows equal-length", async () => {
-      const h = await withContext(pool, { kind: "operator" }, (db) =>
+      const h = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "24h",
           now: NOW,
@@ -215,7 +221,7 @@ describe.skipIf(!dbAvailable)(
       // Hourly labels are ISO-ish timestamps.
       expect(h.trends.newAccounts.current[0]!.date).toContain("T");
 
-      const d = await withContext(pool, { kind: "operator" }, (db) =>
+      const d = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -244,7 +250,7 @@ describe.skipIf(!dbAvailable)(
         createdAt: daysBefore(NOW, 3),
       });
 
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -283,7 +289,7 @@ describe.skipIf(!dbAvailable)(
         secondsAfter(daysBefore(windowStart, 30), DAY / SECOND),
       );
 
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -330,7 +336,7 @@ describe.skipIf(!dbAvailable)(
         ),
       });
 
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -356,7 +362,7 @@ describe.skipIf(!dbAvailable)(
           secondsAfter(daysBefore(windowStart, 30), (i + 1) * (DAY / SECOND)),
         );
       }
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -373,7 +379,7 @@ describe.skipIf(!dbAvailable)(
     // -----------------------------------------------------------------------
 
     it("returns null percentiles when there are no source rows in the window", async () => {
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -403,7 +409,7 @@ describe.skipIf(!dbAvailable)(
         releasedAt: secondsAfter(created, 200),
       });
 
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -471,7 +477,7 @@ describe.skipIf(!dbAvailable)(
         releasedAt: secondsAfter(before, 500),
       });
 
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -521,7 +527,7 @@ describe.skipIf(!dbAvailable)(
       const agent = await seedAgent(top);
       await seedCommit({ workspaceId: top, agentId: agent, updatedAt: inWin });
 
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "30d",
           now: NOW,
@@ -564,7 +570,7 @@ describe.skipIf(!dbAvailable)(
     // -----------------------------------------------------------------------
 
     it("produces a valid, zeroed rollup on an empty database", async () => {
-      const res = await withContext(pool, { kind: "operator" }, (db) =>
+      const res = await withContext(appPool, { kind: "operator" }, (db) =>
         getShepherdAnalytics(db, {
           range: "7d",
           now: NOW,

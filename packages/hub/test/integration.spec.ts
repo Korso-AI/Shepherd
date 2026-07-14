@@ -21,6 +21,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
@@ -131,14 +132,16 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let tenant: TenantContext;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const workspaceId = await seedWorkspace(pool, WS);
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -147,6 +150,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -230,14 +234,16 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let tenant: TenantContext;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const workspaceId = await seedWorkspace(pool, WS);
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -246,6 +252,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -307,14 +314,16 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let tenant: TenantContext;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const workspaceId = await seedWorkspace(pool, WS);
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -323,6 +332,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -371,14 +381,16 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let tenant: TenantContext;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const workspaceId = await seedWorkspace(pool, WS);
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -387,6 +399,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -446,14 +459,16 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let tenant: TenantContext;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const workspaceId = await seedWorkspace(pool, WS);
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -462,6 +477,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -567,6 +583,7 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let tenantA: TenantContext;
     let workspaceIdA: string;
     let workspaceIdB: string;
@@ -574,10 +591,11 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       workspaceIdA = await seedWorkspace(pool, WS);
       workspaceIdB = await seedWorkspace(pool, "team-b");
       tenantA = { workspaceId: workspaceIdA, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -586,6 +604,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -746,6 +765,7 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: Awaited<ReturnType<typeof buildServer>>;
     const TOKEN = "integration-test-token";
     const AUTH_HEADER = `Bearer ${TOKEN}`;
@@ -753,8 +773,9 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool, WS);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -767,6 +788,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -887,6 +909,7 @@ describe.skipIf(!dbAvailable)(
       : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: Awaited<ReturnType<typeof buildServer>>;
     let workspaceIdA: string;
     let workspaceIdB: string;
@@ -896,6 +919,7 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       workspaceIdA = await seedWorkspace(pool, WS);
       workspaceIdB = await seedWorkspace(pool, "team-b");
       // Account is a member of team-a only.
@@ -911,7 +935,7 @@ describe.skipIf(!dbAvailable)(
       );
       // Hosted config: BFF_INTERNAL_TOKEN set enables the browser-via-BFF path.
       initContext({
-        pool,
+        pool: appPool,
         config: makeTestConfig({ BFF_INTERNAL_TOKEN: INTERNAL_TOKEN }),
       });
       app = buildServer();
@@ -926,6 +950,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 

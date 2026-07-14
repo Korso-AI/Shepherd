@@ -23,6 +23,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -144,12 +145,14 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
-      initContext({ pool, config: makeTestConfig() });
+      appPool = createAppPool();
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -163,6 +166,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 

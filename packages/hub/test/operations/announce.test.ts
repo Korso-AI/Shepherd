@@ -17,6 +17,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "../setup.js";
@@ -106,18 +107,23 @@ async function pendingFor(pool: pg.Pool, sessionId: string) {
 describe.skipIf(!dbAvailable)(
   "announce – DB tests" + (!dbAvailable ? " (SKIPPED: no DB configured)" : ""),
   () => {
+    // Owner pool: fixture seeding, raw SQL inserts, truncates, raw asserts.
     let pool: pg.Pool;
+    // Restricted app-role pool: code under test (`announce`) and the repo-read
+    // assertion helper `pendingFor` run here to exercise the policies.
+    let appPool: pg.Pool;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
         ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -126,6 +132,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -193,14 +200,14 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Fetch pending for receiver1
-      const pending1 = await pendingFor(pool, receiver1.sessionId);
+      const pending1 = await pendingFor(appPool, receiver1.sessionId);
       expect(pending1).toHaveLength(1);
       expect(pending1[0]!.id).toBe(result.announcementId);
       expect(pending1[0]!.body).toBe("Broadcast message");
       expect(pending1[0]!.targetAgentName).toBeNull();
 
       // Fetch pending for receiver2
-      const pending2 = await pendingFor(pool, receiver2.sessionId);
+      const pending2 = await pendingFor(appPool, receiver2.sessionId);
       expect(pending2).toHaveLength(1);
       expect(pending2[0]!.id).toBe(result.announcementId);
     });
@@ -245,13 +252,13 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Target sees the announcement
-      const targetPending = await pendingFor(pool, target.sessionId);
+      const targetPending = await pendingFor(appPool, target.sessionId);
       expect(targetPending).toHaveLength(1);
       expect(targetPending[0]!.id).toBe(result.announcementId);
       expect(targetPending[0]!.targetAgentName).toBe(target.agentName);
 
       // Bystander does NOT see the announcement
-      const bystanderPending = await pendingFor(pool, bystander.sessionId);
+      const bystanderPending = await pendingFor(appPool, bystander.sessionId);
       expect(bystanderPending).toHaveLength(0);
     });
 
@@ -347,7 +354,7 @@ describe.skipIf(!dbAvailable)(
       const now = new Date();
 
       // Sender's pending should be empty (from_session_id filter)
-      const senderPending = await pendingFor(pool, sender.sessionId);
+      const senderPending = await pendingFor(appPool, sender.sessionId);
       expect(senderPending).toHaveLength(0);
     });
 
@@ -369,7 +376,7 @@ describe.skipIf(!dbAvailable)(
 
       const now = new Date();
 
-      const senderPending = await pendingFor(pool, sender.sessionId);
+      const senderPending = await pendingFor(appPool, sender.sessionId);
       // from_session_id filter removes it
       expect(senderPending).toHaveLength(0);
     });
@@ -474,7 +481,7 @@ describe.skipIf(!dbAvailable)(
         tenant,
       );
 
-      const pending = await pendingFor(pool, bystander.sessionId);
+      const pending = await pendingFor(appPool, bystander.sessionId);
       expect(pending).toHaveLength(0);
     });
 
@@ -492,7 +499,7 @@ describe.skipIf(!dbAvailable)(
 
       const now = new Date();
       const rows = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId },
         (db) => getWorkspaceLandscape(db, workspaceId, now, 120),
       );
@@ -669,7 +676,7 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.to_admin).toBe(false);
       expect(rows[0]!.target_account_id).toBeNull();
 
-      const pending = await pendingFor(pool, receiver.sessionId);
+      const pending = await pendingFor(appPool, receiver.sessionId);
       expect(pending).toHaveLength(1);
       expect(pending[0]!.body).toBe("via unified target");
     });
@@ -745,12 +752,12 @@ describe.skipIf(!dbAvailable)(
       expect(rows[0]!.target_label).toBe("Alice Chen");
 
       // Leak guard: a member-directed message reaches NO agent.
-      const pending = await pendingFor(pool, bystander.sessionId);
+      const pending = await pendingFor(appPool, bystander.sessionId);
       expect(pending).toHaveLength(0);
 
       // The dashboard feed shows WHO it's for.
       const landscape = await withContext(
-        pool,
+        appPool,
         { kind: "workspace", workspaceId },
         (db) => getWorkspaceLandscape(db, workspaceId, new Date(), 120),
       );

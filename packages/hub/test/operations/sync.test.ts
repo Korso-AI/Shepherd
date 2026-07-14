@@ -10,6 +10,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "../setup.js";
@@ -53,19 +54,21 @@ describe.skipIf(!dbAvailable)(
   "sync – DB tests" + (!dbAvailable ? " (SKIPPED: no DB configured)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let workspaceId: string;
     let tenant: TenantContext;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
         ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
       tenant = { workspaceId, via: "team" };
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
     });
 
     afterEach(async () => {
@@ -74,6 +77,7 @@ describe.skipIf(!dbAvailable)(
 
     afterAll(async () => {
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 

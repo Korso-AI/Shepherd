@@ -16,6 +16,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
@@ -170,13 +171,15 @@ describe.skipIf(!dbAvailable)(
   "Auth enforcement (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -189,6 +192,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -260,14 +264,16 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
     let workspaceId: string;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       workspaceId = await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -280,6 +286,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -372,13 +379,15 @@ describe.skipIf(!dbAvailable)(
   "Zod validation (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -391,6 +400,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -460,13 +470,15 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -479,6 +491,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -537,13 +550,15 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -556,6 +571,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -597,13 +613,15 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -616,6 +634,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -645,14 +664,16 @@ describe.skipIf(!dbAvailable)(
   "POST /heartbeat (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
     let workspaceId: string;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       workspaceId = await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -665,6 +686,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -750,13 +772,15 @@ describe.skipIf(!dbAvailable)(
   "Flat /tokens routes (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -769,6 +793,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -808,6 +833,7 @@ describe.skipIf(!dbAvailable)(
     const BFF_TOKEN = "bff-internal-secret";
     const OPERATOR_SECRET = "operator-identity-secret";
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     /**
@@ -851,9 +877,10 @@ describe.skipIf(!dbAvailable)(
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      appPool = createAppPool();
       await seedWorkspace(pool);
       initContext({
-        pool,
+        pool: appPool,
         config: makeTestConfig({
           BFF_INTERNAL_TOKEN: BFF_TOKEN,
           OPERATOR_IDENTITY_SECRET: OPERATOR_SECRET,
@@ -874,6 +901,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 

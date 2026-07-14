@@ -31,6 +31,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -166,12 +167,17 @@ describe.skipIf(!dbAvailable)(
   "Invite endpoints (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
-      initContext({ pool, config: makeTestConfig() });
+      // The server handlers run as the restricted app-role login so the invite
+      // create/revoke/redeem paths exercise migration 021's RLS policies (admin
+      // membership check, workspace-scoped revoke, account-context redeem).
+      appPool = createAppPool();
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -186,6 +192,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 
@@ -910,14 +917,18 @@ describe.skipIf(!dbAvailable)(
     (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
     let fetchSpy: ReturnType<typeof vi.spyOn>;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      // Server handlers run as the restricted app-role login so the email-invite
+      // paths exercise migration 021's RLS policies.
+      appPool = createAppPool();
       initContext({
-        pool,
+        pool: appPool,
         config: makeTestConfig({
           RESEND_API_KEY: "test-resend-key",
           INVITE_EMAIL_FROM: "invites@example.com",
@@ -939,6 +950,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 

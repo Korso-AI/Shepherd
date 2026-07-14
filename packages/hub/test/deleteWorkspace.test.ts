@@ -21,6 +21,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -188,13 +189,21 @@ async function workspaceExists(
 describe.skipIf(!dbAvailable)(
   "Delete workspace (DB-gated)" + (!dbAvailable ? " (SKIPPED: no DB)" : ""),
   () => {
+    // Owner pool: seed fixtures + raw count/exists asserts. Restricted app-role
+    // pool: the server (buildServer resolves its pool from the shared context),
+    // so the delete-cascade runs under RLS. The explicit per-table DELETEs run
+    // in workspace context (permitted by the *_workspace ALL arms); memberships/
+    // invites cascade and feedback SET NULL are FK actions that run as the table
+    // owner and are not subject to RLS.
     let pool: pg.Pool;
+    let appPool: pg.Pool;
     let app: FastifyInstance;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
-      initContext({ pool, config: makeTestConfig() });
+      appPool = createAppPool();
+      initContext({ pool: appPool, config: makeTestConfig() });
       app = buildServer();
       await app.ready();
     });
@@ -208,6 +217,7 @@ describe.skipIf(!dbAvailable)(
     afterAll(async () => {
       await app.close();
       resetContext();
+      await appPool.end();
       await pool.end();
     });
 

@@ -15,6 +15,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
@@ -46,12 +47,16 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 
 describe.skipIf(!dbAvailable)("announcement retention prune (DB-gated)", () => {
   let pool: pg.Pool;
+  let appPool: pg.Pool;
   let workspaceId: string;
   let sessionId: string;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    // The prune under test runs as the restricted app-role login so the
+    // workspace-context RLS policies on announcements/deliveries are exercised.
+    appPool = createAppPool();
   });
 
   /** Seed workspace + agent + session fresh for each test (truncateAll clears them). */
@@ -97,9 +102,13 @@ describe.skipIf(!dbAvailable)("announcement retention prune (DB-gated)", () => {
   }
 
   async function runPrune(config: Config, now = new Date()): Promise<void> {
-    await withContext(pool, { kind: "workspace", workspaceId }, async (tx) => {
-      await maybePruneRetention(tx, config, workspaceId, now);
-    });
+    await withContext(
+      appPool,
+      { kind: "workspace", workspaceId },
+      async (tx) => {
+        await maybePruneRetention(tx, config, workspaceId, now);
+      },
+    );
   }
 
   async function remainingIds(): Promise<string[]> {
@@ -124,6 +133,7 @@ describe.skipIf(!dbAvailable)("announcement retention prune (DB-gated)", () => {
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 

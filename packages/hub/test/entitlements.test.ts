@@ -4,6 +4,7 @@ import type { EntitlementLimitsT } from "@shepherd/shared";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "./setup.js";
@@ -308,10 +309,17 @@ describe("LimitExceededError — pure (no Postgres needed)", () => {
 
 describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    // The repo helpers under test run as the restricted app-role login under the
+    // internal context — the surface that writes entitlements in production (the
+    // /internal/* BFF endpoints) — so the workspace_entitlements_internal RLS
+    // policy is exercised. A workspace token must NOT be able to rewrite its own
+    // caps, which is why 021 permits entitlement writes only in internal context.
+    appPool = createAppPool();
   });
 
   afterEach(async () => {
@@ -320,13 +328,14 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 
   it("getWorkspaceEntitlements returns null when no row exists", async () => {
     const workspaceId = await seedWorkspace(pool, "ent-helper-none");
     expect(
-      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      await withContext(appPool, { kind: "internal", workspaceId }, (db) =>
         getWorkspaceEntitlements(db, workspaceId),
       ),
     ).toBeNull();
@@ -336,8 +345,8 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
     const workspaceId = await seedWorkspace(pool, "ent-helper-upsert");
 
     const inserted = await withContext(
-      pool,
-      { kind: "workspace", workspaceId },
+      appPool,
+      { kind: "internal", workspaceId },
       (db) =>
         upsertWorkspaceEntitlements(db, workspaceId, {
           seatsLimit: 4,
@@ -352,8 +361,8 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
     expect(inserted.expires_at).toBeNull();
 
     const fetched = await withContext(
-      pool,
-      { kind: "workspace", workspaceId },
+      appPool,
+      { kind: "internal", workspaceId },
       (db) => getWorkspaceEntitlements(db, workspaceId),
     );
     expect(fetched).not.toBeNull();
@@ -361,8 +370,8 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
 
     const expiresAt = new Date("2026-08-01T00:00:00.000Z");
     const updated = await withContext(
-      pool,
-      { kind: "workspace", workspaceId },
+      appPool,
+      { kind: "internal", workspaceId },
       (db) =>
         upsertWorkspaceEntitlements(db, workspaceId, {
           seatsLimit: 50,
@@ -390,7 +399,7 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
   it("deleteWorkspaceEntitlements deletes once, then reports false (idempotent)", async () => {
     const workspaceId = await seedWorkspace(pool, "ent-helper-del");
 
-    await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+    await withContext(appPool, { kind: "internal", workspaceId }, (db) =>
       upsertWorkspaceEntitlements(db, workspaceId, {
         seatsLimit: null,
         reposLimit: null,
@@ -399,17 +408,17 @@ describe.skipIf(!dbAvailable)("workspace entitlements repo helpers", () => {
       }),
     );
     expect(
-      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      await withContext(appPool, { kind: "internal", workspaceId }, (db) =>
         deleteWorkspaceEntitlements(db, workspaceId),
       ),
     ).toBe(true);
     expect(
-      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      await withContext(appPool, { kind: "internal", workspaceId }, (db) =>
         deleteWorkspaceEntitlements(db, workspaceId),
       ),
     ).toBe(false);
     expect(
-      await withContext(pool, { kind: "workspace", workspaceId }, (db) =>
+      await withContext(appPool, { kind: "internal", workspaceId }, (db) =>
         getWorkspaceEntitlements(db, workspaceId),
       ),
     ).toBeNull();

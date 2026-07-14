@@ -25,6 +25,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
   truncateTenancy,
@@ -186,14 +187,19 @@ async function seedApiToken(
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)("resolveTenant", () => {
+  // Owner pool: seed* fixtures and raw asserts. Restricted app-role pool: the
+  // resolveTenant-under-test, so its auth-context queries exercise the policies.
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 
@@ -230,7 +236,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
 
     expect(ctx.workspaceId).toBe(wsId);
     expect(ctx.accountId).toBe(accountId);
@@ -265,7 +271,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.accountId).toBe(accountId);
     // No route workspace → operation layer supplies it; sentinel is "".
     expect(ctx.workspaceId).toBe("");
@@ -287,7 +293,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.via).toBe("browser");
     expect(ctx.operator).toBe(true);
     expect(ctx.operatorEmail).toBe("operator@example.test");
@@ -308,7 +314,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.operator).not.toBe(true);
   });
 
@@ -328,7 +334,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.operator).not.toBe(true);
   });
 
@@ -350,7 +356,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.operator).not.toBe(true);
   });
 
@@ -368,7 +374,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     });
 
     const cfg = makeConfig({ OPERATOR_IDENTITY_SECRET: undefined });
-    const ctx = await resolveTenant(req as any, cfg, pool);
+    const ctx = await resolveTenant(req as any, cfg, appPool);
     expect(ctx.operator).not.toBe(true);
   });
 
@@ -385,7 +391,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.operator).not.toBe(true);
   });
 
@@ -403,7 +409,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "GET",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.operator).not.toBe(true);
   });
 
@@ -423,7 +429,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     });
 
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 404,
     });
@@ -436,7 +442,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 400,
     });
@@ -453,7 +459,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -470,7 +476,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
     });
     // Wrong internal token is not a match → header is ignored → 401.
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -486,9 +492,11 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     const cfg = makeConfig({ BFF_INTERNAL_TOKEN: undefined });
-    await expect(resolveTenant(req as any, cfg, pool)).rejects.toMatchObject({
-      status: 401,
-    });
+    await expect(resolveTenant(req as any, cfg, appPool)).rejects.toMatchObject(
+      {
+        status: 401,
+      },
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -518,7 +526,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.accountId).toBe(accountId);
     expect(ctx.workspaceId).toBe(wsId);
     expect(ctx.role).toBe("admin");
@@ -548,7 +556,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.workspaceId).toBe(""); // NO_ROUTE_WORKSPACE sentinel
     expect(ctx.accountId).toBe(accountId);
     expect(ctx.role).toBeUndefined();
@@ -572,7 +580,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.accountId).toBe(accountId); // from the row, not the header
     expect(ctx.via).toBe("agent");
   });
@@ -594,7 +602,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -607,7 +615,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -629,7 +637,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -688,7 +696,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
 
-    const ctx = await resolveTenant(req as any, makeConfig(), pool);
+    const ctx = await resolveTenant(req as any, makeConfig(), appPool);
     expect(ctx.workspaceId).toBe(wsId);
     expect(ctx.accountId).toBeUndefined();
     expect(ctx.role).toBeUndefined();
@@ -703,7 +711,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toBeInstanceOf(AuthError);
   });
 
@@ -714,7 +722,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
   it("no credential at all → AuthError 401", async () => {
     const req = fakeRequest({ headers: {}, url: `/work`, method: "POST" });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -727,7 +735,7 @@ describe.skipIf(!dbAvailable)("resolveTenant", () => {
       method: "POST",
     });
     await expect(
-      resolveTenant(req as any, makeConfig(), pool),
+      resolveTenant(req as any, makeConfig(), appPool),
     ).rejects.toMatchObject({
       status: 401,
     });
@@ -843,14 +851,19 @@ describe("requireOperator", () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
+  // Owner pool: seed* fixtures and raw asserts. Restricted app-role pool: the
+  // resolveTenant-under-test, so its auth-context queries exercise the policies.
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 
@@ -882,7 +895,11 @@ describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
     let throttled = false;
     for (let i = 0; i < 40 && !throttled; i++) {
       try {
-        await resolveTenant(badBearerFrom(attackerIp) as never, config, pool);
+        await resolveTenant(
+          badBearerFrom(attackerIp) as never,
+          config,
+          appPool,
+        );
         expect.unreachable("a bogus bearer must never resolve");
       } catch (err) {
         expect(err).toBeInstanceOf(AuthError);
@@ -917,7 +934,11 @@ describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
 
     // A different source address is untouched: plain 401, no throttle.
     try {
-      await resolveTenant(badBearerFrom("198.51.100.7") as never, config, pool);
+      await resolveTenant(
+        badBearerFrom("198.51.100.7") as never,
+        config,
+        appPool,
+      );
       expect.unreachable();
     } catch (err) {
       expect((err as AuthError).status).toBe(401);
@@ -950,11 +971,15 @@ describe.skipIf(!dbAvailable)("pre-auth failure throttle", () => {
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!dbAvailable)('internal resolution (via: "internal")', () => {
+  // Owner pool: seed* fixtures and raw asserts. Restricted app-role pool: the
+  // resolveTenant-under-test, so its auth-context queries exercise the policies.
   let pool: pg.Pool;
+  let appPool: pg.Pool;
 
   beforeAll(async () => {
     pool = createTestPool();
     await runTestMigrations(pool);
+    appPool = createAppPool();
   });
 
   beforeEach(() => {
@@ -967,6 +992,7 @@ describe.skipIf(!dbAvailable)('internal resolution (via: "internal")', () => {
   });
 
   afterAll(async () => {
+    await appPool.end();
     await pool.end();
   });
 

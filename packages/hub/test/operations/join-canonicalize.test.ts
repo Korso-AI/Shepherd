@@ -13,6 +13,7 @@ import pg from "pg";
 import {
   dbAvailable,
   createTestPool,
+  createAppPool,
   runTestMigrations,
   truncateAll,
 } from "../setup.js";
@@ -44,10 +45,13 @@ describe.skipIf(!dbAvailable)(
   "join — repo canonicalization at ingestion",
   () => {
     let pool: pg.Pool;
+    let appPool: pg.Pool;
 
     beforeAll(async () => {
       pool = createTestPool();
       await runTestMigrations(pool);
+      // join() under test runs as the restricted app-role login so RLS is exercised.
+      appPool = createAppPool();
       const { rows } = await pool.query<{ id: string }>(
         `INSERT INTO workspaces (slug, name, created_by) VALUES ($1, $2, 'tester') ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
         ["test-ws", "test-ws"],
@@ -62,6 +66,7 @@ describe.skipIf(!dbAvailable)(
     });
 
     afterAll(async () => {
+      await appPool.end();
       await pool.end();
     });
 
@@ -79,7 +84,7 @@ describe.skipIf(!dbAvailable)(
       ["git@github.com:Acme/widgets.git", "widgets"],
       ["https://github.com/Acme/Widgets", "widgets"],
     ])("stores %j as %j on the session", async (input, expected) => {
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       const { sessionId } = await join(
         {
           workspace: "test-ws",
@@ -94,7 +99,7 @@ describe.skipIf(!dbAvailable)(
     });
 
     it("converges owner-form and bare-form clients onto the same key", async () => {
-      initContext({ pool, config: makeTestConfig() });
+      initContext({ pool: appPool, config: makeTestConfig() });
       const a = await join(
         {
           workspace: "test-ws",
