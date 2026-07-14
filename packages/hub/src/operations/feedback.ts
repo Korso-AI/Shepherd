@@ -87,13 +87,20 @@ export async function submitFeedback(
     // ids. Both lookups are best-effort — a null profile/workspace row (or a
     // failed query) still emails with the raw id preserved by the formatter.
     const emailWork = (async () => {
-      // One transaction for both lookups: same context, one snapshot, and half
-      // the round-trips of two separate withContext calls on this detached path.
-      const [profile, workspace] = await withContext(pool, dbContext, (db) =>
-        Promise.all([
-          accountId ? getAccountProfile(db, accountId) : null,
-          workspaceId ? findWorkspaceById(db, workspaceId) : null,
-        ]),
+      // One transaction for both lookups: same context, one connection
+      // checkout instead of two withContext calls on this detached path. The
+      // reads are sequential — a single transaction client serializes queries
+      // anyway (and READ COMMITTED gives each statement its own snapshot, so
+      // batching would buy no consistency either).
+      const { profile, workspace } = await withContext(
+        pool,
+        dbContext,
+        async (db) => ({
+          profile: accountId ? await getAccountProfile(db, accountId) : null,
+          workspace: workspaceId
+            ? await findWorkspaceById(db, workspaceId)
+            : null,
+        }),
       );
       await sendFeedbackEmail(
         {

@@ -97,7 +97,7 @@ describe.skipIf(!dbAvailable)(
         ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 

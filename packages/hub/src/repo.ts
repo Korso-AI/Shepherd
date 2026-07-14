@@ -2774,12 +2774,16 @@ async function durationPercentiles(
  * `liveWindowSeconds` is the presence window that counts a session as "live"
  * (the hub's STALE_AFTER_SECONDS) and drives the current-state liveSessions.
  *
- * The independent aggregate queries are fanned out in bounded sequential
- * `Promise.all` batches (totals, engagement + leaderboard, period comparison,
- * timing, then the current+previous trend series) so a single rollup never
- * demands more concurrent connections than the pool's max (10) — one flat
- * ~30-query `Promise.all` would queue behind itself and could starve concurrent
- * requests. Four of the five period KPIs are derived by summing their trend
+ * The aggregate queries are grouped in `Promise.all` batches (totals,
+ * engagement + leaderboard, period comparison, timing, then the
+ * current+previous trend series) for readability, but they all run on the ONE
+ * scoped transaction client the caller's withContext provides — node-postgres
+ * serializes queries per connection, so a rollup holds a single connection
+ * and executes its ~30 aggregates sequentially, never fanning out across the
+ * pool. (Restoring bounded multi-connection concurrency would need a
+ * per-connection scoped-context runner; deliberately not built while the
+ * rollup stays operator-only and cached for 60s — see analytics.ts.)
+ * Four of the five period KPIs are derived by summing their trend
  * series (identical table/window/predicate) rather than re-queried. Only
  * window bounds are bound as parameters (see the SQL-injection safety
  * invariant above); the leaderboard computes its per-workspace, window-scoped

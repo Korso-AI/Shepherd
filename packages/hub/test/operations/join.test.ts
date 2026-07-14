@@ -81,7 +81,7 @@ describe("join – workspace guard (no DB)", () => {
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId: "" },
+        { workspaceId: "", via: "agent" },
       ),
     ).rejects.toBeInstanceOf(AuthError);
   });
@@ -103,7 +103,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       workspaceId = await seedWorkspace(pool);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -540,7 +540,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId, accountId, role: "member" },
+        { workspaceId, accountId, role: "member", via: "agent" },
       );
 
       // The handle derives from the github_login, not the client-supplied human.
@@ -581,7 +581,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId, accountId, role: "member" },
+        { workspaceId, accountId, role: "member", via: "agent" },
       );
 
       expect(result.agentName).toBe("founder-1");
@@ -626,7 +626,7 @@ describe.skipIf(!dbAvailable)(
           program: "claude",
           model: "claude-3-5-sonnet",
         },
-        { workspaceId, accountId, role: "member" },
+        { workspaceId, accountId, role: "member", via: "agent" },
       );
 
       await expect(promise).rejects.toBeInstanceOf(AuthError);

@@ -4,7 +4,7 @@ import {
   segmentsCompatible,
   patternsOverlap,
   globsOverlap,
-} from "../src/globs";
+} from "../src/globs.js";
 
 describe("globs module", () => {
   describe("normalize()", () => {

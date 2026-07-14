@@ -71,16 +71,20 @@ export async function putEntitlements(
   requireInternal(tenant);
   const { pool } = getContext();
 
-  return withContext(pool, contextForTenant(tenant, workspaceId), async (tx) => {
-    await assertWorkspaceExists(tx, workspaceId);
-    const row = await upsertWorkspaceEntitlements(tx, workspaceId, {
-      seatsLimit: body.seatsLimit,
-      reposLimit: body.reposLimit,
-      retentionDays: body.retentionDays,
-      expiresAt: body.expiresAt === null ? null : new Date(body.expiresAt),
-    });
-    return toWire(row);
-  });
+  return withContext(
+    pool,
+    contextForTenant(tenant, workspaceId),
+    async (tx) => {
+      await assertWorkspaceExists(tx, workspaceId);
+      const row = await upsertWorkspaceEntitlements(tx, workspaceId, {
+        seatsLimit: body.seatsLimit,
+        reposLimit: body.reposLimit,
+        retentionDays: body.retentionDays,
+        expiresAt: body.expiresAt === null ? null : new Date(body.expiresAt),
+      });
+      return toWire(row);
+    },
+  );
 }
 
 export async function getEntitlementsStatus(
@@ -90,27 +94,36 @@ export async function getEntitlementsStatus(
   requireInternal(tenant);
   const { pool, config } = getContext();
 
-  return withContext(pool, contextForTenant(tenant, workspaceId), async (tx) => {
-    await assertWorkspaceExists(tx, workspaceId);
-    const record = await getWorkspaceEntitlements(tx, workspaceId);
+  return withContext(
+    pool,
+    contextForTenant(tenant, workspaceId),
+    async (tx) => {
+      await assertWorkspaceExists(tx, workspaceId);
+      const record = await getWorkspaceEntitlements(tx, workspaceId);
 
-    // With enforcement off there are no limits of any kind — report all-null
-    // rather than pretending a stored record binds anything.
-    const effective = enforcementEnabled(config)
-      ? effectiveLimits(record, config.ENTITLEMENTS_DEFAULT_LIMITS!, new Date())
-      : { seatsLimit: null, reposLimit: null, retentionDays: null };
+      // With enforcement off there are no limits of any kind — report all-null
+      // rather than pretending a stored record binds anything.
+      const effective = enforcementEnabled(config)
+        ? effectiveLimits(
+            record,
+            config.ENTITLEMENTS_DEFAULT_LIMITS!,
+            new Date(),
+          )
+        : { seatsLimit: null, reposLimit: null, retentionDays: null };
 
-    const [seatsUsed, repos] = await Promise.all([
-      countMembers(tx, workspaceId),
-      listWorkspaceRepos(tx, workspaceId),
-    ]);
+      // Sequential on purpose: `tx` is one transaction client, so a Promise.all
+      // here would only pretend to parallelize (node-postgres serializes queries
+      // per connection) while keeping the shared-client foot-gun visible.
+      const seatsUsed = await countMembers(tx, workspaceId);
+      const repos = await listWorkspaceRepos(tx, workspaceId);
 
-    return {
-      record: record === null ? null : toWire(record),
-      effective,
-      usage: { seatsUsed, reposUsed: repos.length },
-    };
-  });
+      return {
+        record: record === null ? null : toWire(record),
+        effective,
+        usage: { seatsUsed, reposUsed: repos.length },
+      };
+    },
+  );
 }
 
 export async function deleteEntitlements(

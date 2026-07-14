@@ -142,7 +142,7 @@ describe.skipIf(!dbAvailable)("heartbeat operation — DB-dependent", () => {
       ["test-ws", "test-ws"],
     );
     workspaceId = rows[0]!.id;
-    tenant = { workspaceId };
+    tenant = { workspaceId, via: "team" };
     initContext({ pool, config: TEST_CONFIG });
   });
 

@@ -137,7 +137,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -236,7 +236,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -313,7 +313,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -377,7 +377,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -452,7 +452,7 @@ describe.skipIf(!dbAvailable)(
       pool = createTestPool();
       await runTestMigrations(pool);
       const workspaceId = await seedWorkspace(pool, WS);
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -576,7 +576,7 @@ describe.skipIf(!dbAvailable)(
       await runTestMigrations(pool);
       workspaceIdA = await seedWorkspace(pool, WS);
       workspaceIdB = await seedWorkspace(pool, "team-b");
-      tenantA = { workspaceId: workspaceIdA };
+      tenantA = { workspaceId: workspaceIdA, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 

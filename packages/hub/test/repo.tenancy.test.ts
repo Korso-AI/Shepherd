@@ -56,7 +56,7 @@ import {
 } from "../src/repo.js";
 
 import { hashToken } from "../src/tenant.js";
-import { withContext } from "../src/scopedDb.js";
+import { withContext, setDbContext } from "../src/scopedDb.js";
 
 describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
   let pool: pg.Pool;
@@ -106,12 +106,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       // acct-1 is admin of A, member of B; acct-2 admin of B only.
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
@@ -162,7 +164,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
         addMembership(db, {
@@ -189,20 +192,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     });
 
     it("countWorkspacesCreatedBy counts only workspaces this account created", async () => {
-      await withContext(
-        pool,
-        { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+      await withContext(pool, { kind: "account", accountId: "acct-1" }, (db) =>
+        createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
-      await withContext(
-        pool,
-        { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-1" }),
+      await withContext(pool, { kind: "account", accountId: "acct-1" }, (db) =>
+        createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-1" }),
       );
-      await withContext(
-        pool,
-        { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "c", name: "C", createdBy: "acct-2" }),
+      await withContext(pool, { kind: "account", accountId: "acct-2" }, (db) =>
+        createWorkspace(db, { slug: "c", name: "C", createdBy: "acct-2" }),
       );
       expect(
         await withContext(
@@ -237,7 +234,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const hash = hashToken("shp_secret");
       const summary = await withContext(
@@ -304,7 +302,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const hash = hashToken("shp_workspace_locked");
       const summary = await withContext(
@@ -332,12 +331,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
         insertApiToken(db, {
@@ -368,12 +369,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       const tokB = await withContext(
         pool,
@@ -427,7 +430,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       // Two members of the SAME workspace, each with a token.
       const tokAlice = await withContext(
@@ -546,7 +550,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
         insertApiToken(db, {
@@ -609,7 +614,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
         pool,
@@ -649,7 +655,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
         pool,
@@ -700,7 +707,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       // expires_at in the past — the atomic guard must refuse the claim.
       const inv = await withContext(
@@ -736,7 +744,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
         pool,
@@ -764,12 +773,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       const invB = await withContext(
         pool,
@@ -804,12 +815,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
         createInvite(db, {
@@ -867,7 +880,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const inv = await withContext(
         pool,
@@ -914,12 +928,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
         addMembership(db, {
@@ -963,12 +979,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
         addMembership(db, {
@@ -1011,7 +1029,8 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: a.id }, (db) =>
         addMembership(db, {
@@ -1044,12 +1063,14 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
       const a = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        (db) =>
+          createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
       );
       const b = await withContext(
         pool,
         { kind: "account", accountId: "acct-2" },
-        (db) => createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
+        (db) =>
+          createWorkspace(db, { slug: "b", name: "B", createdBy: "acct-2" }),
       );
       await withContext(pool, { kind: "workspace", workspaceId: b.id }, (db) =>
         addMembership(db, {
@@ -1130,10 +1151,31 @@ describe.skipIf(!dbAvailable)("repo tenancy CRUD (Task 3.1)", () => {
     }
 
     it("returns the session (with agent join) by id alone, ignoring workspace", async () => {
+      // Seed the caller's membership too (focused, like the createWorkspace
+      // operation does): the account-context read below models resolveSession,
+      // whose planned Phase 2 sessions/agents policy exposes rows only through
+      // a live membership — an unmembered account would see nothing.
       const ws = await withContext(
         pool,
         { kind: "account", accountId: "acct-1" },
-        (db) => createWorkspace(db, { slug: "a", name: "A", createdBy: "acct-1" }),
+        async (db) => {
+          const created = await createWorkspace(db, {
+            slug: "a",
+            name: "A",
+            createdBy: "acct-1",
+          });
+          await setDbContext(db, {
+            kind: "account",
+            accountId: "acct-1",
+            workspaceId: created.id,
+          });
+          await addMembership(db, {
+            workspaceId: created.id,
+            accountId: "acct-1",
+            role: "admin",
+          });
+          return created;
+        },
       );
       const sessionId = await mintSession(ws.id, "alice");
 

@@ -99,7 +99,7 @@ describe.skipIf(!dbAvailable)(
         ["test-ws", "test-ws"],
       );
       workspaceId = rows[0]!.id;
-      tenant = { workspaceId };
+      tenant = { workspaceId, via: "team" };
       initContext({ pool, config: makeTestConfig() });
     });
 
@@ -302,6 +302,7 @@ describe.skipIf(!dbAvailable)(
       ).catch((e) => e as Error);
 
       expect(err).toBeInstanceOf(Error);
+      if (!(err instanceof Error)) throw new Error("expected a rejection");
       // Names the offending target and points at the real, reachable name.
       expect(err.message).toMatch(/bob/);
       expect(err.message).toContain("bob-1");

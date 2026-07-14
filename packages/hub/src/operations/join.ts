@@ -189,15 +189,12 @@ export async function join(
   let human = input.human;
   if (tenant.accountId !== undefined) {
     const accountId = tenant.accountId;
-    // Read the profile in the caller-shaped context: account context for an
-    // account-scoped token (no route workspace yet), workspace context for a
-    // concrete-workspace credential.
-    const profile = await withContext(
-      pool,
-      tenant.workspaceId === NO_ROUTE_WORKSPACE
-        ? { kind: "account", accountId }
-        : contextForTenant(tenant),
-      (db) => getAccountProfile(db, accountId),
+    // Read the profile in the caller-shaped context (account context for an
+    // account-scoped token with no route workspace yet, workspace context for
+    // a concrete-workspace credential) — exactly the one mapping
+    // contextForTenant encodes.
+    const profile = await withContext(pool, contextForTenant(tenant), (db) =>
+      getAccountProfile(db, accountId),
     );
     const identity =
       profile?.github_login ??

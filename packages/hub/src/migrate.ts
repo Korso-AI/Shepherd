@@ -133,6 +133,43 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
   }
 }
 
+/**
+ * Assert that every migration file is recorded as applied in THIS database.
+ *
+ * Boot calls it on the REQUEST-SERVING pool after running migrations on the
+ * (possibly different) owner connection: a valid but mistyped
+ * MIGRATIONS_DATABASE_URL would migrate one database and then serve another —
+ * schema-compatible but missing the newest migration — so the serving
+ * database must prove it carries the full set before the hub starts
+ * listening. URL-string comparison cannot give this guarantee (legitimate
+ * proxy/direct URLs for the same database differ); the recorded versions can.
+ * Fails loudly on any missing version, including a missing schema_migrations
+ * table, which aborts boot.
+ */
+export async function assertMigrationsCurrent(pool: pg.Pool): Promise<void> {
+  const expected = readMigrationFiles().map((m) => m.version);
+  let applied: Set<string>;
+  try {
+    const { rows } = await pool.query<{ version: string }>(
+      "SELECT version FROM schema_migrations",
+    );
+    applied = new Set(rows.map((r) => r.version));
+  } catch (err) {
+    throw new Error(
+      "serving database has no readable schema_migrations table — do " +
+        "DATABASE_URL and MIGRATIONS_DATABASE_URL point at the same database?",
+      { cause: err },
+    );
+  }
+  const missing = expected.filter((v) => !applied.has(v));
+  if (missing.length > 0) {
+    throw new Error(
+      `serving database is missing applied migrations: ${missing.join(", ")} — ` +
+        "DATABASE_URL and MIGRATIONS_DATABASE_URL likely point at different databases",
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CLI entry-point: `tsx packages/hub/src/migrate.ts`
 // ---------------------------------------------------------------------------

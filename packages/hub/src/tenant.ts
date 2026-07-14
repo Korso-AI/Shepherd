@@ -28,7 +28,7 @@ import {
   findWorkspaceBySlug,
   touchApiTokenLastUsed,
 } from "./repo.js";
-import { withContext, type DbContext } from "./scopedDb.js";
+import { withContext, setDbContext, type DbContext } from "./scopedDb.js";
 import type pg from "pg";
 
 /**
@@ -193,6 +193,14 @@ export function requireInternal(tenant: TenantContext): void {
  *    workspace id explicitly (it is not on the tenant).
  * The operator context is chosen explicitly by the /admin analytics path
  * (requireOperator gates it), never inferred here.
+ *
+ * Sanctioned exception: ACCOUNT-SURFACE operations (workspace create/list,
+ * token management, invite redemption, account deletion) PIN
+ * `{ kind: "account" }` literals — with an explicit capability-validated
+ * focus where a workspace read is unlocked — rather than calling this
+ * mapping. That pinning states the surface's intent (these routes are
+ * account-scoped no matter what the tenant carries) and is deliberate, not
+ * ad-hoc context picking.
  */
 export function contextForTenant(
   tenant: TenantContext,
@@ -208,7 +216,9 @@ export function contextForTenant(
     return {
       kind: "workspace",
       workspaceId: tenant.workspaceId,
-      ...(tenant.accountId !== undefined ? { accountId: tenant.accountId } : {}),
+      ...(tenant.accountId !== undefined
+        ? { accountId: tenant.accountId }
+        : {}),
     };
   }
   return { kind: "account", accountId: requireAccountId(tenant) };
@@ -760,66 +770,82 @@ async function resolveCredentials(
   //    is checked BEFORE the team token: we look up the hash first, and only on
   //    a miss fall through to the TEAM_TOKEN check (step 3) below.
   const tokenHash = hashToken(bearer);
-  const tokenRow = await withContext(pool, { kind: "auth" }, (db) =>
-    findApiTokenByHash(db, tokenHash),
-  );
-  if (tokenRow !== null) {
-    // Per-token rate limit on the agent path — applies to BOTH token kinds.
-    consumeRateLimit(`tok:${tokenRow.id}`);
-    // last_used_at is best-effort liveness — throttle it off the hot path.
-    // Also common to both kinds, so it happens before we branch on scope.
-    if (!throttleWrite(lastTokenTouch, tokenRow.id, Date.now())) {
-      await withContext(
-        pool,
-        { kind: "auth", accountId: tokenRow.account_id },
-        (db) => touchApiTokenLastUsed(db, tokenRow.id),
-      );
-    }
+  // The whole agent-token resolution rides ONE auth-context transaction: the
+  // hash lookup, the throttled last-used touch, and the membership check each
+  // used to open their own withContext, which put 2-3 extra pool checkouts +
+  // BEGIN/COMMIT round-trips on the hottest path (every work/sync/heartbeat).
+  // The per-query GUC state is unchanged: the lookup runs with a bare auth
+  // context exactly as before, and setDbContext widens it with the token's
+  // account — the same context the follow-up queries always carried — once the
+  // token is known. Returns null on a hash miss so the TEAM_TOKEN fallthrough
+  // below still runs. One behavioral nuance: an AuthError thrown inside now
+  // rolls back the last-used touch — fine, a rejected request shouldn't count
+  // as token liveness.
+  const agentTenant = await withContext(
+    pool,
+    { kind: "auth" },
+    async (db): Promise<TenantContext | null> => {
+      const tokenRow = await findApiTokenByHash(db, tokenHash);
+      if (tokenRow === null) {
+        return null;
+      }
+      // Per-token rate limit on the agent path — applies to BOTH token kinds.
+      consumeRateLimit(`tok:${tokenRow.id}`);
+      // The token resolved: widen the auth context with its account for the
+      // remaining queries (escalation proof: the just-fetched token row).
+      await setDbContext(db, { kind: "auth", accountId: tokenRow.account_id });
+      // last_used_at is best-effort liveness — throttle it off the hot path.
+      // Also common to both kinds, so it happens before we branch on scope.
+      if (!throttleWrite(lastTokenTouch, tokenRow.id, Date.now())) {
+        await touchApiTokenLastUsed(db, tokenRow.id);
+      }
 
-    if (tokenRow.workspace_id === null) {
-      // ACCOUNT-scoped token (migration 015): bound to an account, not a single
-      // workspace. There is no route workspace to validate here — resolve to the
-      // NO_ROUTE_WORKSPACE sentinel carrying only the accountId, exactly like the
-      // browser non-`:id` path. The operation layer supplies the concrete
-      // workspace and authorizes membership per request (later tasks). We do NOT
-      // call findMembership: there is no workspace yet to check against.
+      if (tokenRow.workspace_id === null) {
+        // ACCOUNT-scoped token (migration 015): bound to an account, not a single
+        // workspace. There is no route workspace to validate here — resolve to the
+        // NO_ROUTE_WORKSPACE sentinel carrying only the accountId, exactly like the
+        // browser non-`:id` path. The operation layer supplies the concrete
+        // workspace and authorizes membership per request (later tasks). We do NOT
+        // call findMembership: there is no workspace yet to check against.
+        return {
+          workspaceId: NO_ROUTE_WORKSPACE,
+          accountId: tokenRow.account_id,
+          via: "agent",
+        };
+      }
+
+      // WORKSPACE-scoped token: the caller must still be a LIVE member of the
+      // token's workspace.
+      const membership = await findMembership(
+        db,
+        tokenRow.account_id,
+        tokenRow.workspace_id,
+      );
+      if (membership === null) {
+        // Fail closed: the token authenticates, but its account is no longer
+        // a member of the token's workspace. It is the MEMBERSHIP — not the token —
+        // that grants workspace access, so a token whose membership has lapsed must
+        // NOT resolve. removeMember/leaveWorkspace also revoke a member's tokens in
+        // the same transaction (so this is normally unreachable), but gating on the
+        // LIVE membership is the actual invariant — the token is just one way to
+        // present it. 401 rather than the browser path's 404: the caller holds a
+        // real token naming its OWN workspace, so there is no cross-workspace
+        // existence to hide here — this is a plain authentication failure.
+        throw new AuthError(
+          401,
+          "token account is no longer a member of its workspace",
+        );
+      }
       return {
-        workspaceId: NO_ROUTE_WORKSPACE,
+        workspaceId: tokenRow.workspace_id,
         accountId: tokenRow.account_id,
+        role: membership.role,
         via: "agent",
       };
-    }
-
-    // WORKSPACE-scoped token: the caller must still be a LIVE member of the
-    // token's workspace. Capture the (now non-null) workspace_id in a local so
-    // its narrowing survives into the withContext closure.
-    const tokenWorkspaceId = tokenRow.workspace_id;
-    const membership = await withContext(
-      pool,
-      { kind: "auth", accountId: tokenRow.account_id },
-      (db) => findMembership(db, tokenRow.account_id, tokenWorkspaceId),
-    );
-    if (membership === null) {
-      // Fail closed: the token authenticates, but its account is no longer
-      // a member of the token's workspace. It is the MEMBERSHIP — not the token —
-      // that grants workspace access, so a token whose membership has lapsed must
-      // NOT resolve. removeMember/leaveWorkspace also revoke a member's tokens in
-      // the same transaction (so this is normally unreachable), but gating on the
-      // LIVE membership is the actual invariant — the token is just one way to
-      // present it. 401 rather than the browser path's 404: the caller holds a
-      // real token naming its OWN workspace, so there is no cross-workspace
-      // existence to hide here — this is a plain authentication failure.
-      throw new AuthError(
-        401,
-        "token account is no longer a member of its workspace",
-      );
-    }
-    return {
-      workspaceId: tokenRow.workspace_id,
-      accountId: tokenRow.account_id,
-      role: membership.role,
-      via: "agent",
-    };
+    },
+  );
+  if (agentTenant !== null) {
+    return agentTenant;
   }
 
   // 3. Self-host TEAM_TOKEN. Constant-time compare; unconfigured TEAM_TOKEN

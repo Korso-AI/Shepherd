@@ -32,10 +32,10 @@ describe("names module", () => {
           if (found) break;
         }
 
-        expect(found).toBe(
-          true,
+        expect(
+          found,
           `Generated name "${name}" does not match any adjective+noun combination (iteration ${i})`,
-        );
+        ).toBe(true);
       }
     });
 
