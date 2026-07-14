@@ -28,6 +28,7 @@ import {
   findWorkspaceBySlug,
   touchApiTokenLastUsed,
 } from "./repo.js";
+import { withContext, type DbContext } from "./scopedDb.js";
 import type pg from "pg";
 
 /**
@@ -179,6 +180,38 @@ export function requireInternal(tenant: TenantContext): void {
   if (tenant.via !== "internal") {
     throw new AuthError(403, "operation requires an internal service call");
   }
+}
+
+/**
+ * Map a resolved tenant to the DB context its operation runs in. The ONE
+ * via→context mapping (design rule: route code never picks contexts ad hoc):
+ *  - a concrete route/credential workspace  → workspace context;
+ *  - the NO_ROUTE_WORKSPACE sentinel with an account → account context
+ *    (non-:id browser routes, account-scoped tokens — session-bearing
+ *    operations later ADOPT the session's workspace via resolveSession);
+ *  - via "internal" → internal context — the CALLER passes the route's
+ *    workspace id explicitly (it is not on the tenant).
+ * The operator context is chosen explicitly by the /admin analytics path
+ * (requireOperator gates it), never inferred here.
+ */
+export function contextForTenant(
+  tenant: TenantContext,
+  internalWorkspaceId?: string,
+): DbContext {
+  if (tenant.via === "internal") {
+    if (internalWorkspaceId === undefined) {
+      throw new Error("internal context requires the route workspace id");
+    }
+    return { kind: "internal", workspaceId: internalWorkspaceId };
+  }
+  if (tenant.workspaceId !== NO_ROUTE_WORKSPACE) {
+    return {
+      kind: "workspace",
+      workspaceId: tenant.workspaceId,
+      ...(tenant.accountId !== undefined ? { accountId: tenant.accountId } : {}),
+    };
+  }
+  return { kind: "account", accountId: requireAccountId(tenant) };
 }
 
 // ---------------------------------------------------------------------------
@@ -664,13 +697,15 @@ async function resolveCredentials(
     // metadata, not an auth input, so a slightly stale refresh is harmless; this
     // keeps an unconditional write off every browser request.
     if (!throttleWrite(lastProfileUpsert, accountId, Date.now())) {
-      await upsertAccountProfile(pool, {
-        accountId,
-        displayName: headerValue(request, "x-display-name") ?? null,
-        githubLogin: headerValue(request, "x-github-login") ?? null,
-        email: headerValue(request, "x-email") ?? null,
-        avatarUrl: headerValue(request, "x-avatar-url") ?? null,
-      });
+      await withContext(pool, { kind: "auth", accountId }, (db) =>
+        upsertAccountProfile(db, {
+          accountId,
+          displayName: headerValue(request, "x-display-name") ?? null,
+          githubLogin: headerValue(request, "x-github-login") ?? null,
+          email: headerValue(request, "x-email") ?? null,
+          avatarUrl: headerValue(request, "x-avatar-url") ?? null,
+        }),
+      );
     }
 
     // A verified internal operator: the BFF-signed HMAC proof, re-verified
@@ -695,7 +730,11 @@ async function resolveCredentials(
 
     // :id route: the caller must be a member of THIS workspace. A missing
     // membership is reported as 404 — never reveal whether the workspace exists.
-    const membership = await findMembership(pool, accountId, workspaceId);
+    const membership = await withContext(
+      pool,
+      { kind: "auth", accountId },
+      (db) => findMembership(db, accountId, workspaceId),
+    );
     if (membership === null) {
       throw new AuthError(404, "not a member of the requested workspace");
     }
@@ -721,14 +760,20 @@ async function resolveCredentials(
   //    is checked BEFORE the team token: we look up the hash first, and only on
   //    a miss fall through to the TEAM_TOKEN check (step 3) below.
   const tokenHash = hashToken(bearer);
-  const tokenRow = await findApiTokenByHash(pool, tokenHash);
+  const tokenRow = await withContext(pool, { kind: "auth" }, (db) =>
+    findApiTokenByHash(db, tokenHash),
+  );
   if (tokenRow !== null) {
     // Per-token rate limit on the agent path — applies to BOTH token kinds.
     consumeRateLimit(`tok:${tokenRow.id}`);
     // last_used_at is best-effort liveness — throttle it off the hot path.
     // Also common to both kinds, so it happens before we branch on scope.
     if (!throttleWrite(lastTokenTouch, tokenRow.id, Date.now())) {
-      await touchApiTokenLastUsed(pool, tokenRow.id);
+      await withContext(
+        pool,
+        { kind: "auth", accountId: tokenRow.account_id },
+        (db) => touchApiTokenLastUsed(db, tokenRow.id),
+      );
     }
 
     if (tokenRow.workspace_id === null) {
@@ -746,11 +791,13 @@ async function resolveCredentials(
     }
 
     // WORKSPACE-scoped token: the caller must still be a LIVE member of the
-    // token's workspace.
-    const membership = await findMembership(
+    // token's workspace. Capture the (now non-null) workspace_id in a local so
+    // its narrowing survives into the withContext closure.
+    const tokenWorkspaceId = tokenRow.workspace_id;
+    const membership = await withContext(
       pool,
-      tokenRow.account_id,
-      tokenRow.workspace_id,
+      { kind: "auth", accountId: tokenRow.account_id },
+      (db) => findMembership(db, tokenRow.account_id, tokenWorkspaceId),
     );
     if (membership === null) {
       // Fail closed: the token authenticates, but its account is no longer
@@ -780,7 +827,11 @@ async function resolveCredentials(
   if (timingSafeCompare(bearer, config.TEAM_TOKEN)) {
     const slug = config.ALLOWED_WORKSPACE;
     const ws =
-      slug !== undefined ? await findWorkspaceBySlug(pool, slug) : null;
+      slug !== undefined
+        ? await withContext(pool, { kind: "auth" }, (db) =>
+            findWorkspaceBySlug(db, slug),
+          )
+        : null;
     if (ws === null) {
       // The team token is valid but its workspace was never seeded (boot seeds
       // it on startup). Treat as a server-misconfiguration auth failure.
