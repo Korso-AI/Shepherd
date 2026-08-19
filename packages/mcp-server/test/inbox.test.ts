@@ -557,6 +557,54 @@ describe("session mailboxes (per-client-process pairing)", () => {
     expect(select([900, 800, 700, 600], CWD)).toEqual([]);
   });
 
+  // Codex runs a hook command through its own wrappers (command runner +
+  // PowerShell + cmd), so its client sits ~4 entries up the hook's chain
+  // instead of 1-2. Measured on codex-cli 0.148.0: hook → 3 wrappers → codex.
+  // Only metas that NAME such a client earn the deeper reach; every other
+  // client keeps the tight three-entry guard above.
+  it("reaches a wrapping client's own mailbox past the third entry", () => {
+    writeMailboxMeta(dir, 111, {
+      cwd: CWD,
+      chain: [111, 700],
+      client: "codex",
+    });
+    expect(select([900, 801, 802, 803, 700], CWD)).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
+  it("still needs cwd corroboration for a wrapping client's deep match", () => {
+    writeMailboxMeta(dir, 111, {
+      cwd: "/repos/projectB",
+      chain: [111, 700],
+      client: "codex",
+    });
+    expect(select([900, 801, 802, 803, 700], CWD)).toEqual([]);
+  });
+
+  it("does not extend the reach for a client that spawns hooks directly", () => {
+    writeMailboxMeta(dir, 111, {
+      cwd: CWD,
+      chain: [111, 700],
+      client: "claude",
+    });
+    expect(select([900, 801, 802, 803, 700], CWD)).toEqual([]);
+  });
+
+  it("prefers the closer session when a wrapping client shares a terminal", () => {
+    // Our own session's client (700) is reachable at index 2; a codex sibling
+    // only shares the terminal (600). The nearer match still wins.
+    writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 700] });
+    writeMailboxMeta(dir, 222, {
+      cwd: CWD,
+      chain: [222, 600],
+      client: "codex",
+    });
+    expect(select([900, 800, 700, 600], CWD)).toEqual([
+      sessionMailboxPath(dir, 111),
+    ]);
+  });
+
   it("selects nothing when no fresh meta shares an ancestor", () => {
     writeMailboxMeta(dir, 111, { cwd: CWD, chain: [111, 12, 13] });
     expect(select()).toEqual([]);

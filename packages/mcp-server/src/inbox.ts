@@ -114,6 +114,45 @@ export interface MailboxMeta {
   cwd: string;
   /** [server pid, parent, grandparent, ...] — see processTree.ts. */
   chain: number[];
+  /**
+   * The connecting client as identified by the MCP handshake, when known. Read
+   * only by {@link selectSessionMailboxes}, to decide how far up a hook's own
+   * ancestor chain this session's client may sit (see HOOK_CHAIN_REACH).
+   */
+  client?: string;
+}
+
+/**
+ * How many entries of the HOOK's ancestor chain may be searched for a client
+ * pid, keyed on the client the mailbox belongs to.
+ *
+ * Most clients spawn a hook command directly or through one shell, so the client
+ * is within three entries and anything deeper is more likely a shared terminal
+ * than our client (see selectSessionMailboxes' guard). Codex is different: it
+ * runs hook commands through its own wrappers — measured on codex-cli 0.148.0,
+ * the chain is hook → command runner → PowerShell → cmd → codex, so the client
+ * sits at index 4 and the tight default silently paired NOTHING there: every
+ * announcement staged for a Codex session waited for a tool call instead.
+ *
+ * The allowance is per-client on purpose. Widening it for everyone would let a
+ * shepherd-less sibling session under the same terminal drain a neighbour's
+ * mailbox; keyed this way, only sessions whose own client is known to wrap hooks
+ * accept the deeper reach, and a deep match still needs the cwd + shallow-in-the
+ * -server-chain corroboration below.
+ */
+const HOOK_CHAIN_REACH: Record<string, number> = { codex: 8 };
+const DEFAULT_HOOK_CHAIN_REACH = 3;
+/** The widest reach any client is granted — how much chain is worth scanning. */
+const MAX_HOOK_CHAIN_REACH = Math.max(
+  DEFAULT_HOOK_CHAIN_REACH,
+  ...Object.values(HOOK_CHAIN_REACH),
+);
+
+function hookChainReach(client: string | undefined): number {
+  return (
+    (client === undefined ? undefined : HOOK_CHAIN_REACH[client]) ??
+    DEFAULT_HOOK_CHAIN_REACH
+  );
 }
 
 /** Resolved and (on Windows) case-folded, so different spellings converge. */
@@ -139,7 +178,12 @@ export function writeMailboxMeta(
     const tmp = `${dest}.tmp`;
     writeFileSync(
       tmp,
-      JSON.stringify({ v: 1, cwd: normalizeCwd(meta.cwd), chain: meta.chain }),
+      JSON.stringify({
+        v: 1,
+        cwd: normalizeCwd(meta.cwd),
+        chain: meta.chain,
+        ...(meta.client === undefined ? {} : { client: meta.client }),
+      }),
     );
     renameSync(tmp, dest);
   } catch {
@@ -220,7 +264,7 @@ export function selectSessionMailboxes(
   nowMs: number = Date.now(),
 ): string[] {
   try {
-    const chain = hookChain.slice(0, 3);
+    const chain = hookChain.slice(0, MAX_HOOK_CHAIN_REACH);
     const wantedCwd = hookCwd === null ? null : normalizeCwd(hookCwd);
     const candidates: Array<{ pid: number; i: number; j: number; cwd: string }> =
       [];
@@ -256,7 +300,7 @@ export function selectSessionMailboxes(
       }
       if (!Array.isArray(meta.chain) || typeof meta.cwd !== "string") continue;
       const i = chain.findIndex((pid) => meta.chain.includes(pid));
-      if (i === -1) continue;
+      if (i === -1 || i >= hookChainReach(meta.client)) continue;
       const j = meta.chain.indexOf(chain[i]!);
       if (i >= 2 && (j > 2 || wantedCwd === null || meta.cwd !== wantedCwd))
         continue;
