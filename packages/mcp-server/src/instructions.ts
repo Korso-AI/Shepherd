@@ -1,3 +1,5 @@
+import type { AnnouncementT } from "@shepherd/shared";
+import { detectClient, type ClientKind } from "./hookInstall.js";
 import type { LinkState } from "./resolveContext.js";
 
 /**
@@ -85,3 +87,86 @@ const PROCEDURE = `Follow this procedure on every session, proactively and witho
 Skip \`work\` entirely for read-only exploration — reading, searching, or thinking that produces no file. The moment you're going to WRITE something, source or doc, claim it first. These tools are advisory and degrade gracefully if the hub is unreachable — never block your real work on them.
 
 Commit work-in-progress as you go rather than sitting on a large dirty tree: committed work becomes a precise, presence-independent signal to teammates (with line-level detail and automatic resolution once it lands), whereas uncommitted edits are only a best-effort, decaying hint.`;
+
+// ---------------------------------------------------------------------------
+// Fallback delivery for clients that drop the `instructions` field
+// ---------------------------------------------------------------------------
+// The procedure above only shapes behaviour on clients that actually inject
+// `initialize`'s `instructions` into the model's context. Codex does NOT:
+// verified against codex-cli 0.148.0 on 2026-08-19, its agent has the
+// `mcp__shepherd__*` tools and their descriptions, but neither
+// "the shared coordination hub for a team of agents" nor "Follow this procedure
+// on every session" appears anywhere in its context. The result is an agent that
+// uses Shepherd when asked and never coordinates on its own — the whole point of
+// the field, silently lost.
+//
+// So we deliver the procedure over the one channel every client shares: the
+// session mailbox, drained by the inbox hook (passively, before the agent's
+// first tool call) or by the first Shepherd tool result. Same transport, same
+// shape, and the same synthetic-`shepherd`-announcement trick the post-link
+// guidance already uses (see tools.ts).
+
+/**
+ * Whether `client` is known to inject the MCP `initialize` instructions into the
+ * agent's context. Deliberately an allowlist of ONE: an unknown client that in
+ * fact injects costs a duplicated procedure once per session, while an unknown
+ * client that drops it silently loses all proactive coordination. Cheap
+ * redundancy beats a silently uncoordinated agent.
+ */
+export function clientInjectsInstructions(client: ClientKind): boolean {
+  return client === "claude";
+}
+
+/**
+ * Stage the standing procedure in this session's mailbox when the connecting
+ * client won't have surfaced it from `initialize`. Returns whether it staged.
+ *
+ * Only for a LINKED repo: `declined` must stay quiet, and `unanswered` is the
+ * link nudge's job (see linkNudge.ts) — a procedure for coordination the user
+ * hasn't opted into yet would be noise.
+ */
+export function stageCoordinationBriefing({
+  clientName,
+  linkState,
+  workspace,
+  append,
+}: {
+  clientName: string | undefined;
+  linkState: LinkState;
+  workspace?: string;
+  append: (announcements: AnnouncementT[]) => void;
+}): boolean {
+  if (linkState !== "linked") return false;
+  if (clientInjectsInstructions(detectClient(clientName))) return false;
+  append([coordinationBriefing(workspace)]);
+  return true;
+}
+
+/**
+ * The briefing itself: one compact announcement, not the full PROCEDURE text.
+ * It rides the announcement render (one indented line under a header), so it is
+ * written as prose the way the post-link guidance is, and it names the same
+ * verbs in the same order.
+ */
+function coordinationBriefing(workspace?: string): AnnouncementT {
+  const safeWorkspace = sanitizeWorkspace(workspace ?? "team");
+  return {
+    // Negative, timestamp-derived: the mailbox dedupes by id and the hub's ids
+    // are positive, so a locally-minted id can never collide with a real one.
+    id: -Date.now(),
+    fromAgentName: "shepherd",
+    fromHuman: "shepherd",
+    targetAgentName: null,
+    createdAt: new Date().toISOString(),
+    body:
+      `Shepherd coordination is ACTIVE for this repository (workspace \`${safeWorkspace}\`), ` +
+      "and your client does not surface Shepherd's standing instructions — so they arrive here. " +
+      "Procedure from now on, proactively and without being asked: call `work` (a one-line intent " +
+      "plus the `pathGlobs` you expect to touch) BEFORE you start changing files in an area — a plan " +
+      "or design doc you are about to author counts — and hold that ONE claim across every edit in " +
+      "that area; call `done` with its `workItemId` when the unit of work is complete; call `announce` " +
+      "whenever you find something teammates need; call `sync` when you resume or switch tasks. Skip " +
+      "`work` for read-only exploration that produces no file. If `work` reports a conflict, coordinate " +
+      "or pick different work — never silently collide. These tools are advisory: never block real work on them.",
+  };
+}
