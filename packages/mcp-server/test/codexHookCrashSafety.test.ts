@@ -35,7 +35,7 @@ const faults = vi.hoisted(() => ({
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
   const isLockTarget = (path: string, target: "main" | "reclaim") =>
-    path.includes("codex-migration-v2.lock") &&
+    path.includes("codex-migration-v3.lock") &&
     (target === "reclaim"
       ? path.includes(".reclaim")
       : !path.includes(".reclaim"));
@@ -55,7 +55,7 @@ vi.mock("node:fs", async (importOriginal) => {
     readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
       const path = String(args[0]);
       if (
-        path.endsWith("codex-migration-v2.lock.reclaim") &&
+        path.endsWith("codex-migration-v3.lock.reclaim") &&
         faults.replaceStaleBeforeClaimVerification !== null
       ) {
         fs.writeFileSync(
@@ -76,7 +76,7 @@ vi.mock("node:fs", async (importOriginal) => {
               dirname(dirname(path)),
               ".shepherd",
               "hooks",
-              "codex-migration-v2.lock",
+              "codex-migration-v3.lock",
             ),
             faults.replaceLockOnSecondConfigRead,
             "utf8",
@@ -140,9 +140,9 @@ vi.mock("node:fs", async (importOriginal) => {
       const target = String(args[1]);
       faults.events.push("rename:" + source + "->" + target);
       const opensGap =
-        source.endsWith("codex-migration-v2.lock") &&
+        source.endsWith("codex-migration-v3.lock") &&
         target.includes(".quarantine-");
-      if (!opensGap && target.endsWith("codex-migration-v2.lock")) {
+      if (!opensGap && target.endsWith("codex-migration-v3.lock")) {
         faults.onLockMutation?.();
       }
       const result = fs.renameSync(...args);
@@ -152,10 +152,10 @@ vi.mock("node:fs", async (importOriginal) => {
     linkSync: (...args: Parameters<typeof fs.linkSync>) => {
       const target = String(args[1]);
       faults.events.push("link:" + String(args[0]) + "->" + target);
-      if (target.includes("codex-migration-v2.lock")) {
+      if (target.includes("codex-migration-v3.lock")) {
         faults.onLockPublication?.(target);
       }
-      const isBackup = target.endsWith("codex-config-before-v2.toml");
+      const isBackup = target.endsWith("codex-config-before-v3.toml");
       if (faults.failBackupLinkOnce && isBackup) {
         faults.failBackupLinkOnce = false;
         throw new Error("injected backup publication failure");
@@ -197,13 +197,13 @@ function recordFile(root: string): string {
   return join(hooksDir(root), "codex.json");
 }
 function lockFile(root: string): string {
-  return join(hooksDir(root), "codex-migration-v2.lock");
+  return join(hooksDir(root), "codex-migration-v3.lock");
 }
 function reclaimFile(root: string): string {
   return lockFile(root) + ".reclaim";
 }
 function backupFile(root: string): string {
-  return join(hooksDir(root), "backups", "codex-config-before-v2.toml");
+  return join(hooksDir(root), "backups", "codex-config-before-v3.toml");
 }
 function legacyConfig(): string {
   return [
@@ -492,7 +492,7 @@ describe("Codex backup publication and byte boundaries", () => {
     expect((await install(root)).status).toBe("skipped");
     expect(readFileSync(configFile(root))).toEqual(invalid);
     expect(JSON.parse(readFileSync(recordFile(root), "utf8"))).toMatchObject({
-      migrationVersion: 2,
+      migrationVersion: 3,
       migrationOutcome: "unsupported-shape",
     });
   });

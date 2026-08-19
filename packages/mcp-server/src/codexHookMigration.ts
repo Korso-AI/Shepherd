@@ -47,7 +47,15 @@ interface MigrationContext {
   log: (message: string) => void;
 }
 
-const MIGRATION_VERSION = 2;
+/**
+ * Bumped to 3 so machines the v2 migration already visited are reconsidered: v2
+ * left a Shepherd-owned legacy `UserPromptSubmit` block in place and only added
+ * canonical SessionStart/PreToolUse handlers, so those configs have no prompt
+ * handler Codex will actually run. The lock and backup names below are scoped to
+ * this version — the v2 backup holds the pre-v2 bytes, and reusing it would trip
+ * the "backup does not match config" guard and skip the migration entirely.
+ */
+const MIGRATION_VERSION = 3;
 const migrationOutcomeSchema = z.enum([
   "migrated",
   "already-canonical",
@@ -70,8 +78,12 @@ function migrationPaths(homeDir: string): MigrationPaths {
   return {
     hooksDir,
     recordFile: join(hooksDir, "codex.json"),
-    lockFile: join(hooksDir, "codex-migration-v2.lock"),
-    backupFile: join(hooksDir, "backups", "codex-config-before-v2.toml"),
+    lockFile: join(hooksDir, `codex-migration-v${MIGRATION_VERSION}.lock`),
+    backupFile: join(
+      hooksDir,
+      "backups",
+      `codex-config-before-v${MIGRATION_VERSION}.toml`,
+    ),
     configFile: join(homeDir, ".codex", "config.toml"),
   };
 }
@@ -190,8 +202,8 @@ function migrateLegacy(
   sourceBytes: Buffer,
   source: string,
 ): CodexHookInstallStatus {
-  const { paths, command, log } = context;
-  const candidate = appendMissingCodexHandlers(source, command);
+  const { paths, command, hookMarker, log } = context;
+  const candidate = appendMissingCodexHandlers(source, command, hookMarker);
   if (candidate === null) {
     advanceRecord(paths.recordFile, state, "skipped", "unsupported-shape");
     return "skipped";
