@@ -41,7 +41,7 @@ vi.mock("node:fs", async (importOriginal) => {
       const path = String(args[0]);
       faults.events.push("open:" + path + ":" + String(args[1]));
       if (
-        path.includes("codex-config-before-v2.toml.") &&
+        path.includes("codex-config-before-v3.toml.") &&
         path.endsWith(".tmp") &&
         args[1] === "wx" &&
         faults.replaceOnBackupOpen !== null
@@ -110,7 +110,7 @@ function recordFile(root: string): string {
   return join(root, ".shepherd", "hooks", "codex.json");
 }
 function lockFile(root: string): string {
-  return join(root, ".shepherd", "hooks", "codex-migration-v2.lock");
+  return join(root, ".shepherd", "hooks", "codex-migration-v3.lock");
 }
 function backupFile(root: string): string {
   return join(
@@ -118,7 +118,7 @@ function backupFile(root: string): string {
     ".shepherd",
     "hooks",
     "backups",
-    "codex-config-before-v2.toml",
+    "codex-config-before-v3.toml",
   );
 }
 function writeConfig(root: string, source: string): void {
@@ -151,6 +151,11 @@ function readRecord(root: string): Record<string, unknown> {
   return JSON.parse(readFileSync(recordFile(root), "utf8"));
 }
 function eventBlock(event: "SessionStart" | "PreToolUse"): string {
+  return canonicalBlock(event);
+}
+function canonicalBlock(
+  event: "SessionStart" | "PreToolUse" | "UserPromptSubmit",
+): string {
   return [
     "[[hooks." + event + "]]",
     ...(event === "PreToolUse" ? ['matcher = "*"'] : []),
@@ -184,11 +189,11 @@ function setupLegacy(root: string, source = legacyConfig()): string {
 }
 
 describe("Codex v2 migration ownership and shape", () => {
-  it("records fresh and already-canonical installs at migration version 2", async () => {
+  it("records fresh and already-canonical installs at the current migration version", async () => {
     const root = home();
     expect((await install(root)).result.status).toBe("installed");
     expect(readRecord(root)).toMatchObject({
-      migrationVersion: 2,
+      migrationVersion: 3,
       migrationOutcome: "already-canonical",
     });
     const source = readFileSync(configFile(root), "utf8");
@@ -228,12 +233,70 @@ describe("Codex v2 migration ownership and shape", () => {
 
     const migrated = readFileSync(configFile(root), "utf8");
     expect(migrated.slice(0, source.length)).toBe(source);
+    // The legacy prompt block stays (additive-only), and a canonical prompt
+    // handler joins it — Codex only runs the nested-`hooks` shape.
     expect(migrated.match(/^\[\[hooks\.UserPromptSubmit\]\]$/gm)).toHaveLength(
-      1,
+      2,
     );
+    expect(
+      migrated.match(/^\[\[hooks\.UserPromptSubmit\.hooks\]\]$/gm),
+    ).toHaveLength(1);
     expect(migrated.match(/^\[\[hooks\.SessionStart\]\]$/gm)).toHaveLength(1);
     expect(migrated.match(/^\[\[hooks\.PreToolUse\]\]$/gm)).toHaveLength(1);
   });
+
+  it("gives a config the v2 migration left without a working prompt handler one", async () => {
+    const root = home();
+    // Exactly what the v2 migration produced: the legacy prompt block (a shape
+    // Codex never ran) plus canonical SessionStart/PreToolUse handlers, recorded
+    // as fully migrated — so only a version bump can reach it again.
+    writeConfig(
+      root,
+      legacyConfig() + eventBlock("SessionStart") + eventBlock("PreToolUse"),
+    );
+    mkdirSync(join(root, ".shepherd", "hooks"), { recursive: true });
+    writeFileSync(
+      recordFile(root),
+      JSON.stringify({
+        status: "installed",
+        at: "2026-07-12T00:00:00.000Z",
+        migrationVersion: 2,
+        migrationOutcome: "migrated",
+      }) + "\n",
+      "utf8",
+    );
+
+    expect((await install(root)).result.status).toBe("installed");
+
+    const migrated = readFileSync(configFile(root), "utf8");
+    expect(
+      migrated.match(/^\[\[hooks\.UserPromptSubmit\.hooks\]\]$/gm),
+    ).toHaveLength(1);
+    expect(migrated.match(/^\[\[hooks\.SessionStart\]\]$/gm)).toHaveLength(1);
+    expect(migrated.match(/^\[\[hooks\.PreToolUse\]\]$/gm)).toHaveLength(1);
+    expect(readRecord(root)["migrationVersion"]).toBe(3);
+  });
+
+  it.each(["SessionStart", "PreToolUse", "UserPromptSubmit"] as const)(
+    "does not duplicate a %s handler another build's command installed",
+    async (event) => {
+      const root = home();
+      const older = canonicalBlock(event).replace(
+        HOOK_COMMAND,
+        "npx -y --package=@korso/shepherd@0.10.0 shepherd-inbox-hook",
+      );
+      setupLegacy(root, legacyConfig() + older);
+
+      await install(root);
+
+      const migrated = readFileSync(configFile(root), "utf8");
+      expect(
+        migrated.match(
+          new RegExp("^\\[\\[hooks\\." + event + "\\.hooks\\]\\]$", "gm"),
+        ),
+      ).toHaveLength(1);
+    },
+  );
 
   it("migrates only the exact cached-node path under this home", async () => {
     const root = home();
@@ -322,13 +385,13 @@ describe("Codex v2 migration ownership and shape", () => {
       JSON.stringify({
         status: "installed",
         at: "now",
-        migrationVersion: 2,
+        migrationVersion: 3,
         migrationOutcome: "migrated",
       }),
       JSON.stringify({
         status: "installed",
         at: "now",
-        migrationVersion: 3,
+        migrationVersion: 4,
         migrationOutcome: "migrated",
       }),
     ]) {

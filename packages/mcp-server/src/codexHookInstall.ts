@@ -142,16 +142,58 @@ export function planCodexConfig(
 }
 
 /**
+ * Whether `source` already carries a Shepherd-owned handler for `event` in the
+ * shape Codex actually runs: a `[[hooks.<event>]]` group with a nested
+ * `[[hooks.<event>.hooks]]` handler whose command names our hook.
+ *
+ * Presence is decided by the marker, NOT by an exact command match, because the
+ * command carries a version pin and a machine-specific script path: a handler
+ * installed by an earlier release is still a working handler, and appending a
+ * second one beside it would only drain the mailbox twice and cost the user a
+ * fresh Codex hook-trust prompt.
+ *
+ * The legacy shape (a `command` array directly under the group, no nested
+ * `hooks` table) is deliberately NOT recognized — Codex 0.148 parses it but
+ * never runs it, which is why the migration has to add a canonical handler
+ * beside it.
+ */
+function hasCanonicalHandler(
+  source: string,
+  event: string,
+  hookMarker: string,
+): boolean {
+  const headers = new RegExp("^\\[\\[hooks\\." + event + "\\]\\]$", "gm");
+  // A group ends at the next line opening any table other than its own
+  // sub-tables (`[[hooks.<event>.hooks]]`, which is the part we're looking for).
+  const boundary = new RegExp("^\\[(?!\\[hooks\\." + event + "\\.)", "m");
+  const nested = new RegExp("^\\[\\[hooks\\." + event + "\\.hooks\\]\\]$", "m");
+  let header: RegExpExecArray | null;
+  while ((header = headers.exec(source)) !== null) {
+    const rest = source.slice(header.index + header[0].length);
+    const end = rest.search(boundary);
+    const group = end === -1 ? rest : rest.slice(0, end);
+    if (group.includes(hookMarker) && nested.test(group)) return true;
+  }
+  return false;
+}
+
+/**
  * Append only missing canonical migration handlers, retaining legacy bytes.
  */
 export function appendMissingCodexHandlers(
   source: string,
   command: string,
+  hookMarker: string,
 ): string | null {
-  const handlers = [
-    canonicalHandlerBlock("SessionStart", command),
-    canonicalHandlerBlock("PreToolUse", command, "*"),
-  ].filter((handler) => !source.includes(handler));
+  const handlers = (
+    [
+      ["UserPromptSubmit", undefined],
+      ["SessionStart", undefined],
+      ["PreToolUse", "*"],
+    ] as const
+  )
+    .filter(([event]) => !hasCanonicalHandler(source, event, hookMarker))
+    .map(([event, matcher]) => canonicalHandlerBlock(event, command, matcher));
   const candidate =
     handlers.length === 0
       ? source

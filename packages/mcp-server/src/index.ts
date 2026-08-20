@@ -7,7 +7,10 @@ import { registerTools } from "./tools.js";
 import { resolveContext } from "./resolveContext.js";
 import { createHeartbeat } from "./heartbeat.js";
 import { buildChangeReport } from "./changeReport.js";
-import { buildInstructions } from "./instructions.js";
+import {
+  buildInstructions,
+  stageCoordinationBriefing,
+} from "./instructions.js";
 import {
   appendAnnouncements,
   defaultInboxDir,
@@ -16,7 +19,7 @@ import {
   removeMailboxMeta,
 } from "./inbox.js";
 import { quickChain, ancestorChain } from "./processTree.js";
-import { autoInstallHooks } from "./hookInstall.js";
+import { autoInstallHooks, detectClient } from "./hookInstall.js";
 import { PACKAGE_VERSION } from "./version.js";
 
 async function main(): Promise<void> {
@@ -45,13 +48,18 @@ async function main(): Promise<void> {
   // layouts); the full chain — needed when an npx shim sits between the
   // client and us — replaces it as soon as the snapshot resolves (~1s on
   // Windows). The heartbeat re-writes the meta every beat (mtime = liveness).
+  // The meta also names the client once the handshake identifies it: how far up
+  // a hook's OWN chain this session's client may sit depends on whether that
+  // client wraps hook commands (see inbox.ts's HOOK_CHAIN_REACH).
   const launchCwd = process.cwd();
   let serverChain = quickChain();
+  let serverClient: string | undefined;
   const liveness = {
     refresh: () =>
       writeMailboxMeta(inboxDir, process.pid, {
         cwd: launchCwd,
         chain: serverChain,
+        client: serverClient,
       }),
     remove: () => removeMailboxMeta(inboxDir, process.pid),
   };
@@ -106,9 +114,24 @@ async function main(): Promise<void> {
   // once-per-machine hook auto-install (fire-and-forget, fail-open — see
   // hookInstall.ts for the safety rules and the SHEPHERD_NO_AUTO_HOOKS opt-out).
   server.server.oninitialized = () => {
+    const clientName = server.server.getClientVersion()?.name;
     void autoInstallHooks({
-      clientName: server.server.getClientVersion()?.name,
+      clientName,
       disabled: config.SHEPHERD_NO_AUTO_HOOKS,
+    });
+    // Re-advertise with the client named, so this session's hook can pair to
+    // this mailbox even when the client puts wrappers between them.
+    serverClient = detectClient(clientName);
+    liveness.refresh();
+    // The handshake is also the first moment we know WHICH client is asking —
+    // and some clients (Codex, verified) drop the `instructions` we just handed
+    // them. For those, stage the standing procedure in this session's mailbox so
+    // the hook or the first tool result delivers it instead (instructions.ts).
+    stageCoordinationBriefing({
+      clientName,
+      linkState: context.linkState,
+      workspace: context.workspace,
+      append: (announcements) => appendAnnouncements(inboxFile, announcements),
     });
   };
 

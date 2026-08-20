@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+### Fixed
+
+- Announcements now reach agents running under clients that wrap hook commands
+  (Codex): session-mailbox pairing walks far enough up a hook's own ancestor
+  chain to find the client, so teammate messages land on the next tool call
+  instead of waiting for the agent to call Shepherd itself.
+- Clients that drop the MCP `instructions` field (Codex, verified) now receive
+  the standing coordination procedure as a first-beat inbox message, so they
+  claim and release work without being asked.
+- Codex hook setup repairs configs the previous migration left with a
+  non-functional `UserPromptSubmit` handler, and no longer duplicates handlers
+  another build already installed.
+
 ## [@korso/shepherd 0.11.2](https://www.npmjs.com/package/@korso/shepherd/v/0.11.2) — 2026-07-12
 
 ### Fixed
