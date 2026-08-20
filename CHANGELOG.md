@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## [@korso/shepherd 0.11.3](https://www.npmjs.com/package/@korso/shepherd/v/0.11.3) — 2026-08-19
+
 ### Fixed
 
 - Announcements now reach agents running under clients that wrap hook commands
