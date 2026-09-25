@@ -7,6 +7,7 @@ export { canonicalizeRepo, normalizeRemoteUrl } from "./repo.js";
 
 // Re-export all zod schemas from the wire contract
 export {
+  CHANGE_REPORT_MAX_BYTES,
   ChangeRecord,
   ChangeReport,
   Claim,

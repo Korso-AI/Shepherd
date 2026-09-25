@@ -424,6 +424,56 @@ describe.skipIf(!dbAvailable)(
       expect(bodyText).toContain("pathGlobs");
     });
 
+    // Body limit: the client attaches a change report (up to ~100 unlanded
+    // commits with their paths) to work/sync/heartbeat. A report of ~90 KiB was
+    // rejected 413 by the old 64 KiB cap before any handler ran. The cap must
+    // sit above CHANGE_REPORT_MAX_BYTES with headroom, and still exist.
+    it("POST /work with a ~200 KiB body is parsed (not 413)", async () => {
+      const paths = Array.from(
+        { length: 400 },
+        (_, i) => `packages/some/deep/dir/${"f".repeat(400)}${i}.ts`,
+      );
+      const res = await app.inject({
+        method: "POST",
+        url: "/work",
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
+        payload: {
+          sessionId: "00000000-0000-0000-0000-000000000001",
+          intent: "do something",
+          pathGlobs: ["src/**"],
+          changeReport: {
+            branch: "feat/x",
+            baseBranch: "origin/main",
+            head: "a".repeat(40),
+            truncated: false,
+            entries: [{ kind: "uncommitted", sha: null, message: null, paths }],
+          },
+        },
+      });
+      // Reaches the handler: an unknown session is a 404, never a 413.
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("POST /work with a body over the cap → 413", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/work",
+        headers: {
+          authorization: AUTH_HEADER,
+          "content-type": "application/json",
+        },
+        payload: {
+          sessionId: "00000000-0000-0000-0000-000000000001",
+          intent: "x".repeat(300 * 1024),
+          pathGlobs: ["src/**"],
+        },
+      });
+      expect(res.statusCode).toBe(413);
+    });
+
     it("POST /join with missing required fields + valid auth → 400", async () => {
       const res = await app.inject({
         method: "POST",

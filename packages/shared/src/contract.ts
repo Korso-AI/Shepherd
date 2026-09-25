@@ -57,6 +57,17 @@ const ChangeReportEntry = z.object({
   paths: z.array(z.string().min(1).max(1024)).min(1).max(500),
 });
 
+/**
+ * Upper bound, in bytes, on the serialized (JSON.stringify) ChangeReport a
+ * client attaches to work/sync/heartbeat. The per-field caps below are DB-bloat
+ * guards and multiply out far past any HTTP body limit (600 entries × 500 paths
+ * × 1 KiB), so the CLIENT trims its report to this budget (oldest committed
+ * entries first) before sending, and the HUB sizes its Fastify bodyLimit above
+ * it with headroom for the rest of the request. Both ends move together: raise
+ * this only alongside the hub limit in packages/hub/src/server.ts.
+ */
+export const CHANGE_REPORT_MAX_BYTES = 48 * 1024;
+
 export const ChangeReport = z.object({
   branch: z.string().max(512),
   baseBranch: z.string().max(512),

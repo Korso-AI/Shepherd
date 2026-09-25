@@ -204,12 +204,23 @@ export interface BuildServerOptions {
   trustProxy?: boolean;
 }
 
+/**
+ * Request body cap for every route. Must exceed the largest valid claim plus a
+ * change report at CHANGE_REPORT_MAX_BYTES (≈ 43 KiB + 48 KiB) with headroom;
+ * 256 KiB keeps the cap meaningful for a bearer-auth API while never rejecting
+ * a contract-valid, client-trimmed request.
+ */
+const BODY_LIMIT_BYTES = 256 * 1024;
+
 export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({
-    // Conservative explicit cap, comfortably above the largest valid payload
-    // the contract allows (pathGlobs 64×512 + intent 2048 + body 8192 ≈ 43 KiB).
+    // Explicit cap, sized from the largest valid request: the claim fields
+    // (pathGlobs 64×512 + intent 2048 + body 8192 ≈ 43 KiB) plus the advisory
+    // change report the client trims to CHANGE_REPORT_MAX_BYTES (48 KiB). The
+    // old 64 KiB cap predated the change report and 413-rejected every
+    // work/sync/heartbeat from a branch with ~90 unlanded commits (2026-09).
     // Don't rely on Fastify's 1 MiB default for a bearer-auth coordination API.
-    bodyLimit: 64 * 1024,
+    bodyLimit: BODY_LIMIT_BYTES,
     // Derive request.ip from x-forwarded-for — OPT-IN, defaulting OFF (fail-safe).
     // When the hub sits behind a reverse proxy (Cloud Run, nginx, a self-host
     // ingress), every request arrives from the proxy's address, so without this
@@ -293,7 +304,7 @@ export function buildServer(options: BuildServerOptions = {}): FastifyInstance {
   const defaultJsonParser = app.getDefaultJsonParser("error", "error");
   app.addContentTypeParser<string>(
     "application/json",
-    { parseAs: "string", bodyLimit: 64 * 1024 },
+    { parseAs: "string", bodyLimit: BODY_LIMIT_BYTES },
     (request, body, done) => {
       if (body === "") {
         done(null, undefined);

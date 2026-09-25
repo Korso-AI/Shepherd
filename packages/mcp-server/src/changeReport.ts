@@ -1,4 +1,4 @@
-import type { ChangeReportT } from "@shepherd/shared";
+import { CHANGE_REPORT_MAX_BYTES, type ChangeReportT } from "@shepherd/shared";
 import {
   detectBranch,
   detectBaseBranch,
@@ -77,11 +77,53 @@ export async function buildChangeReport(
     }
   }
 
-  return {
+  return fitToBudget({
     branch: branch ?? "HEAD",
     baseBranch: base ?? UNRESOLVED_BASE,
     head: head ?? "",
     truncated,
     entries,
-  };
+  });
+}
+
+/** Serialized size of the report as the hub client will send it. */
+function serializedBytes(report: ChangeReportT): number {
+  return Buffer.byteLength(JSON.stringify(report));
+}
+
+/**
+ * Shrink `report` until its JSON form fits {@link CHANGE_REPORT_MAX_BYTES}.
+ *
+ * The contract's per-field caps multiply out far past any HTTP body limit, and
+ * the hub rejects an oversized body with 413 BEFORE any handler runs — which
+ * silently killed every work/sync/heartbeat from a long-lived branch. Trim
+ * order, least valuable first: the OLDEST committed entries (entries are
+ * newest-first after the single uncommitted entry), then, only if the dirty
+ * list alone is still too big, the tail of the uncommitted paths. Anything
+ * dropped sets `truncated`. Mutates and returns `report`.
+ */
+function fitToBudget(report: ChangeReportT): ChangeReportT {
+  if (serializedBytes(report) <= CHANGE_REPORT_MAX_BYTES) return report;
+  report.truncated = true;
+
+  while (
+    report.entries.length > 0 &&
+    report.entries[report.entries.length - 1]!.kind === "committed" &&
+    serializedBytes(report) > CHANGE_REPORT_MAX_BYTES
+  ) {
+    report.entries.pop();
+  }
+
+  const dirty = report.entries[0];
+  if (dirty?.kind === "uncommitted") {
+    while (
+      dirty.paths.length > 1 &&
+      serializedBytes(report) > CHANGE_REPORT_MAX_BYTES
+    ) {
+      // Halve rather than pop one-by-one: a 500-path list re-serialized per
+      // step would be quadratic; halving converges in a handful of passes.
+      dirty.paths.length = Math.ceil(dirty.paths.length / 2);
+    }
+  }
+  return report;
 }

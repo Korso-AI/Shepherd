@@ -22,6 +22,7 @@ import {
   dirtyPaths,
 } from "../src/gitContext.js";
 import { buildChangeReport } from "../src/changeReport.js";
+import { CHANGE_REPORT_MAX_BYTES } from "@shepherd/shared";
 
 const baseConfig: Config = {
   HUB_URL: "http://hub.test",
@@ -211,5 +212,102 @@ describe("buildChangeReport", () => {
     expect(report!.baseBranch).toBe("develop");
     expect(detectBaseBranch).not.toHaveBeenCalled();
     expect(unlandedCommits).toHaveBeenCalledWith(CWD, "develop");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Byte budget: the serialized report must fit CHANGE_REPORT_MAX_BYTES so the
+// enclosing work/sync/heartbeat body stays under the hub bodyLimit (a body
+// over it is rejected 413 before any handler runs — observed in production on
+// a branch with ~90 unlanded commits against origin/main).
+// ---------------------------------------------------------------------------
+
+function bigCommits(count: number, pathsPerCommit: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    sha: i.toString(16).padStart(40, "0"),
+    message: `commit ${i}: ${"x".repeat(60)}`,
+    paths: Array.from(
+      { length: pathsPerCommit },
+      (_, p) => `packages/some/deeply/nested/module/dir${p}/file-${i}-${p}.ts`,
+    ),
+  }));
+}
+
+describe("buildChangeReport byte budget", () => {
+  it("leaves a report that already fits untouched", async () => {
+    vi.mocked(detectBranch).mockReturnValue("feat/x");
+    vi.mocked(headSha).mockReturnValue("headsha");
+    vi.mocked(detectBaseBranch).mockReturnValue("origin/main");
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: bigCommits(5, 3),
+      truncated: false,
+    });
+    vi.mocked(dirtyPaths).mockReturnValue({
+      paths: ["a.ts"],
+      truncated: false,
+    });
+
+    const report = await buildChangeReport(CWD, baseConfig);
+    expect(report!.entries).toHaveLength(6);
+    expect(report!.truncated).toBe(false);
+  });
+
+  it("drops the OLDEST committed entries until the serialized report fits, keeps uncommitted, flags truncated", async () => {
+    vi.mocked(detectBranch).mockReturnValue("feat/x");
+    vi.mocked(headSha).mockReturnValue("headsha");
+    vi.mocked(detectBaseBranch).mockReturnValue("origin/main");
+    // ~100 commits × 30 paths × ~60 bytes ≈ 180 KiB — well over the budget.
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: bigCommits(100, 30),
+      truncated: false,
+    });
+    vi.mocked(dirtyPaths).mockReturnValue({
+      paths: ["src/dirty.ts"],
+      truncated: false,
+    });
+
+    const report = await buildChangeReport(CWD, baseConfig);
+
+    expect(report).toBeDefined();
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThanOrEqual(
+      CHANGE_REPORT_MAX_BYTES,
+    );
+    expect(report!.truncated).toBe(true);
+    // Uncommitted work is the most useful signal — never sacrificed first.
+    expect(report!.entries[0]).toMatchObject({ kind: "uncommitted" });
+    // Newest commits survive (unlandedCommits is newest-first); the tail goes.
+    const committed = report!.entries.filter((e) => e.kind === "committed");
+    expect(committed.length).toBeGreaterThan(0);
+    expect(committed.length).toBeLessThan(100);
+    expect(committed[0]!.sha).toBe("0".repeat(40));
+  });
+
+  it("trims a giant uncommitted path list when it alone exceeds the budget", async () => {
+    vi.mocked(detectBranch).mockReturnValue("feat/x");
+    vi.mocked(headSha).mockReturnValue("headsha");
+    vi.mocked(detectBaseBranch).mockReturnValue("origin/main");
+    vi.mocked(unlandedCommits).mockReturnValue({
+      commits: [],
+      truncated: false,
+    });
+    // 500 paths × ~300 bytes ≈ 150 KiB of dirty paths.
+    vi.mocked(dirtyPaths).mockReturnValue({
+      paths: Array.from(
+        { length: 500 },
+        (_, p) => `vendor/generated/${"d".repeat(280)}/${p}.ts`,
+      ),
+      truncated: false,
+    });
+
+    const report = await buildChangeReport(CWD, baseConfig);
+
+    expect(Buffer.byteLength(JSON.stringify(report))).toBeLessThanOrEqual(
+      CHANGE_REPORT_MAX_BYTES,
+    );
+    expect(report!.truncated).toBe(true);
+    expect(report!.entries).toHaveLength(1);
+    expect(report!.entries[0]!.kind).toBe("uncommitted");
+    expect(report!.entries[0]!.paths.length).toBeGreaterThan(0);
+    expect(report!.entries[0]!.paths.length).toBeLessThan(500);
   });
 });

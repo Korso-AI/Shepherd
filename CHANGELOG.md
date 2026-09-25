@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+## [@korso/shepherd 0.11.4](https://www.npmjs.com/package/@korso/shepherd/v/0.11.4) — 2026-09-25
+
+### Fixed
+
+- Coordination no longer silently stops on a long-lived branch. The change
+  report attached to `work`, `sync` and every heartbeat grew with the number
+  of unlanded commits (about 90 commits against `origin/main` produced an
+  87 KB body) and the hub rejected the whole request with HTTP 413 before it
+  reached a handler, so claims failed and announcements stopped arriving. The
+  client now trims the report to a 48 KiB budget (oldest commits first,
+  flagged `truncated`) and the hub's body limit rises from 64 KiB to 256 KiB
+  so an untrimmed report from an older client is accepted too.
+
 ## [@korso/shepherd 0.11.3](https://www.npmjs.com/package/@korso/shepherd/v/0.11.3) — 2026-08-19
 
 ### Fixed
