@@ -12,7 +12,7 @@ export function createPool(connString?: string): pg.Pool {
       "No database connection string provided and DATABASE_URL is not set.",
     );
   }
-  return new pg.Pool({
+  const pool = new pg.Pool({
     connectionString,
     // Cap concurrent server connections. Keep this aligned with the Postgres
     // connection budget DIVIDED BY the number of hub replicas.
@@ -23,6 +23,18 @@ export function createPool(connString?: string): pg.Pool {
     // bounded wait surfaces pool pressure as an error rather than a deadlock.
     connectionTimeoutMillis: 5_000,
   });
+  // An idle client whose connection drops (a network blip, a Postgres
+  // restart) makes pg emit 'error' on the pool. Without a listener Node
+  // treats it as uncaught and the whole hub exits; pg has already evicted
+  // the broken client, so logging is all that's needed. Message and code
+  // only: the error object holds the client, connection password included.
+  pool.on("error", (err: Error & { code?: string }) => {
+    console.error(
+      `Idle Postgres client error (client discarded): ${err.message}` +
+        (err.code ? ` [${err.code}]` : ""),
+    );
+  });
+  return pool;
 }
 
 /**
